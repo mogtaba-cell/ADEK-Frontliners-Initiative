@@ -1,0 +1,2 @@
+import { NextResponse } from "next/server"; import { requireUser } from "@/lib/auth"; import { autoAssignPending } from "@/lib/assignment"; import type { WorkflowPhase } from "@/lib/types";
+export async function POST(req:Request){ try{ const user=await requireUser(["admin"]); const body=await req.json(); const phase=body.phase as WorkflowPhase; const result=await autoAssignPending(phase, body.limit ?? 250, user.id); return NextResponse.json(result); } catch(e:any){ return NextResponse.json({error:e.message},{status:500}); }}
