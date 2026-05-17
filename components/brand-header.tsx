@@ -6,8 +6,7 @@ export function BrandHeader() {
       <div className="brand-header-inner">
         <img className="brand-logo" src="/brand/nae-logo.png" alt="National Art Expressions logo" />
         <div className="brand-title">
-          <h1>ADEK Frontliners Initiative</h1>
-          <p>Evaluation, selection, proofreading, review, and analytics system</p>
+          <h1>ADEK Frontliners Tribute Initiative</h1>
         </div>
       </div>
       <div className="brand-header-inner brand-header-kpis">

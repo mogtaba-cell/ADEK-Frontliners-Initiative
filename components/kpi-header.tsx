@@ -45,15 +45,14 @@ function normalizeKpis(payload: any): KpiData {
     totalReviewed: numberFrom(
       data.totalReviewed ?? data.total_reviewed ?? data.reviewed
     ),
-    totalReady: numberFrom(
-      data.totalReady ?? data.total_ready ?? data.ready
-    ),
+    totalReady: numberFrom(data.totalReady ?? data.total_ready ?? data.ready),
   };
 }
 
 export function KpiHeader() {
   const pathname = usePathname();
   const [kpis, setKpis] = useState<KpiData>(emptyKpis);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,8 +63,6 @@ export function KpiHeader() {
           cache: "no-store",
         });
 
-        if (!response.ok) return;
-
         const payload = await response.json();
 
         if (!cancelled) {
@@ -73,6 +70,14 @@ export function KpiHeader() {
         }
       } catch (error) {
         console.error("KPI header failed to load:", error);
+
+        if (!cancelled) {
+          setKpis(emptyKpis);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     }
 
@@ -104,11 +109,11 @@ export function KpiHeader() {
 
   return (
     <div className="brand-header-kpis">
-      <div className="header-kpis">
+      <div className="header-kpis centered">
         {cards.map((card) => (
           <div className="header-kpi" key={card.label}>
             <span>{card.label}</span>
-            <strong>{card.value}</strong>
+            <strong>{isLoading ? "…" : card.value}</strong>
           </div>
         ))}
       </div>

@@ -1,100 +1,147 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
-const evaluatedStatuses = [
-  "needs_management_review",
-  "selected_for_proofreading",
-  "proofreading_done",
-  "completed",
-  "disqualified",
-];
+async function countRows({
+  table,
+  filters = [],
+}: {
+  table: string;
+  filters?: {
+    column: string;
+    operator?: "eq" | "in";
+    value: any;
+  }[];
+}) {
+  let query = supabaseAdmin.from(table).select("id", {
+    count: "exact",
+    head: true,
+  });
 
-const selectedStatuses = [
-  "selected_for_proofreading",
-  "proofreading_done",
-  "completed",
-];
+  for (const filter of filters) {
+    if (filter.operator === "in") {
+      query = query.in(filter.column, filter.value);
+    } else {
+      query = query.eq(filter.column, filter.value);
+    }
+  }
 
-const proofreadStatuses = ["proofreading_done", "completed"];
-
-const reviewedStatuses = ["completed"];
-
-const readyStatuses = ["completed"];
-
-async function countSubmissionsByStatuses(statuses: string[]) {
-  const { count, error } = await supabaseAdmin
-    .from("submissions")
-    .select("id", { count: "exact", head: true })
-    .in("workflow_status", statuses);
+  const { count, error } = await query;
 
   if (error) {
-    console.error("KPI count error:", error.message);
+    console.error(`KPI count failed for ${table}:`, error.message);
     return 0;
   }
 
   return count ?? 0;
 }
 
+async function countDistinctEvaluatedSubmissions() {
+  const { data, error } = await supabaseAdmin
+    .from("evaluations")
+    .select("submission_id");
+
+  if (error) {
+    console.error("KPI evaluated submissions failed:", error.message);
+    return 0;
+  }
+
+  return new Set((data ?? []).map((row) => row.submission_id).filter(Boolean))
+    .size;
+}
+
 export async function GET() {
   try {
-    await requireUser([
-      "admin",
-      "management",
-      "coordinator",
-      "evaluator",
-      "proofreader",
-      "reviewer",
-      "adek_hq",
-    ]);
-
     const [
-      total,
-      evaluatedByStatus,
-      evaluationsCount,
-      selected,
-      proofread,
-      reviewed,
-      ready,
+      totalSubmissions,
+      totalEvaluated,
+      totalSelected,
+      totalProofread,
+      totalReviewed,
+      totalReady,
     ] = await Promise.all([
-      supabaseAdmin
-        .from("submissions")
-        .select("id", { count: "exact", head: true }),
+      countRows({
+        table: "submissions",
+      }),
 
-      countSubmissionsByStatuses(evaluatedStatuses),
+      countDistinctEvaluatedSubmissions(),
 
-      supabaseAdmin
-        .from("evaluations")
-        .select("id", { count: "exact", head: true }),
+      countRows({
+        table: "submissions",
+        filters: [
+          {
+            column: "workflow_status",
+            operator: "in",
+            value: [
+              "selected_for_proofreading",
+              "proofreading_done",
+              "ready_for_review",
+              "under_review",
+              "completed",
+            ],
+          },
+        ],
+      }),
 
-      countSubmissionsByStatuses(selectedStatuses),
-      countSubmissionsByStatuses(proofreadStatuses),
-      countSubmissionsByStatuses(reviewedStatuses),
-      countSubmissionsByStatuses(readyStatuses),
+      countRows({
+        table: "assignments",
+        filters: [
+          { column: "phase", value: "proofreading" },
+          { column: "status", value: "completed" },
+        ],
+      }),
+
+      countRows({
+        table: "assignments",
+        filters: [
+          { column: "phase", value: "final_review" },
+          { column: "status", value: "completed" },
+        ],
+      }),
+
+      countRows({
+        table: "submissions",
+        filters: [{ column: "workflow_status", value: "completed" }],
+      }),
     ]);
 
     return NextResponse.json(
       {
-        total: total.count ?? 0,
-        evaluated: Math.max(evaluatedByStatus, evaluationsCount.count ?? 0),
-        selected,
-        proofread,
-        reviewed,
-        ready,
+        ok: true,
+        data: {
+          totalSubmissions,
+          totalEvaluated,
+          totalSelected,
+          totalProofread,
+          totalReviewed,
+          totalReady,
+        },
       },
       {
         headers: {
-          "Cache-Control": "no-store, max-age=0",
+          "Cache-Control": "no-store, no-cache, must-revalidate",
         },
       }
     );
   } catch (error: any) {
+    console.error("KPI route failed:", error);
+
     return NextResponse.json(
-      { error: error.message ?? "Failed to load KPIs." },
-      { status: error.message === "FORBIDDEN" ? 403 : 500 }
+      {
+        ok: false,
+        error: error.message ?? "Failed to load KPIs.",
+        data: {
+          totalSubmissions: 0,
+          totalEvaluated: 0,
+          totalSelected: 0,
+          totalProofread: 0,
+          totalReviewed: 0,
+          totalReady: 0,
+        },
+      },
+      { status: 500 }
     );
   }
 }

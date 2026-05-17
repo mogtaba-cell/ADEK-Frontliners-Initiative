@@ -792,3 +792,54 @@ hr {
     break-inside: avoid;
   }
 }
+
+.brand-header-kpis {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  margin-top: 22px;
+}
+
+.header-kpis {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.header-kpis.centered {
+  justify-content: center;
+  align-items: stretch;
+}
+
+.header-kpi {
+  min-width: 150px;
+  max-width: 190px;
+  flex: 1 1 150px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: #fffaf4;
+  border: 1px solid rgba(28, 62, 59, 0.14);
+  box-shadow: 0 10px 24px rgba(28, 62, 59, 0.06);
+}
+
+.header-kpi span {
+  display: block;
+  font-size: 0.9rem;
+  color: #466464;
+  margin-bottom: 8px;
+}
+
+.header-kpi strong {
+  display: block;
+  font-size: 1.8rem;
+  line-height: 1;
+  color: #063a3a;
+}
+
+@media (max-width: 900px) {
+  .header-kpi {
+    min-width: 130px;
+    flex-basis: 130px;
+  }
+}

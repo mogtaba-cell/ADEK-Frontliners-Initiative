@@ -15,14 +15,36 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function safeDateName(date = new Date()) {
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, "0");
-  const dd = String(date.getDate()).padStart(2, "0");
-  const hh = String(date.getHours()).padStart(2, "0");
-  const min = String(date.getMinutes()).padStart(2, "0");
+const EXPORT_TIME_ZONE = "Asia/Dubai";
 
-  return `${yyyy}-${mm}-${dd} ${hh}-${min}`;
+function getDubaiDateParts(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: EXPORT_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  const parts = formatter.formatToParts(date);
+
+  const get = (type: string) =>
+    parts.find((part) => part.type === type)?.value ?? "00";
+
+  return {
+    yyyy: get("year"),
+    mm: get("month"),
+    dd: get("day"),
+    hh: get("hour"),
+    min: get("minute"),
+  };
+}
+
+function safeDateName(date = new Date()) {
+  const { yyyy, mm, dd, hh, min } = getDubaiDateParts(date);
+  return `${yyyy}-${mm}-${dd} ${hh}-${min} UAE`;
 }
 
 function redirectBack(req: Request, params: Record<string, string>) {
@@ -32,7 +54,9 @@ function redirectBack(req: Request, params: Record<string, string>) {
     url.searchParams.set(key, value);
   }
 
-  return NextResponse.redirect(url);
+  return NextResponse.redirect(url, {
+    status: 303,
+  });
 }
 
 async function createExportBatch({
@@ -143,7 +167,9 @@ export async function POST(req: Request) {
     const summaryBuffer = Buffer.from(
       JSON.stringify(
         {
-          exported_at: now.toISOString(),
+          exported_at_utc: now.toISOString(),
+          exported_at_uae_label: dateLabel,
+          timezone: EXPORT_TIME_ZONE,
           exported_by: {
             id: user.id,
             full_name: user.full_name,
