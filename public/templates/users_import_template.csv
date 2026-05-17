@@ -1,0 +1,15 @@
+full_name,email,username,password,role,proofreader_type,is_active
+Admin User,admin@example.com,admin_user,ChangeMe@2026,admin,,true
+ADEK HQ User,adek_hq@example.com,adek_hq_user,ChangeMe@2026,adek_hq,,true
+ADEK Evaluator 1,adek_evaluator_1@example.com,adek_evaluator_1,ChangeMe@2026,evaluator,,true
+ADEK Evaluator 2,adek_evaluator_2@example.com,adek_evaluator_2,ChangeMe@2026,evaluator,,true
+Coordinator 1,coordinator_1@example.com,coordinator_1,ChangeMe@2026,coordinator,,true
+Coordinator 2,coordinator_2@example.com,coordinator_2,ChangeMe@2026,coordinator,,true
+General Proofreader 1,general_proofreader_1@example.com,general_proofreader_1,ChangeMe@2026,proofreader,general,true
+General Proofreader 2,general_proofreader_2@example.com,general_proofreader_2,ChangeMe@2026,proofreader,general,true
+Literary Proofreader 1,literary_proofreader_1@example.com,literary_proofreader_1,ChangeMe@2026,proofreader,literary,true
+Literary Proofreader 2,literary_proofreader_2@example.com,literary_proofreader_2,ChangeMe@2026,proofreader,literary,true
+Management 1,management_1@example.com,management_1,ChangeMe@2026,management,,true
+Management 2,management_2@example.com,management_2,ChangeMe@2026,management,,true
+Reviewer 1,reviewer_1@example.com,reviewer_1,ChangeMe@2026,reviewer,,true
+Reviewer 2,reviewer_2@example.com,reviewer_2,ChangeMe@2026,reviewer,,true
