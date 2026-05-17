@@ -2,25 +2,36 @@ import { requireUser } from "@/lib/auth";
 import { Nav } from "@/components/nav";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-function driveFolderLink(folderId: string | null | undefined) {
-  if (!folderId) return null;
-  return `https://drive.google.com/drive/folders/${folderId}`;
+export const dynamic = "force-dynamic";
+
+const UAE_TIME_ZONE = "Asia/Dubai";
+
+function firstParam(value: string | string[] | undefined) {
+  if (Array.isArray(value)) return value[0] ?? "";
+  return value ?? "";
 }
 
-function formatDate(value: string | null | undefined) {
+function formatUaeDateTime(value: string | null | undefined) {
   if (!value) return "—";
 
-  try {
-    return new Date(value).toLocaleString("en-GB", {
-      year: "numeric",
-      month: "short",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return value;
-  }
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "—";
+
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: UAE_TIME_ZONE,
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+function googleDriveFolderUrl(folderId: string | null | undefined) {
+  if (!folderId) return null;
+  return `https://drive.google.com/drive/folders/${folderId}`;
 }
 
 export default async function ExportPage({
@@ -31,15 +42,10 @@ export default async function ExportPage({
   const user = await requireUser(["admin"]);
   const params = (await searchParams) ?? {};
 
-  const success = params.success === "1";
-  const error =
-    typeof params.error === "string"
-      ? params.error
-      : Array.isArray(params.error)
-        ? params.error[0]
-        : "";
+  const success = firstParam(params.success);
+  const error = firstParam(params.error);
 
-  const { data } = await supabaseAdmin
+  const { data, error: exportError } = await supabaseAdmin
     .from("export_batches")
     .select("*")
     .order("created_at", { ascending: false })
@@ -54,91 +60,106 @@ export default async function ExportPage({
 
         <p className="muted">
           Use this button to create a dated folder in Google Shared Drive and
-          upload the analytics PDF, activity log, all submissions workbook, ready
-          submissions workbook, and export summary.
+          upload the analytics PDF, activity log, all submissions workbook,
+          ready submissions workbook, and export summary.
         </p>
 
         {success && (
-          <div className="pill" style={{ marginBottom: 14 }}>
+          <p className="pill" style={{ marginTop: 12 }}>
             Export completed successfully.
-          </div>
+          </p>
         )}
 
         {error && (
-          <div
+          <p
             className="pill"
             style={{
-              marginBottom: 14,
+              marginTop: 12,
               background: "#fff1f1",
               color: "#9b2f2f",
             }}
           >
             Export failed: {error}
-          </div>
+          </p>
         )}
 
         <form action="/api/admin/export/google-drive" method="post">
-          <button className="btn" type="submit">
+          <button className="btn" type="submit" style={{ marginTop: 16 }}>
             Export Current Data to Google Shared Drive
           </button>
         </form>
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
-        <h2 style={{ marginTop: 0 }}>Recent Exports</h2>
+        <h2>Recent Exports</h2>
 
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Mode</th>
-                <th>Status</th>
-                <th>Completed</th>
-                <th>Folder</th>
-                <th>Error</th>
-              </tr>
-            </thead>
+        <p className="muted small" style={{ marginTop: -6 }}>
+          Dates and completed times are shown in UAE time.
+        </p>
 
-            <tbody>
-              {data?.map((batch: any) => {
-                const folderLink = driveFolderLink(batch.destination_folder_id);
-
-                return (
-                  <tr key={batch.id}>
-                    <td>{formatDate(batch.created_at)}</td>
-                    <td>{batch.mode ?? "manual"}</td>
-                    <td>
-                      <span className="pill">{batch.status ?? "unknown"}</span>
-                    </td>
-                    <td>{formatDate(batch.completed_at)}</td>
-                    <td>
-                      {folderLink ? (
-                        <a
-                          className="btn secondary"
-                          href={folderLink}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          Open Folder
-                        </a>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td>{batch.error_message ?? "—"}</td>
-                  </tr>
-                );
-              })}
-
-              {!data?.length && (
+        {exportError ? (
+          <p className="muted">Could not load export history: {exportError.message}</p>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
                 <tr>
-                  <td colSpan={6}>No exports yet.</td>
+                  <th>Date</th>
+                  <th>Mode</th>
+                  <th>Status</th>
+                  <th>Completed</th>
+                  <th>Folder</th>
+                  <th>Error</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+
+              <tbody>
+                {(data ?? []).map((batch: any) => {
+                  const folderUrl = googleDriveFolderUrl(
+                    batch.destination_folder_id
+                  );
+
+                  return (
+                    <tr key={batch.id}>
+                      <td>{formatUaeDateTime(batch.created_at)}</td>
+
+                      <td>{batch.mode ?? "—"}</td>
+
+                      <td>
+                        <span className="pill">{batch.status ?? "—"}</span>
+                      </td>
+
+                      <td>{formatUaeDateTime(batch.completed_at)}</td>
+
+                      <td>
+                        {folderUrl ? (
+                          <a
+                            className="btn secondary"
+                            href={folderUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            Open Folder
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+
+                      <td>{batch.error_message || "—"}</td>
+                    </tr>
+                  );
+                })}
+
+                {(data ?? []).length === 0 && (
+                  <tr>
+                    <td colSpan={6}>No export history yet.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </main>
   );
