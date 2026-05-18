@@ -34,11 +34,9 @@ const allAssignmentStatuses = [
 
 const correctionReasonLabels: Record<string, string> = {
   adek_file_quality: "Artwork File Quality / Clarity Issue",
-  adek_needs_review: "ADEK Needs Management Review",
   artwork_mismatch: "Artwork Mismatch",
   incomplete_narrative: "Incomplete Narrative",
   inappropriate_flagged_content: "Inappropriate / Flagged Content",
-  literary_needs_review: "Literary Needs Management Review",
   literary_needs_correction: "Literary Needs Correction",
 };
 
@@ -46,8 +44,6 @@ const correctionSourceLabels: Record<string, string> = {
   adek_evaluation: "ADEK Evaluation",
   proofreading: "General Proofreading",
   literary_proofreading: "Literary Proofreading",
-  management_review: "Management Review",
-  final_review: "Final Review",
 };
 
 function formatViewLabel(view: string) {
@@ -74,7 +70,9 @@ function statusesForView(phase: WorkflowPhase, view: string) {
   }
 
   if (view === "needs_review") {
-    return phase === "management_review" ? ["assigned", "in_progress"] : ["completed"];
+    return phase === "management_review"
+      ? ["assigned", "in_progress"]
+      : ["completed"];
   }
 
   if (view === "sent_for_review") return ["sent_for_review"];
@@ -91,7 +89,11 @@ function defaultViewForPhase(phase: WorkflowPhase) {
   return "not_completed";
 }
 
-function applySubmissionWorkflowGate(query: any, phase: WorkflowPhase, view: string) {
+function applySubmissionWorkflowGate(
+  query: any,
+  phase: WorkflowPhase,
+  view: string
+) {
   if (phase === "management_review") {
     if (view === "needs_review" || view === "not_completed") {
       return query.eq("submissions.workflow_status", "needs_management_review");
@@ -101,7 +103,11 @@ function applySubmissionWorkflowGate(query: any, phase: WorkflowPhase, view: str
   }
 
   if (phase === "coordinator_check") {
-    if (view === "not_completed") {
+    if (
+      view === "not_completed" ||
+      view === "sent_for_correction" ||
+      view === "returned_for_correction"
+    ) {
       return query.eq("submissions.workflow_status", "returned_for_correction");
     }
 
@@ -111,6 +117,10 @@ function applySubmissionWorkflowGate(query: any, phase: WorkflowPhase, view: str
   if (phase === "adek_evaluation") {
     if (view === "sent_for_correction" || view === "returned_for_correction") {
       return query.eq("submissions.workflow_status", "returned_for_correction");
+    }
+
+    if (view === "not_completed") {
+      return query.eq("submissions.workflow_status", "ready_for_adek");
     }
 
     return query;
@@ -149,6 +159,18 @@ function applySourceGate(query: any, correctionSourcePhase?: string) {
   return query.eq("correction_source_phase", correctionSourcePhase);
 }
 
+function applyCoordinatorCorrectionSafetyGate(query: any, phase: WorkflowPhase) {
+  if (phase !== "coordinator_check") return query;
+
+  return query
+    .eq("submissions.workflow_status", "returned_for_correction")
+    .in("correction_source_phase", [
+      "adek_evaluation",
+      "proofreading",
+      "literary_proofreading",
+    ]);
+}
+
 function buildAssignmentCountQuery({
   userId,
   phase,
@@ -175,6 +197,7 @@ function buildAssignmentCountQuery({
   query = applySubmissionWorkflowGate(query, phase, view);
   query = applyDecisionGate(query, phase, view);
   query = applySourceGate(query, correctionSourcePhase);
+  query = applyCoordinatorCorrectionSafetyGate(query, phase);
 
   return query;
 }
@@ -208,26 +231,20 @@ async function getAssignmentCount({
 async function getKpiCards({
   userId,
   phase,
-  proofreaderType,
 }: {
   userId: string;
   phase: WorkflowPhase;
   proofreaderType?: string | null;
 }): Promise<KpiCard[]> {
   if (phase === "adek_evaluation") {
-    const [
-      remaining,
-      sentForCorrection,
-      approved,
-      needsReview,
-      disqualified,
-    ] = await Promise.all([
-      getAssignmentCount({ userId, phase, view: "not_completed" }),
-      getAssignmentCount({ userId, phase, view: "sent_for_correction" }),
-      getAssignmentCount({ userId, phase, view: "approved" }),
-      getAssignmentCount({ userId, phase, view: "needs_review" }),
-      getAssignmentCount({ userId, phase, view: "disqualified" }),
-    ]);
+    const [remaining, sentForCorrection, approved, needsReview, disqualified] =
+      await Promise.all([
+        getAssignmentCount({ userId, phase, view: "not_completed" }),
+        getAssignmentCount({ userId, phase, view: "sent_for_correction" }),
+        getAssignmentCount({ userId, phase, view: "approved" }),
+        getAssignmentCount({ userId, phase, view: "needs_review" }),
+        getAssignmentCount({ userId, phase, view: "disqualified" }),
+      ]);
 
     return [
       { label: "Remaining", value: remaining },
@@ -511,6 +528,7 @@ export async function WorkQueuePage({
   query = applySubmissionWorkflowGate(query, phase, view);
   query = applyDecisionGate(query, phase, view);
   query = applySourceGate(query, correctionSourcePhase);
+  query = applyCoordinatorCorrectionSafetyGate(query, phase);
 
   if (correctionReason) {
     query = query.eq("correction_reason", correctionReason);
@@ -587,6 +605,7 @@ export async function WorkQueuePage({
   }));
 
   const totalResults = count ?? 0;
+
   const kpiGridClass =
     kpiCards.length >= 5
       ? "grid grid-4"

@@ -4,6 +4,7 @@ export default async function LoginPage({ searchParams }: { searchParams?: Promi
     <main className="container" style={{ maxWidth: 560 }}>
       <div className="card">
         <img className="login-logo" src="/brand/nae-logo.png" alt="National Art Expressions logo" />
+
         <p className="muted">Sign in using your username/email and password.</p>
         {params.error && <p style={{ color: "crimson" }}>Login failed. Check your credentials.</p>}
         <form action="/api/auth/login" method="post" className="grid">
