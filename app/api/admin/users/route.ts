@@ -7,10 +7,39 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const validRoles = new Set(["admin", "coordinator", "evaluator", "management", "proofreader", "reviewer", "adek_hq"]);
-const validProofreaderTypes = new Set(["general", "literary"]);
+const validProofreaderTypes = new Set([
+  "general",
+  "literary_arabic",
+  "literary_english_or_others",
+]);
 
 function normalizeProofreaderType(value: unknown) {
   const text = String(value ?? "").trim().toLowerCase();
+
+  if (!text) return null;
+
+  // Backwards-compatible aliases for older forms/imports.
+  if (text === "literary") return "literary_arabic";
+  if (["arabic", "arabic_literary", "literary-arabic"].includes(text)) {
+    return "literary_arabic";
+  }
+  if (
+    [
+      "english",
+      "english_other",
+      "english_others",
+      "english_or_other",
+      "english_or_others",
+      "english/other",
+      "english/others",
+      "literary_english",
+      "literary-english",
+      "literary_english_or_others",
+    ].includes(text)
+  ) {
+    return "literary_english_or_others";
+  }
+
   return validProofreaderTypes.has(text) ? text : null;
 }
 

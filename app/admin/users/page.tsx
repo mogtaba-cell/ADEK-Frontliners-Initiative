@@ -43,7 +43,8 @@ export default async function UsersPage() {
           <select className="input" name="proofreader_type" defaultValue="general">
             <option value="">Proofreader type not applicable</option>
             <option value="general">General Proofreader</option>
-            <option value="literary">Literary Proofreader</option>
+            <option value="literary_arabic">Arabic Literary Proofreader</option>
+            <option value="literary_english_or_others">English/Other Literary Proofreader</option>
           </select>
 
           <input className="input" name="password" placeholder="Temporary password" type="password" required />

@@ -262,6 +262,108 @@ export async function assignAdekAfterImport(submissionId: string, actorId?: stri
   return autoAssignOne(submissionId, "adek_evaluation", actorId);
 }
 
+
+export async function bulkAssignAdekAfterImport(
+  submissionIds: string[],
+  actorId?: string
+) {
+  const uniqueSubmissionIds = Array.from(new Set(submissionIds)).filter(Boolean);
+
+  if (!uniqueSubmissionIds.length) {
+    return { assigned: 0, skipped: 0 };
+  }
+
+  const { data: evaluators, error: evaluatorsError } = await supabaseAdmin
+    .from("profiles")
+    .select("id")
+    .eq("role", "evaluator")
+    .eq("is_active", true);
+
+  if (evaluatorsError) throw evaluatorsError;
+
+  const evaluatorIds = (evaluators ?? []).map((user) => user.id);
+
+  if (!evaluatorIds.length) {
+    throw new Error("No active ADEK evaluators available.");
+  }
+
+  const { data: activeAssignments, error: activeAssignmentsError } =
+    await supabaseAdmin
+      .from("assignments")
+      .select("assigned_to")
+      .in("assigned_to", evaluatorIds)
+      .in("status", activeAssignmentStatuses);
+
+  if (activeAssignmentsError) throw activeAssignmentsError;
+
+  const workload = new Map<string, number>();
+  for (const evaluatorId of evaluatorIds) workload.set(evaluatorId, 0);
+
+  for (const row of activeAssignments ?? []) {
+    workload.set(row.assigned_to, (workload.get(row.assigned_to) ?? 0) + 1);
+  }
+
+  const alreadyAssigned = new Set<string>();
+
+  for (const submissionChunk of chunkArray(uniqueSubmissionIds, 500)) {
+    const { data, error } = await supabaseAdmin
+      .from("assignments")
+      .select("submission_id")
+      .in("submission_id", submissionChunk)
+      .eq("phase", "adek_evaluation")
+      .in("status", activeAssignmentStatuses);
+
+    if (error) throw error;
+
+    for (const row of data ?? []) {
+      alreadyAssigned.add(row.submission_id);
+    }
+  }
+
+  const assignmentsToInsert: any[] = [];
+
+  for (const submissionId of uniqueSubmissionIds) {
+    if (alreadyAssigned.has(submissionId)) continue;
+
+    const assignedTo = Array.from(workload.entries()).sort(
+      (a, b) => a[1] - b[1]
+    )[0][0];
+
+    workload.set(assignedTo, (workload.get(assignedTo) ?? 0) + 1);
+
+    assignmentsToInsert.push({
+      submission_id: submissionId,
+      phase: "adek_evaluation",
+      assigned_to: assignedTo,
+      assigned_by: actorId ?? null,
+      status: "assigned",
+    });
+  }
+
+  for (const assignmentChunk of chunkArray(assignmentsToInsert, 500)) {
+    const { error } = await supabaseAdmin
+      .from("assignments")
+      .insert(assignmentChunk);
+
+    if (error) throw error;
+  }
+
+  return {
+    assigned: assignmentsToInsert.length,
+    skipped: uniqueSubmissionIds.length - assignmentsToInsert.length,
+  };
+}
+
+function chunkArray<T>(items: T[], size: number) {
+  const chunks: T[][] = [];
+
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+
+  return chunks;
+}
+
 export async function assignProofreadingAfterApproval(
   submissionId: string,
   actorId?: string

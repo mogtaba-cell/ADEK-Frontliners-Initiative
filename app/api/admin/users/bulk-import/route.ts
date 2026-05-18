@@ -45,6 +45,36 @@ function normalizeBoolean(value: unknown) {
   return true;
 }
 
+function normalizeProofreaderType(value: unknown) {
+  const text = String(value ?? "").trim().toLowerCase();
+
+  if (!text) return "general";
+
+  if (text === "general") return "general";
+  if (text === "literary") return "literary_arabic";
+  if (["arabic", "arabic_literary", "literary-arabic", "literary_arabic"].includes(text)) {
+    return "literary_arabic";
+  }
+  if (
+    [
+      "english",
+      "english_other",
+      "english_others",
+      "english_or_other",
+      "english_or_others",
+      "english/other",
+      "english/others",
+      "literary_english",
+      "literary-english",
+      "literary_english_or_others",
+    ].includes(text)
+  ) {
+    return "literary_english_or_others";
+  }
+
+  return null;
+}
+
 function readRowsFromWorkbook(buffer: Buffer) {
   const workbook = XLSX.read(buffer, {
     type: "buffer",
@@ -97,7 +127,7 @@ export async function POST(req: Request) {
       const usernameRaw = getCell(row, ["username", "Username"]);
       const role = getCell(row, ["role", "Role"]).toLowerCase();
       const proofreaderTypeRaw = getCell(row, ["proofreader_type", "Proofreader Type", "proofreaderType"]).toLowerCase();
-      const proofreaderType = role === "proofreader" ? (proofreaderTypeRaw === "literary" ? "literary" : "general") : null;
+      const proofreaderType = role === "proofreader" ? normalizeProofreaderType(proofreaderTypeRaw) : null;
       const temporaryPassword = getCell(row, [
         "temp_password",
         "temporary_password",
@@ -136,6 +166,17 @@ export async function POST(req: Request) {
           email,
           message:
             "Invalid role. Allowed roles: admin, coordinator, evaluator, management, proofreader, reviewer, adek_hq.",
+        });
+        continue;
+      }
+
+      if (role === "proofreader" && !proofreaderType) {
+        skipped++;
+        errors.push({
+          row: rowNumber,
+          email,
+          message:
+            "Invalid proofreader_type. Use general, literary_arabic, or literary_english_or_others.",
         });
         continue;
       }
