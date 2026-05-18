@@ -106,37 +106,14 @@ export default async function SubmissionsPage({
     .order("updated_at", { ascending: false })
     .range(from, to);
 
-  if (registrationStatus) {
-    query = query.eq("registration_status", registrationStatus);
-  }
-
-  if (workflowStatus) {
-    query = query.eq("workflow_status", workflowStatus);
-  }
-
-  if (pathway) {
-    query = query.eq("art_pathway_name_en", pathway);
-  }
-
-  if (subpathway) {
-    query = query.eq("art_sub_pathway_name_en", subpathway);
-  }
-
-  if (region) {
-    query = query.eq("school_region", region);
-  }
-
-  if (schoolType) {
-    query = query.eq("institution_type", schoolType);
-  }
-
-  if (dateFrom) {
-    query = query.gte("submission_date_value", dateFrom);
-  }
-
-  if (dateTo) {
-    query = query.lte("submission_date_value", dateTo);
-  }
+  if (registrationStatus) query = query.eq("registration_status", registrationStatus);
+  if (workflowStatus) query = query.eq("workflow_status", workflowStatus);
+  if (pathway) query = query.eq("art_pathway_name_en", pathway);
+  if (subpathway) query = query.eq("art_sub_pathway_name_en", subpathway);
+  if (region) query = query.eq("school_region", region);
+  if (schoolType) query = query.eq("institution_type", schoolType);
+  if (dateFrom) query = query.gte("submission_date_value", dateFrom);
+  if (dateTo) query = query.lte("submission_date_value", dateTo);
 
   if (search) {
     const safeSearch = search.replace(/[%_]/g, "");
@@ -145,6 +122,7 @@ export default async function SubmissionsPage({
       [
         `reference_id.ilike.%${safeSearch}%`,
         `institution_name.ilike.%${safeSearch}%`,
+        `group_name.ilike.%${safeSearch}%`,
         `artwork_title_en.ilike.%${safeSearch}%`,
         `artwork_title_ar.ilike.%${safeSearch}%`,
         `updated_artwork_file_name.ilike.%${safeSearch}%`,
@@ -225,52 +203,30 @@ export default async function SubmissionsPage({
 
           <label>
             <span className="small">Date from</span>
-            <input
-              className="input"
-              type="date"
-              name="date_from"
-              defaultValue={dateFrom}
-            />
+            <input className="input" type="date" name="date_from" defaultValue={dateFrom} />
           </label>
 
           <label>
             <span className="small">Date to</span>
-            <input
-              className="input"
-              type="date"
-              name="date_to"
-              defaultValue={dateTo}
-            />
+            <input className="input" type="date" name="date_to" defaultValue={dateTo} />
           </label>
 
           <label>
             <span className="small">Registration status</span>
-            <select
-              className="input"
-              name="registration_status"
-              defaultValue={registrationStatus}
-            >
+            <select className="input" name="registration_status" defaultValue={registrationStatus}>
               <option value="">All</option>
               {options.registrationStatuses.map((x) => (
-                <option key={x} value={x}>
-                  {x}
-                </option>
+                <option key={x} value={x}>{x}</option>
               ))}
             </select>
           </label>
 
           <label>
             <span className="small">Workflow status</span>
-            <select
-              className="input"
-              name="workflow_status"
-              defaultValue={workflowStatus}
-            >
+            <select className="input" name="workflow_status" defaultValue={workflowStatus}>
               <option value="">All</option>
               {options.workflowStatuses.map((x) => (
-                <option key={x} value={x}>
-                  {labelWorkflowStatus(x)}
-                </option>
+                <option key={x} value={x}>{labelWorkflowStatus(x)}</option>
               ))}
             </select>
           </label>
@@ -280,25 +236,17 @@ export default async function SubmissionsPage({
             <select className="input" name="pathway" defaultValue={pathway}>
               <option value="">All</option>
               {options.pathways.map((x) => (
-                <option key={x} value={x}>
-                  {x}
-                </option>
+                <option key={x} value={x}>{x}</option>
               ))}
             </select>
           </label>
 
           <label>
             <span className="small">Subpathway</span>
-            <select
-              className="input"
-              name="subpathway"
-              defaultValue={subpathway}
-            >
+            <select className="input" name="subpathway" defaultValue={subpathway}>
               <option value="">All</option>
               {options.subpathways.map((x) => (
-                <option key={x} value={x}>
-                  {x}
-                </option>
+                <option key={x} value={x}>{x}</option>
               ))}
             </select>
           </label>
@@ -308,25 +256,17 @@ export default async function SubmissionsPage({
             <select className="input" name="region" defaultValue={region}>
               <option value="">All</option>
               {options.regions.map((x) => (
-                <option key={x} value={x}>
-                  {x}
-                </option>
+                <option key={x} value={x}>{x}</option>
               ))}
             </select>
           </label>
 
           <label>
             <span className="small">School type</span>
-            <select
-              className="input"
-              name="school_type"
-              defaultValue={schoolType}
-            >
+            <select className="input" name="school_type" defaultValue={schoolType}>
               <option value="">All</option>
               {options.schoolTypes.map((x) => (
-                <option key={x} value={x}>
-                  {x}
-                </option>
+                <option key={x} value={x}>{x}</option>
               ))}
             </select>
           </label>
@@ -336,18 +276,14 @@ export default async function SubmissionsPage({
             <input
               className="input"
               name="search"
-              placeholder="Artwork name, reference ID, school, updated file"
+              placeholder="Artwork name, reference ID, school, group, updated file"
               defaultValue={search}
             />
           </label>
 
           <label>
             <span className="small">Page size</span>
-            <select
-              className="input compact-input"
-              name="page_size"
-              defaultValue={String(pageSize)}
-            >
+            <select className="input compact-input" name="page_size" defaultValue={String(pageSize)}>
               <option value="25">25</option>
               <option value="50">50</option>
               <option value="100">100</option>
@@ -355,13 +291,8 @@ export default async function SubmissionsPage({
           </label>
 
           <div className="actions">
-            <button className="btn" type="submit">
-              Apply Filters
-            </button>
-
-            <a className="btn secondary" href="/submissions">
-              Clear
-            </a>
+            <button className="btn" type="submit">Apply Filters</button>
+            <a className="btn secondary" href="/submissions">Clear</a>
           </div>
         </form>
       </div>

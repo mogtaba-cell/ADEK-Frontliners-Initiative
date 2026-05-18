@@ -7,7 +7,11 @@ export type Role =
   | "reviewer"
   | "adek_hq";
 
-export type ProofreaderType = "general" | "literary";
+export type ProofreaderType =
+  | "general"
+  | "literary"
+  | "literary_arabic"
+  | "literary_english_or_others";
 
 export type WorkflowPhase =
   | "coordinator_check"

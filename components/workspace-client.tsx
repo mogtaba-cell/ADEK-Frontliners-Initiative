@@ -38,8 +38,6 @@ const correctionSourceLabels: Record<string, string> = {
   adek_evaluation: "ADEK Evaluation",
   proofreading: "General Proofreading",
   literary_proofreading: "Literary Proofreading",
-  final_review: "Final Review",
-  management_review: "Management Review",
   coordinator_check: "Coordinator Correction",
 };
 
@@ -92,9 +90,10 @@ function normalizeGrade(value: unknown) {
   return raw
     .split(";")
     .map((item) => {
-      const match = item.match(/grade\s*([0-9]{1,2})/i);
+      const clean = item.trim();
+      const match = clean.match(/grade\s*([0-9]{1,2})/i);
       if (match) return `Grade ${Number(match[1])}`;
-      return item.trim();
+      return clean;
     })
     .filter(Boolean)
     .join("; ");
@@ -212,6 +211,51 @@ function getDerivedFields(submission: any) {
   };
 }
 
+function getOriginalImportedFields(submission: any) {
+  return {
+    englishTitle: rawText(submission.raw_data, [
+      "ArtWorkTitleEn",
+      "ArtworkTitleEn",
+      "Artwork Title En",
+      "TitleEn",
+      "English Title",
+    ]),
+    arabicTitle: rawText(submission.raw_data, [
+      "ArtWorkTitleAr",
+      "ArtworkTitleAr",
+      "Artwork Title Ar",
+      "TitleAr",
+      "Arabic Title",
+    ]),
+    englishDescription: rawText(submission.raw_data, [
+      "ArtWorkDescrEn",
+      "ArtworkDescriptionEn",
+      "DescriptionEn",
+      "NarrativeEn",
+      "English Description",
+    ]),
+    arabicDescription: rawText(submission.raw_data, [
+      "ArtWorkDescrAr",
+      "ArtworkDescriptionAr",
+      "DescriptionAr",
+      "NarrativeAr",
+      "Arabic Description",
+    ]),
+    influence: rawText(submission.raw_data, [
+      "Did anyone or anything influence your idea (family, artist, place)?",
+      "Did anyone or anything influence your idea",
+    ]),
+    enjoyable: rawText(submission.raw_data, [
+      "What was the most enjoyable part of creating your work?",
+      "Most enjoyable part",
+    ]),
+    elements: rawText(submission.raw_data, [
+      "What elements did you focus on, and why?",
+      "What elements did you focus on",
+    ]),
+  };
+}
+
 function DetailField({ label, value }: { label: string; value: unknown }) {
   return (
     <>
@@ -226,6 +270,111 @@ function TextBlock({ label, value }: { label: string; value: unknown }) {
     <div className="submission-text-block">
       <strong>{label}</strong>
       <div dir="auto">{displayText(value)}</div>
+    </div>
+  );
+}
+
+function ComparisonRow({
+  label,
+  original,
+  updated,
+}: {
+  label: string;
+  original: unknown;
+  updated: unknown;
+}) {
+  return (
+    <div
+      className="grid grid-2"
+      style={{
+        gap: 12,
+        padding: "14px 0",
+        borderTop: "1px solid rgba(28, 62, 59, 0.12)",
+      }}
+    >
+      <div className="submission-text-block">
+        <strong>Original {label}</strong>
+        <div dir="auto">{displayText(original)}</div>
+      </div>
+
+      <div className="submission-text-block">
+        <strong>Updated / Proofread {label}</strong>
+        <div dir="auto">{displayText(updated)}</div>
+      </div>
+    </div>
+  );
+}
+
+function ReviewerOriginalUpdatedComparison({
+  submission,
+  derived,
+}: {
+  submission: any;
+  derived: ReturnType<typeof getDerivedFields>;
+}) {
+  const original = getOriginalImportedFields(submission);
+
+  return (
+    <div className="card">
+      <div className="table-title-row">
+        <div>
+          <h3 style={{ marginTop: 0 }}>Original vs Updated Content</h3>
+          <p className="muted">
+            Review the original imported text beside the latest proofread or
+            updated version before marking the artwork as ready.
+          </p>
+        </div>
+      </div>
+
+      <ComparisonRow
+        label="English Title"
+        original={original.englishTitle}
+        updated={derived.englishTitle}
+      />
+
+      <ComparisonRow
+        label="Arabic Title"
+        original={original.arabicTitle}
+        updated={derived.arabicTitle}
+      />
+
+      <ComparisonRow
+        label="English Description"
+        original={original.englishDescription}
+        updated={derived.englishDescription}
+      />
+
+      <ComparisonRow
+        label="Arabic Description"
+        original={original.arabicDescription}
+        updated={derived.arabicDescription}
+      />
+
+      <ComparisonRow
+        label="Influence / Idea Source"
+        original={original.influence}
+        updated={derived.influence}
+      />
+
+      <ComparisonRow
+        label="Most Enjoyable Part"
+        original={original.enjoyable}
+        updated={derived.enjoyable}
+      />
+
+      <ComparisonRow
+        label="Focused Elements"
+        original={original.elements}
+        updated={derived.elements}
+      />
+
+      {submission.literary_updated_content && (
+        <ComparisonRow
+          label="Literary Updated Content"
+          original=""
+          updated={submission.literary_updated_content}
+        />
+      )}
     </div>
   );
 }
@@ -267,14 +416,14 @@ function TaskHistory({ history }: { history: any[] }) {
 
             {item.correction_source_phase && (
               <span className="muted small">
-                Correction source:{" "}
+                Correction source: {" "}
                 {getCorrectionSourceLabel(item.correction_source_phase)}
               </span>
             )}
 
             {item.correction_reason && (
               <span className="muted small">
-                Reason:{" "}
+                Reason: {" "}
                 {correctionReasonLabels[item.correction_reason] ??
                   item.correction_reason}
               </span>
@@ -400,7 +549,7 @@ function CoordinatorUpdatedArtworkUpload({
 
       {submission.updated_artwork_file_url && (
         <p className="muted small">
-          Current updated file/folder:{" "}
+          Current updated file/folder: {" "}
           <a
             href={submission.updated_artwork_file_url}
             target="_blank"
@@ -503,7 +652,6 @@ export function WorkspaceClient({
     setCulturalAuthenticity("yes");
     setArtisticExcellence("yes");
     setEthicalAppropriateness("yes");
-
     setArtisticRating(selectedSubmission.artistic_rating ?? "good");
 
     setManagementArtisticRating(
@@ -525,7 +673,10 @@ export function WorkspaceClient({
     ethicalAppropriateness
   );
 
-  const isAdekEvaluatorView = phase === "adek_evaluation";
+  const isLimitedSubmissionDetailsView =
+    phase === "adek_evaluation" ||
+    phase === "proofreading" ||
+    phase === "literary_proofreading";
 
   return (
     <div className="workspace-shell">
@@ -552,27 +703,25 @@ export function WorkspaceClient({
                 onClick={() => setSelectedId(assignment.id)}
               >
                 <strong>
-                  {index + 1}.{" "}
+                  {index + 1}. {" "}
                   {fields?.artworkName ?? submission?.reference_id ?? "Unknown"}
                 </strong>
 
-                {!isAdekEvaluatorView && (
+                {!isLimitedSubmissionDetailsView && (
                   <span>{submission?.institution_name ?? "Unknown school"}</span>
                 )}
 
-                {isAdekEvaluatorView && (
+                {isLimitedSubmissionDetailsView && (
                   <span>
-                    {submission?.art_pathway_name_en ?? "Unknown pathway"} ·{" "}
-                    {normalizeGrade(
-                      submission?.participating_students_grades
-                    ) || "Grade unavailable"}
+                    {submission?.art_pathway_name_en ?? "Unknown pathway"} · {" "}
+                    {normalizeGrade(submission?.participating_students_grades) ||
+                      "Grade unavailable"}
                   </span>
                 )}
 
                 {assignment.correction_source_phase && (
                   <span>
-                    From:{" "}
-                    {getCorrectionSourceLabel(assignment.correction_source_phase)}
+                    From: {getCorrectionSourceLabel(assignment.correction_source_phase)}
                   </span>
                 )}
 
@@ -606,7 +755,7 @@ export function WorkspaceClient({
                 <div>
                   <h2 style={{ marginTop: 0 }}>{derived.artworkName}</h2>
 
-                  {!isAdekEvaluatorView && (
+                  {!isLimitedSubmissionDetailsView && (
                     <p className="muted small">
                       Reference ID: {selectedSubmission.reference_id}
                     </p>
@@ -627,7 +776,7 @@ export function WorkspaceClient({
               </div>
 
               <dl className="detail-grid" style={{ marginTop: 18 }}>
-                {isAdekEvaluatorView ? (
+                {isLimitedSubmissionDetailsView ? (
                   <>
                     <DetailField
                       label="Pathway"
@@ -667,6 +816,7 @@ export function WorkspaceClient({
                       label="School Type"
                       value={selectedSubmission.institution_type}
                     />
+                    <DetailField label="Group Name" value={selectedSubmission.group_name} />
                     <DetailField label="Region" value={selectedSubmission.school_region} />
                     <DetailField
                       label="Pathway"
@@ -703,7 +853,7 @@ export function WorkspaceClient({
                   </>
                 )}
 
-                {!isAdekEvaluatorView && selectedSubmission.artistic_rating && (
+                {!isLimitedSubmissionDetailsView && selectedSubmission.artistic_rating && (
                   <DetailField
                     label="ADEK Artistic Rating"
                     value={
@@ -713,7 +863,7 @@ export function WorkspaceClient({
                   />
                 )}
 
-                {!isAdekEvaluatorView &&
+                {!isLimitedSubmissionDetailsView &&
                   selectedSubmission.management_artistic_rating && (
                     <DetailField
                       label="Management Artistic Rating"
@@ -758,7 +908,14 @@ export function WorkspaceClient({
               </>
             )}
 
-            {!isAdekEvaluatorView && (
+            {phase === "final_review" && (
+              <ReviewerOriginalUpdatedComparison
+                submission={selectedSubmission}
+                derived={derived}
+              />
+            )}
+
+            {phase !== "adek_evaluation" && (
               <div className="card">
                 <h3>Artwork Text and Narrative</h3>
 
@@ -952,9 +1109,7 @@ export function WorkspaceClient({
                           className="input"
                           name="artistic_rating"
                           value={artisticRating}
-                          onChange={(event) =>
-                            setArtisticRating(event.target.value)
-                          }
+                          onChange={(event) => setArtisticRating(event.target.value)}
                         >
                           <option value="weak">ضعيف / Weak</option>
                           <option value="medium">متوسط / Medium</option>
@@ -1031,9 +1186,7 @@ export function WorkspaceClient({
               {phase === "literary_proofreading" && (
                 <>
                   <div className="card" style={{ marginTop: 16 }}>
-                    <h4 style={{ marginTop: 0 }}>
-                      Literary Suitability Check
-                    </h4>
+                    <h4 style={{ marginTop: 0 }}>Literary Suitability Check</h4>
 
                     <label>
                       <span className="small">
@@ -1159,7 +1312,7 @@ export function WorkspaceClient({
                     <button
                       className="btn"
                       type="submit"
-                      name="literary_action"
+                      name="literary_decision"
                       value="needs_review"
                     >
                       Needs Review
@@ -1169,7 +1322,7 @@ export function WorkspaceClient({
                       <button
                         className="btn"
                         type="submit"
-                        name="literary_action"
+                        name="literary_decision"
                         value="completed"
                       >
                         Mark Done
@@ -1178,7 +1331,7 @@ export function WorkspaceClient({
                       <button
                         className="btn secondary"
                         type="submit"
-                        name="literary_action"
+                        name="literary_decision"
                         value="needs_correction"
                       >
                         Send for Correction

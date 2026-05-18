@@ -171,16 +171,32 @@ function applyCoordinatorCorrectionSafetyGate(query: any, phase: WorkflowPhase) 
     ]);
 }
 
+function applyProofreaderTypeGate(
+  query: any,
+  phase: WorkflowPhase,
+  proofreaderType?: string | null
+) {
+  if (!proofreaderType) return query;
+
+  if (phase === "proofreading" || phase === "literary_proofreading") {
+    return query.eq("proofreader_type", proofreaderType);
+  }
+
+  return query;
+}
+
 function buildAssignmentCountQuery({
   userId,
   phase,
   view,
   correctionSourcePhase,
+  proofreaderType,
 }: {
   userId: string;
   phase: WorkflowPhase;
   view: string;
   correctionSourcePhase?: string;
+  proofreaderType?: string | null;
 }) {
   const statuses = statusesForView(phase, view);
 
@@ -198,6 +214,7 @@ function buildAssignmentCountQuery({
   query = applyDecisionGate(query, phase, view);
   query = applySourceGate(query, correctionSourcePhase);
   query = applyCoordinatorCorrectionSafetyGate(query, phase);
+  query = applyProofreaderTypeGate(query, phase, proofreaderType);
 
   return query;
 }
@@ -207,17 +224,20 @@ async function getAssignmentCount({
   phase,
   view,
   correctionSourcePhase,
+  proofreaderType,
 }: {
   userId: string;
   phase: WorkflowPhase;
   view: string;
   correctionSourcePhase?: string;
+  proofreaderType?: string | null;
 }) {
   const { count, error } = await buildAssignmentCountQuery({
     userId,
     phase,
     view,
     correctionSourcePhase,
+    proofreaderType,
   });
 
   if (error) {
@@ -231,6 +251,7 @@ async function getAssignmentCount({
 async function getKpiCards({
   userId,
   phase,
+  proofreaderType,
 }: {
   userId: string;
   phase: WorkflowPhase;
@@ -271,9 +292,24 @@ async function getKpiCards({
 
   if (phase === "proofreading") {
     const [remaining, sentForCorrection, completed] = await Promise.all([
-      getAssignmentCount({ userId, phase, view: "not_completed" }),
-      getAssignmentCount({ userId, phase, view: "sent_for_correction" }),
-      getAssignmentCount({ userId, phase, view: "completed" }),
+      getAssignmentCount({
+        userId,
+        phase,
+        view: "not_completed",
+        proofreaderType,
+      }),
+      getAssignmentCount({
+        userId,
+        phase,
+        view: "sent_for_correction",
+        proofreaderType,
+      }),
+      getAssignmentCount({
+        userId,
+        phase,
+        view: "completed",
+        proofreaderType,
+      }),
     ]);
 
     return [
@@ -286,10 +322,30 @@ async function getKpiCards({
   if (phase === "literary_proofreading") {
     const [remaining, sentForReview, sentForCorrection, completed] =
       await Promise.all([
-        getAssignmentCount({ userId, phase, view: "not_completed" }),
-        getAssignmentCount({ userId, phase, view: "sent_for_review" }),
-        getAssignmentCount({ userId, phase, view: "sent_for_correction" }),
-        getAssignmentCount({ userId, phase, view: "completed" }),
+        getAssignmentCount({
+          userId,
+          phase,
+          view: "not_completed",
+          proofreaderType,
+        }),
+        getAssignmentCount({
+          userId,
+          phase,
+          view: "sent_for_review",
+          proofreaderType,
+        }),
+        getAssignmentCount({
+          userId,
+          phase,
+          view: "sent_for_correction",
+          proofreaderType,
+        }),
+        getAssignmentCount({
+          userId,
+          phase,
+          view: "completed",
+          proofreaderType,
+        }),
       ]);
 
     return [
@@ -480,10 +536,12 @@ export async function WorkQueuePage({
 
   const isLiteraryProofreader =
     phase === "literary_proofreading" &&
-    (user.proofreader_type === "literary" || user.role === "admin");
+    (user.proofreader_type === "literary" ||
+      user.proofreader_type === "literary_arabic" ||
+      user.proofreader_type === "literary_english_or_others" ||
+      user.role === "admin");
 
   const isCoordinator = phase === "coordinator_check";
-
   const statuses = statusesForView(phase, view);
 
   const [options, kpiCards, filteredSubmissionIds] = await Promise.all([
@@ -529,6 +587,7 @@ export async function WorkQueuePage({
   query = applyDecisionGate(query, phase, view);
   query = applySourceGate(query, correctionSourcePhase);
   query = applyCoordinatorCorrectionSafetyGate(query, phase);
+  query = applyProofreaderTypeGate(query, phase, user.proofreader_type ?? null);
 
   if (correctionReason) {
     query = query.eq("correction_reason", correctionReason);

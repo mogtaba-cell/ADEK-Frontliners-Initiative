@@ -50,13 +50,7 @@ function fallbackText(
   return rawText(submission.raw_data, rawKeys);
 }
 
-function DetailField({
-  label,
-  value,
-}: {
-  label: string;
-  value: unknown;
-}) {
+function DetailField({ label, value }: { label: string; value: unknown }) {
   return (
     <>
       <dt>{label}</dt>
@@ -65,13 +59,7 @@ function DetailField({
   );
 }
 
-function LongTextBlock({
-  label,
-  value,
-}: {
-  label: string;
-  value: unknown;
-}) {
+function LongTextBlock({ label, value }: { label: string; value: unknown }) {
   return (
     <div className="submission-text-block">
       <strong>{label}</strong>
@@ -241,6 +229,7 @@ export function SubmissionsClient({
                 <th>Registration</th>
                 <th>Submission Date</th>
                 <th>School</th>
+                <th>Group Name</th>
                 <th>Region</th>
                 <th>Pathway</th>
                 <th>Updated File</th>
@@ -276,6 +265,7 @@ export function SubmissionsClient({
                     </td>
 
                     <td>{displayText(submission.institution_name)}</td>
+                    <td>{displayText(submission.group_name)}</td>
                     <td>{displayText(submission.school_region)}</td>
                     <td>{displayText(submission.art_pathway_name_en)}</td>
 
@@ -322,7 +312,7 @@ export function SubmissionsClient({
 
               {submissions.length === 0 && (
                 <tr>
-                  <td colSpan={10}>
+                  <td colSpan={11}>
                     No submissions found for the selected filters.
                   </td>
                 </tr>
@@ -384,53 +374,25 @@ function SubmissionModal({
             <dl className="detail-grid">
               <DetailField label="Artwork Name" value={derived.artworkName} />
               <DetailField label="Reference ID" value={submission.reference_id} />
-              <DetailField
-                label="Registration ID"
-                value={submission.registration_id}
-              />
-              <DetailField
-                label="Registration Status"
-                value={submission.registration_status}
-              />
+              <DetailField label="Registration ID" value={submission.registration_id} />
+              <DetailField label="Registration Status" value={submission.registration_status} />
               <DetailField
                 label="Submission Date"
-                value={
-                  submission.submission_date_value ?? submission.submission_date
-                }
+                value={submission.submission_date_value ?? submission.submission_date}
               />
               <DetailField label="School" value={submission.institution_name} />
-              <DetailField
-                label="School Type"
-                value={submission.institution_type}
-              />
+              <DetailField label="School Type" value={submission.institution_type} />
+              <DetailField label="Group Name" value={submission.group_name} />
               <DetailField label="Region" value={submission.school_region} />
               <DetailField label="Pathway" value={submission.art_pathway_name_en} />
               <DetailField label="Arabic Pathway" value={derived.arabicPathway} />
-              <DetailField
-                label="Subpathway"
-                value={submission.art_sub_pathway_name_en}
-              />
-              <DetailField
-                label="Arabic Subpathway"
-                value={derived.arabicSubpathway}
-              />
-              <DetailField
-                label="Students ESIS"
-                value={submission.participating_students_esis_numbers}
-              />
+              <DetailField label="Subpathway" value={submission.art_sub_pathway_name_en} />
+              <DetailField label="Arabic Subpathway" value={derived.arabicSubpathway} />
+              <DetailField label="Students ESIS" value={submission.participating_students_esis_numbers} />
               <DetailField label="Students Names" value={derived.studentNames} />
-              <DetailField
-                label="Students Grades"
-                value={submission.participating_students_grades}
-              />
-              <DetailField
-                label="Genders"
-                value={submission.participating_students_genders}
-              />
-              <DetailField
-                label="Nationalities"
-                value={submission.participating_students_nationalities}
-              />
+              <DetailField label="Students Grades" value={submission.participating_students_grades} />
+              <DetailField label="Genders" value={submission.participating_students_genders} />
+              <DetailField label="Nationalities" value={submission.participating_students_nationalities} />
 
               {submission.artistic_rating && (
                 <DetailField
@@ -471,14 +433,8 @@ function SubmissionModal({
             <div className="grid grid-2">
               <LongTextBlock label="English Title" value={derived.englishTitle} />
               <LongTextBlock label="Arabic Title" value={derived.arabicTitle} />
-              <LongTextBlock
-                label="English Description"
-                value={derived.englishDescription}
-              />
-              <LongTextBlock
-                label="Arabic Description"
-                value={derived.arabicDescription}
-              />
+              <LongTextBlock label="English Description" value={derived.englishDescription} />
+              <LongTextBlock label="Arabic Description" value={derived.arabicDescription} />
               <LongTextBlock
                 label="Did anyone or anything influence your idea, such as family, an artist, or a place?"
                 value={derived.influence}
@@ -508,42 +464,22 @@ function SubmissionModal({
             <div className="grid grid-2">
               <label>
                 <span className="small">English Title</span>
-                <textarea
-                  name="artwork_title_en"
-                  defaultValue={displayText(derived.englishTitle, "")}
-                  rows={3}
-                  dir="auto"
-                />
+                <textarea name="artwork_title_en" defaultValue={displayText(derived.englishTitle, "")} rows={3} dir="auto" />
               </label>
 
               <label>
                 <span className="small">Arabic Title</span>
-                <textarea
-                  name="artwork_title_ar"
-                  defaultValue={displayText(derived.arabicTitle, "")}
-                  rows={3}
-                  dir="auto"
-                />
+                <textarea name="artwork_title_ar" defaultValue={displayText(derived.arabicTitle, "")} rows={3} dir="auto" />
               </label>
 
               <label>
                 <span className="small">English Description</span>
-                <textarea
-                  name="description_en"
-                  defaultValue={displayText(derived.englishDescription, "")}
-                  rows={8}
-                  dir="auto"
-                />
+                <textarea name="description_en" defaultValue={displayText(derived.englishDescription, "")} rows={8} dir="auto" />
               </label>
 
               <label>
                 <span className="small">Arabic Description</span>
-                <textarea
-                  name="description_ar"
-                  defaultValue={displayText(derived.arabicDescription, "")}
-                  rows={8}
-                  dir="auto"
-                />
+                <textarea name="description_ar" defaultValue={displayText(derived.arabicDescription, "")} rows={8} dir="auto" />
               </label>
 
               <label>
@@ -551,36 +487,21 @@ function SubmissionModal({
                   Did anyone or anything influence your idea, such as family, an
                   artist, or a place?
                 </span>
-                <textarea
-                  name="influence_idea_source"
-                  defaultValue={displayText(derived.influence, "")}
-                  rows={5}
-                  dir="auto"
-                />
+                <textarea name="influence_idea_source" defaultValue={displayText(derived.influence, "")} rows={5} dir="auto" />
               </label>
 
               <label>
                 <span className="small">
                   What was the most enjoyable part of creating your work?
                 </span>
-                <textarea
-                  name="most_enjoyable_part"
-                  defaultValue={displayText(derived.enjoyable, "")}
-                  rows={5}
-                  dir="auto"
-                />
+                <textarea name="most_enjoyable_part" defaultValue={displayText(derived.enjoyable, "")} rows={5} dir="auto" />
               </label>
 
               <label>
                 <span className="small">
                   What elements did you focus on in your artwork, and why?
                 </span>
-                <textarea
-                  name="focused_elements"
-                  defaultValue={displayText(derived.elements, "")}
-                  rows={5}
-                  dir="auto"
-                />
+                <textarea name="focused_elements" defaultValue={displayText(derived.elements, "")} rows={5} dir="auto" />
               </label>
             </div>
 

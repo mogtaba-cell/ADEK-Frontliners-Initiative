@@ -6,36 +6,24 @@ const links: Record<Role, { href: string; label: string }[]> = {
     { href: "/admin", label: "Admin" },
     { href: "/admin/import", label: "Import" },
     { href: "/admin/users", label: "Users" },
+    { href: "/admin/literary-language", label: "Literary Language" },
     { href: "/submissions", label: "All Submissions" },
     { href: "/analytics", label: "Analytics" },
     { href: "/admin/export", label: "Export" },
   ],
-
-  coordinator: [
-    { href: "/coordinator", label: "Correction Workspace" },
-  ],
-
+  coordinator: [{ href: "/coordinator", label: "Correction Workspace" }],
   evaluator: [
     { href: "/evaluator", label: "Evaluation Criteria" },
     { href: "/evaluator/work", label: "Evaluation Workspace" },
   ],
-
   management: [
-    { href: "/management", label: "Management Home" },
+    { href: "/management", label: "Management Review" },
     { href: "/management/work", label: "Needs Review Workspace" },
-    { href: "/submissions", label: "All Submissions" },
   ],
-
-  proofreader: [
-    { href: "/proofreader", label: "Proofreading Workspace" },
-  ],
-
-  reviewer: [
-    { href: "/reviewer", label: "Final Review Workspace" },
-  ],
-
+  proofreader: [{ href: "/proofreader", label: "Proofreading Workspace" }],
+  reviewer: [{ href: "/reviewer", label: "Final Review" }],
   adek_hq: [
-    { href: "/submissions", label: "All Submissions" },
+    { href: "/submissions", label: "Submissions" },
     { href: "/analytics", label: "Analytics" },
   ],
 };

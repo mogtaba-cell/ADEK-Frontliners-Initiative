@@ -168,7 +168,11 @@ export async function getImportBatch(batchId: string) {
   };
 }
 
-function buildSubmissionPayload(row: any, batchId: string, existingWorkflowStatus?: string | null) {
+function buildSubmissionPayload(
+  row: any,
+  batchId: string,
+  existingWorkflowStatus?: string | null
+) {
   const reference_id = val(row, [
     "referenceId",
     "ReferenceId",
@@ -240,6 +244,28 @@ function buildSubmissionPayload(row: any, batchId: string, existingWorkflowStatu
       "DescriptionAr",
       "NarrativeAr",
       "Arabic Description",
+    ]),
+
+    influence_idea_source: val(row, [
+      "Did anyone or anything influence your idea (family, artist, place)?",
+      "Did anyone or anything influence your idea",
+    ]),
+
+    most_enjoyable_part: val(row, [
+      "What was the most enjoyable part of creating your work?",
+      "Most enjoyable part",
+    ]),
+
+    focused_elements: val(row, [
+      "What elements did you focus on, and why?",
+      "What elements did you focus on",
+    ]),
+
+    group_name: val(row, [
+      "GroupName",
+      "Group Name",
+      "group_name",
+      "GroupNameEn",
     ]),
 
     participating_students_esis_numbers: val(row, [
@@ -411,7 +437,7 @@ export async function processImportWorkbook(
         await upsertSchool(payload);
         await upsertStudents(up.data.id, payload);
 
-        if ((payload.registration_status === "Submitted") && !existing.data) {
+        if (payload.registration_status === "Submitted" && !existing.data) {
           try {
             await assignAdekAfterImport(up.data.id, actorId);
           } catch (assignmentError: any) {
