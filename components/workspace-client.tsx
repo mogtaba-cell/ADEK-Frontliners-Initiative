@@ -32,6 +32,9 @@ const correctionReasonLabels: Record<string, string> = {
     "Literary proofreader requested correction after checking publication suitability.",
   adek_file_quality:
     "Artwork file quality / clarity issue: the submitted image, video, or audio file cannot be evaluated clearly.",
+  no_school_response: "No response from school.",
+  incomplete_faulty_after_correction:
+    "New submission remains incomplete/faulty after correction.",
 };
 
 const correctionSourceLabels: Record<string, string> = {
@@ -210,7 +213,6 @@ function getDerivedFields(submission: any) {
   };
 }
 
-
 function getOriginalImportedFields(submission: any) {
   return {
     englishTitle: rawText(submission.raw_data, [
@@ -254,6 +256,24 @@ function getOriginalImportedFields(submission: any) {
       "What elements did you focus on",
     ]),
   };
+}
+
+function DetailField({ label, value }: { label: string; value: unknown }) {
+  return (
+    <>
+      <dt>{label}</dt>
+      <dd dir="auto">{displayText(value)}</dd>
+    </>
+  );
+}
+
+function TextBlock({ label, value }: { label: string; value: unknown }) {
+  return (
+    <div className="submission-text-block">
+      <strong>{label}</strong>
+      <div dir="auto">{displayText(value)}</div>
+    </div>
+  );
 }
 
 function ComparisonRow({
@@ -361,24 +381,6 @@ function ReviewerOriginalUpdatedComparison({
   );
 }
 
-function DetailField({ label, value }: { label: string; value: unknown }) {
-  return (
-    <>
-      <dt>{label}</dt>
-      <dd dir="auto">{displayText(value)}</dd>
-    </>
-  );
-}
-
-function TextBlock({ label, value }: { label: string; value: unknown }) {
-  return (
-    <div className="submission-text-block">
-      <strong>{label}</strong>
-      <div dir="auto">{displayText(value)}</div>
-    </div>
-  );
-}
-
 function TaskHistory({ history }: { history: any[] }) {
   if (!history?.length) return null;
 
@@ -442,7 +444,7 @@ function SourceButtons({ submission }: { submission: any }) {
   if (!hasSource && !hasUpdated) return null;
 
   return (
-    <div className="actions" style={{ marginTop: 16 }}>
+    <div className="actions" style={{ marginTop: 12 }}>
       {hasSource && (
         <a
           className="btn secondary"
@@ -538,8 +540,8 @@ function CoordinatorUpdatedArtworkUpload({
   currentPath: string;
 }) {
   return (
-    <div className="card">
-      <h3 style={{ marginTop: 0 }}>Updated Artwork Attachment</h3>
+    <div className="card" style={{ boxShadow: "none", marginTop: 16 }}>
+      <h4 style={{ marginTop: 0 }}>Updated Artwork Attachment</h4>
 
       <p className="muted">
         Upload corrected or replacement artwork file(s) only if needed. If you
@@ -566,6 +568,7 @@ function CoordinatorUpdatedArtworkUpload({
         method="post"
         encType="multipart/form-data"
         className="grid"
+        data-no-global-loading="true"
       >
         <input type="hidden" name="submission_id" value={submission.id} />
         <input type="hidden" name="redirect_to" value={currentPath} />
@@ -674,10 +677,13 @@ export function WorkspaceClient({
     ethicalAppropriateness
   );
 
-  const isAdekEvaluatorView = phase === "adek_evaluation";
+  const isLimitedSubmissionDetailsView =
+    phase === "adek_evaluation" ||
+    phase === "proofreading" ||
+    phase === "literary_proofreading";
 
   return (
-    <div className="workspace-shell">
+    <div className="workspace-shell original-workspace-layout">
       <aside className="workspace-sidebar">
         <div className="workspace-sidebar-header">
           <h2>Assigned Artworks</h2>
@@ -705,16 +711,15 @@ export function WorkspaceClient({
                   {fields?.artworkName ?? submission?.reference_id ?? "Unknown"}
                 </strong>
 
-                {!isAdekEvaluatorView && (
+                {!isLimitedSubmissionDetailsView && (
                   <span>{submission?.institution_name ?? "Unknown school"}</span>
                 )}
 
-                {isAdekEvaluatorView && (
+                {isLimitedSubmissionDetailsView && (
                   <span>
                     {submission?.art_pathway_name_en ?? "Unknown pathway"} ·{" "}
-                    {normalizeGrade(
-                      submission?.participating_students_grades
-                    ) || "Grade unavailable"}
+                    {normalizeGrade(submission?.participating_students_grades) ||
+                      "Grade unavailable"}
                   </span>
                 )}
 
@@ -744,215 +749,238 @@ export function WorkspaceClient({
         {!selectedAssignment || !selectedSubmission || !derived ? (
           <div className="card">
             <h2>No artwork selected</h2>
-            <p className="muted">Select an artwork from the left sidebar to begin.</p>
+            <p className="muted">
+              Select an artwork from the left sidebar to begin.
+            </p>
           </div>
         ) : (
           <>
-            <div className="card">
-              <div className="table-title-row">
-                <div>
-                  <h2 style={{ marginTop: 0 }}>{derived.artworkName}</h2>
+            <div className="workspace-detail-stack">
+              {phase === "literary_proofreading" && <LiteraryCriteriaCard />}
 
-                  {!isAdekEvaluatorView && (
-                    <p className="muted small">
-                      Reference ID: {selectedSubmission.reference_id}
-                    </p>
-                  )}
+              <div className="card">
+                <div className="table-title-row">
+                  <div>
+                    <h2 style={{ marginTop: 0 }}>{derived.artworkName}</h2>
 
-                  <div className="actions">
-                    <span className={statusClassName(selectedSubmission.workflow_status)}>
-                      {labelWorkflowStatus(selectedSubmission.workflow_status)}
-                    </span>
+                    {!isLimitedSubmissionDetailsView && (
+                      <p className="muted small">
+                        Reference ID: {selectedSubmission.reference_id}
+                      </p>
+                    )}
 
-                    <span className="pill pill-info">{labelPhase(phase)}</span>
+                    <div className="actions">
+                      <span className={statusClassName(selectedSubmission.workflow_status)}>
+                        {labelWorkflowStatus(selectedSubmission.workflow_status)}
+                      </span>
 
-                    <span className={statusClassName(selectedAssignment.status)}>
-                      Assignment: {selectedAssignment.status}
-                    </span>
+                      <span className="pill pill-info">{labelPhase(phase)}</span>
+
+                      <span className={statusClassName(selectedAssignment.status)}>
+                        Assignment: {selectedAssignment.status}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <dl className="detail-grid" style={{ marginTop: 18 }}>
-                {isAdekEvaluatorView ? (
-                  <>
-                    <DetailField
-                      label="Pathway"
-                      value={selectedSubmission.art_pathway_name_en}
-                    />
+                <dl className="detail-grid" style={{ marginTop: 18 }}>
+                  {isLimitedSubmissionDetailsView ? (
+                    <>
+                      <DetailField
+                        label="Pathway"
+                        value={selectedSubmission.art_pathway_name_en}
+                      />
 
+                      <DetailField
+                        label="Students Grades"
+                        value={normalizeGrade(
+                          selectedSubmission.participating_students_grades
+                        )}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <DetailField
+                        label="Reference ID"
+                        value={selectedSubmission.reference_id}
+                      />
+                      <DetailField
+                        label="Registration ID"
+                        value={selectedSubmission.registration_id}
+                      />
+                      <DetailField
+                        label="Registration Status"
+                        value={selectedSubmission.registration_status}
+                      />
+                      <DetailField
+                        label="Submission Date"
+                        value={
+                          selectedSubmission.submission_date_value ??
+                          selectedSubmission.submission_date
+                        }
+                      />
+                      <DetailField
+                        label="School"
+                        value={selectedSubmission.institution_name}
+                      />
+                      <DetailField
+                        label="School Type"
+                        value={selectedSubmission.institution_type}
+                      />
+                      <DetailField
+                        label="Group Name"
+                        value={selectedSubmission.group_name}
+                      />
+                      <DetailField
+                        label="Region"
+                        value={selectedSubmission.school_region}
+                      />
+                      <DetailField
+                        label="Pathway"
+                        value={selectedSubmission.art_pathway_name_en}
+                      />
+                      <DetailField
+                        label="Arabic Pathway"
+                        value={derived.arabicPathway}
+                      />
+                      <DetailField
+                        label="Subpathway"
+                        value={selectedSubmission.art_sub_pathway_name_en}
+                      />
+                      <DetailField
+                        label="Arabic Subpathway"
+                        value={derived.arabicSubpathway}
+                      />
+                      <DetailField
+                        label="Students ESIS"
+                        value={
+                          selectedSubmission.participating_students_esis_numbers
+                        }
+                      />
+                      <DetailField
+                        label="Students Names"
+                        value={derived.studentNames}
+                      />
+                      <DetailField
+                        label="Students Grades"
+                        value={normalizeGrade(
+                          selectedSubmission.participating_students_grades
+                        )}
+                      />
+                      <DetailField
+                        label="Genders"
+                        value={selectedSubmission.participating_students_genders}
+                      />
+                      <DetailField
+                        label="Nationalities"
+                        value={
+                          selectedSubmission.participating_students_nationalities
+                        }
+                      />
+                    </>
+                  )}
+
+                  {!isLimitedSubmissionDetailsView &&
+                    selectedSubmission.artistic_rating && (
+                      <DetailField
+                        label="ADEK Artistic Rating"
+                        value={
+                          artisticRatingLabels[
+                            selectedSubmission.artistic_rating
+                          ] ?? selectedSubmission.artistic_rating
+                        }
+                      />
+                    )}
+
+                  {!isLimitedSubmissionDetailsView &&
+                    selectedSubmission.management_artistic_rating && (
+                      <DetailField
+                        label="Management Artistic Rating"
+                        value={
+                          artisticRatingLabels[
+                            selectedSubmission.management_artistic_rating
+                          ] ?? selectedSubmission.management_artistic_rating
+                        }
+                      />
+                    )}
+
+                  {selectedAssignment.correction_source_phase && (
                     <DetailField
-                      label="Students Grades"
-                      value={normalizeGrade(
-                        selectedSubmission.participating_students_grades
+                      label="Correction requested from"
+                      value={getCorrectionSourceLabel(
+                        selectedAssignment.correction_source_phase
                       )}
-                    />
-                  </>
-                ) : (
-                  <>
-                    <DetailField
-                      label="Reference ID"
-                      value={selectedSubmission.reference_id}
-                    />
-                    <DetailField
-                      label="Registration ID"
-                      value={selectedSubmission.registration_id}
-                    />
-                    <DetailField
-                      label="Registration Status"
-                      value={selectedSubmission.registration_status}
-                    />
-                    <DetailField
-                      label="Submission Date"
-                      value={
-                        selectedSubmission.submission_date_value ??
-                        selectedSubmission.submission_date
-                      }
-                    />
-                    <DetailField label="School" value={selectedSubmission.institution_name} />
-                    <DetailField
-                      label="School Type"
-                      value={selectedSubmission.institution_type}
-                    />
-                    <DetailField
-                      label="Group Name"
-                      value={selectedSubmission.group_name}
-                    />
-                    <DetailField label="Region" value={selectedSubmission.school_region} />
-                    <DetailField
-                      label="Pathway"
-                      value={selectedSubmission.art_pathway_name_en}
-                    />
-                    <DetailField label="Arabic Pathway" value={derived.arabicPathway} />
-                    <DetailField
-                      label="Subpathway"
-                      value={selectedSubmission.art_sub_pathway_name_en}
-                    />
-                    <DetailField
-                      label="Arabic Subpathway"
-                      value={derived.arabicSubpathway}
-                    />
-                    <DetailField
-                      label="Students ESIS"
-                      value={selectedSubmission.participating_students_esis_numbers}
-                    />
-                    <DetailField label="Students Names" value={derived.studentNames} />
-                    <DetailField
-                      label="Students Grades"
-                      value={normalizeGrade(
-                        selectedSubmission.participating_students_grades
-                      )}
-                    />
-                    <DetailField
-                      label="Genders"
-                      value={selectedSubmission.participating_students_genders}
-                    />
-                    <DetailField
-                      label="Nationalities"
-                      value={selectedSubmission.participating_students_nationalities}
-                    />
-                  </>
-                )}
-
-                {!isAdekEvaluatorView && selectedSubmission.artistic_rating && (
-                  <DetailField
-                    label="ADEK Artistic Rating"
-                    value={
-                      artisticRatingLabels[selectedSubmission.artistic_rating] ??
-                      selectedSubmission.artistic_rating
-                    }
-                  />
-                )}
-
-                {!isAdekEvaluatorView &&
-                  selectedSubmission.management_artistic_rating && (
-                    <DetailField
-                      label="Management Artistic Rating"
-                      value={
-                        artisticRatingLabels[
-                          selectedSubmission.management_artistic_rating
-                        ] ?? selectedSubmission.management_artistic_rating
-                      }
                     />
                   )}
 
-                {selectedAssignment.correction_source_phase && (
-                  <DetailField
-                    label="Correction requested from"
-                    value={getCorrectionSourceLabel(
-                      selectedAssignment.correction_source_phase
-                    )}
-                  />
-                )}
-
-                {selectedAssignment.correction_reason && (
-                  <DetailField
-                    label="Correction Reason"
-                    value={
-                      correctionReasonLabels[selectedAssignment.correction_reason] ??
-                      selectedAssignment.correction_reason
-                    }
-                  />
-                )}
-              </dl>
-
-              <SourceButtons submission={selectedSubmission} />
-            </div>
-
-            {phase === "coordinator_check" && (
-              <>
-                <CorrectionSourceCard assignment={selectedAssignment} />
-                <CoordinatorUpdatedArtworkUpload
-                  submission={selectedSubmission}
-                  currentPath={currentPath}
-                />
-              </>
-            )}
-
-            {phase === "final_review" && (
-              <ReviewerOriginalUpdatedComparison
-                submission={selectedSubmission}
-                derived={derived}
-              />
-            )}
-
-            {phase !== "adek_evaluation" && (
-              <div className="card">
-                <h3>Artwork Text and Narrative</h3>
-
-                <div className="grid grid-2">
-                  <TextBlock label="English Title" value={derived.englishTitle} />
-                  <TextBlock label="Arabic Title" value={derived.arabicTitle} />
-                  <TextBlock
-                    label="English Description"
-                    value={derived.englishDescription}
-                  />
-                  <TextBlock
-                    label="Arabic Description"
-                    value={derived.arabicDescription}
-                  />
-
-                  <TextBlock
-                    label="Did anyone or anything influence your idea, such as family, an artist, or a place?"
-                    value={derived.influence}
-                  />
-
-                  <TextBlock
-                    label="What was the most enjoyable part of creating your work?"
-                    value={derived.enjoyable}
-                  />
-
-                  <TextBlock
-                    label="What elements did you focus on in your artwork, and why?"
-                    value={derived.elements}
-                  />
-                </div>
+                  {selectedAssignment.correction_reason && (
+                    <DetailField
+                      label="Correction Reason"
+                      value={
+                        correctionReasonLabels[
+                          selectedAssignment.correction_reason
+                        ] ?? selectedAssignment.correction_reason
+                      }
+                    />
+                  )}
+                </dl>
               </div>
-            )}
+
+              {phase === "coordinator_check" && (
+                <CorrectionSourceCard assignment={selectedAssignment} />
+              )}
+
+              {phase === "final_review" && (
+                <ReviewerOriginalUpdatedComparison
+                  submission={selectedSubmission}
+                  derived={derived}
+                />
+              )}
+
+              {phase !== "adek_evaluation" && (
+                <div className="card">
+                  <h3>Artwork Text and Narrative</h3>
+
+                  <div className="grid grid-2">
+                    <TextBlock
+                      label="English Title"
+                      value={derived.englishTitle}
+                    />
+                    <TextBlock
+                      label="Arabic Title"
+                      value={derived.arabicTitle}
+                    />
+                    <TextBlock
+                      label="English Description"
+                      value={derived.englishDescription}
+                    />
+                    <TextBlock
+                      label="Arabic Description"
+                      value={derived.arabicDescription}
+                    />
+
+                    <TextBlock
+                      label="Did anyone or anything influence your idea, such as family, an artist, or a place?"
+                      value={derived.influence}
+                    />
+
+                    <TextBlock
+                      label="What was the most enjoyable part of creating your work?"
+                      value={derived.enjoyable}
+                    />
+
+                    <TextBlock
+                      label="What elements did you focus on in your artwork, and why?"
+                      value={derived.elements}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
 
             <form
               key={`${selectedAssignment.id}-${selectedSubmission.id}`}
-              className="card"
+              className="card workspace-task-action-box"
               action="/api/work/complete"
               method="post"
             >
@@ -994,9 +1022,11 @@ export function WorkspaceClient({
                 )}
               </div>
 
+              <SourceButtons submission={selectedSubmission} />
+
               {phase === "adek_evaluation" && (
                 <>
-                  <div className="card" style={{ marginTop: 16 }}>
+                  <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
                     <h4 style={{ marginTop: 0 }}>Artwork File Quality Check</h4>
 
                     <label>
@@ -1142,8 +1172,6 @@ export function WorkspaceClient({
                       </label>
                     </>
                   )}
-
-                  <SourceButtons submission={selectedSubmission} />
                 </>
               )}
 
@@ -1159,7 +1187,10 @@ export function WorkspaceClient({
                     derived={derived}
                   />
 
-                  <SourceButtons submission={selectedSubmission} />
+                  <CoordinatorUpdatedArtworkUpload
+                    submission={selectedSubmission}
+                    currentPath={currentPath}
+                  />
 
                   <div
                     style={{
@@ -1237,17 +1268,13 @@ export function WorkspaceClient({
                       </select>
                     </label>
                   )}
-
-                  <SourceButtons submission={selectedSubmission} />
                 </>
               )}
 
               {phase === "literary_proofreading" && (
                 <>
-                  <div className="card" style={{ marginTop: 16 }}>
-                    <h4 style={{ marginTop: 0 }}>
-                      Literary Suitability Check
-                    </h4>
+                  <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
+                    <h4 style={{ marginTop: 0 }}>Literary Suitability Check</h4>
 
                     <label>
                       <span className="small">
@@ -1256,8 +1283,7 @@ export function WorkspaceClient({
                           for publication?
                         </strong>
                         <br />
-                        هل يتوافق العمل الفني مع أهداف المبادرة، وهل هو مناسب
-                        للنشر؟
+                        هل يتوافق العمل الفني مع أهداف المبادرة، وهل هو مناسب للنشر؟
                       </span>
 
                       <select
@@ -1306,8 +1332,6 @@ export function WorkspaceClient({
                       </p>
                     </>
                   )}
-
-                  <SourceButtons submission={selectedSubmission} />
                 </>
               )}
 
@@ -1343,8 +1367,6 @@ export function WorkspaceClient({
                       <option value="excellent">ممتاز / Excellent</option>
                     </select>
                   </label>
-
-                  <SourceButtons submission={selectedSubmission} />
                 </>
               )}
 
@@ -1362,8 +1384,6 @@ export function WorkspaceClient({
                       <option value="completed">Mark as Ready</option>
                     </select>
                   </label>
-
-                  <SourceButtons submission={selectedSubmission} />
                 </>
               )}
 
@@ -1375,8 +1395,7 @@ export function WorkspaceClient({
                     name="coordinator_action"
                     value="return_corrected"
                   >
-                    {selectedAssignment.correction_source_phase ===
-                    "adek_evaluation"
+                    {selectedAssignment.correction_source_phase === "adek_evaluation"
                       ? "Return to Evaluator"
                       : "Return to Proofreader"}
                   </button>
@@ -1417,8 +1436,7 @@ export function WorkspaceClient({
                     type="submit"
                     name="task_action"
                     value={
-                      phase === "adek_evaluation" &&
-                      adekFileQualityClear === "no"
+                      phase === "adek_evaluation" && adekFileQualityClear === "no"
                         ? "send_correction"
                         : "complete"
                     }
