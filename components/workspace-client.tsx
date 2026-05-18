@@ -38,6 +38,8 @@ const correctionSourceLabels: Record<string, string> = {
   adek_evaluation: "ADEK Evaluation",
   proofreading: "General Proofreading",
   literary_proofreading: "Literary Proofreading",
+  final_review: "Final Review",
+  management_review: "Management Review",
   coordinator_check: "Coordinator Correction",
 };
 
@@ -90,10 +92,9 @@ function normalizeGrade(value: unknown) {
   return raw
     .split(";")
     .map((item) => {
-      const clean = item.trim();
-      const match = clean.match(/grade\s*([0-9]{1,2})/i);
+      const match = item.match(/grade\s*([0-9]{1,2})/i);
       if (match) return `Grade ${Number(match[1])}`;
-      return clean;
+      return item.trim();
     })
     .filter(Boolean)
     .join("; ");
@@ -211,6 +212,7 @@ function getDerivedFields(submission: any) {
   };
 }
 
+
 function getOriginalImportedFields(submission: any) {
   return {
     englishTitle: rawText(submission.raw_data, [
@@ -254,24 +256,6 @@ function getOriginalImportedFields(submission: any) {
       "What elements did you focus on",
     ]),
   };
-}
-
-function DetailField({ label, value }: { label: string; value: unknown }) {
-  return (
-    <>
-      <dt>{label}</dt>
-      <dd dir="auto">{displayText(value)}</dd>
-    </>
-  );
-}
-
-function TextBlock({ label, value }: { label: string; value: unknown }) {
-  return (
-    <div className="submission-text-block">
-      <strong>{label}</strong>
-      <div dir="auto">{displayText(value)}</div>
-    </div>
-  );
 }
 
 function ComparisonRow({
@@ -379,6 +363,24 @@ function ReviewerOriginalUpdatedComparison({
   );
 }
 
+function DetailField({ label, value }: { label: string; value: unknown }) {
+  return (
+    <>
+      <dt>{label}</dt>
+      <dd dir="auto">{displayText(value)}</dd>
+    </>
+  );
+}
+
+function TextBlock({ label, value }: { label: string; value: unknown }) {
+  return (
+    <div className="submission-text-block">
+      <strong>{label}</strong>
+      <div dir="auto">{displayText(value)}</div>
+    </div>
+  );
+}
+
 function TaskHistory({ history }: { history: any[] }) {
   if (!history?.length) return null;
 
@@ -416,14 +418,14 @@ function TaskHistory({ history }: { history: any[] }) {
 
             {item.correction_source_phase && (
               <span className="muted small">
-                Correction source: {" "}
+                Correction source:{" "}
                 {getCorrectionSourceLabel(item.correction_source_phase)}
               </span>
             )}
 
             {item.correction_reason && (
               <span className="muted small">
-                Reason: {" "}
+                Reason:{" "}
                 {correctionReasonLabels[item.correction_reason] ??
                   item.correction_reason}
               </span>
@@ -549,7 +551,7 @@ function CoordinatorUpdatedArtworkUpload({
 
       {submission.updated_artwork_file_url && (
         <p className="muted small">
-          Current updated file/folder: {" "}
+          Current updated file/folder:{" "}
           <a
             href={submission.updated_artwork_file_url}
             target="_blank"
@@ -652,6 +654,7 @@ export function WorkspaceClient({
     setCulturalAuthenticity("yes");
     setArtisticExcellence("yes");
     setEthicalAppropriateness("yes");
+
     setArtisticRating(selectedSubmission.artistic_rating ?? "good");
 
     setManagementArtisticRating(
@@ -703,7 +706,7 @@ export function WorkspaceClient({
                 onClick={() => setSelectedId(assignment.id)}
               >
                 <strong>
-                  {index + 1}. {" "}
+                  {index + 1}.{" "}
                   {fields?.artworkName ?? submission?.reference_id ?? "Unknown"}
                 </strong>
 
@@ -713,15 +716,17 @@ export function WorkspaceClient({
 
                 {isLimitedSubmissionDetailsView && (
                   <span>
-                    {submission?.art_pathway_name_en ?? "Unknown pathway"} · {" "}
-                    {normalizeGrade(submission?.participating_students_grades) ||
-                      "Grade unavailable"}
+                    {submission?.art_pathway_name_en ?? "Unknown pathway"} ·{" "}
+                    {normalizeGrade(
+                      submission?.participating_students_grades
+                    ) || "Grade unavailable"}
                   </span>
                 )}
 
                 {assignment.correction_source_phase && (
                   <span>
-                    From: {getCorrectionSourceLabel(assignment.correction_source_phase)}
+                    From:{" "}
+                    {getCorrectionSourceLabel(assignment.correction_source_phase)}
                   </span>
                 )}
 
@@ -816,7 +821,10 @@ export function WorkspaceClient({
                       label="School Type"
                       value={selectedSubmission.institution_type}
                     />
-                    <DetailField label="Group Name" value={selectedSubmission.group_name} />
+                    <DetailField
+                      label="Group Name"
+                      value={selectedSubmission.group_name}
+                    />
                     <DetailField label="Region" value={selectedSubmission.school_region} />
                     <DetailField
                       label="Pathway"
@@ -1109,13 +1117,35 @@ export function WorkspaceClient({
                           className="input"
                           name="artistic_rating"
                           value={artisticRating}
-                          onChange={(event) => setArtisticRating(event.target.value)}
+                          onChange={(event) =>
+                            setArtisticRating(event.target.value)
+                          }
                         >
                           <option value="weak">ضعيف / Weak</option>
                           <option value="medium">متوسط / Medium</option>
                           <option value="good">جيد / Good</option>
                           <option value="excellent">ممتاز / Excellent</option>
                         </select>
+                      </label>
+
+                      <label style={{ display: "block", marginTop: 16 }}>
+                        <span className="small">
+                          <strong>Evaluator Comment</strong>
+                          <br />
+                          ملاحظات المحكم
+                        </span>
+
+                        <textarea
+                          className="input"
+                          name="evaluator_comment"
+                          rows={5}
+                          dir="auto"
+                          placeholder="Add any notes or comments about this evaluation..."
+                          defaultValue={displayText(
+                            selectedSubmission.evaluator_comment,
+                            ""
+                          )}
+                        />
                       </label>
                     </>
                   )}
@@ -1137,6 +1167,42 @@ export function WorkspaceClient({
                   />
 
                   <SourceButtons submission={selectedSubmission} />
+
+                  <div
+                    style={{
+                      marginTop: 18,
+                      padding: 16,
+                      borderRadius: 16,
+                      background: "#fff1f1",
+                      border: "1px solid rgba(155, 47, 47, 0.25)",
+                    }}
+                  >
+                    <strong>Coordinator Disqualification</strong>
+
+                    <p className="muted small" style={{ marginTop: 8 }}>
+                      Use only if the correction cannot be completed.
+                    </p>
+
+                    <div className="actions" style={{ marginTop: 12 }}>
+                      <button
+                        className="btn secondary"
+                        type="submit"
+                        name="coordinator_action"
+                        value="disqualify_no_school_response"
+                      >
+                        Disqualify: No response from school
+                      </button>
+
+                      <button
+                        className="btn secondary"
+                        type="submit"
+                        name="coordinator_action"
+                        value="disqualify_incomplete_faulty"
+                      >
+                        Disqualify: New submission remains incomplete/faulty
+                      </button>
+                    </div>
+                  </div>
                 </>
               )}
 
@@ -1186,7 +1252,9 @@ export function WorkspaceClient({
               {phase === "literary_proofreading" && (
                 <>
                   <div className="card" style={{ marginTop: 16 }}>
-                    <h4 style={{ marginTop: 0 }}>Literary Suitability Check</h4>
+                    <h4 style={{ marginTop: 0 }}>
+                      Literary Suitability Check
+                    </h4>
 
                     <label>
                       <span className="small">
@@ -1307,12 +1375,24 @@ export function WorkspaceClient({
               )}
 
               <div className="actions" style={{ marginTop: 16 }}>
-                {phase === "literary_proofreading" ? (
+                {phase === "coordinator_check" ? (
+                  <button
+                    className="btn"
+                    type="submit"
+                    name="coordinator_action"
+                    value="return_corrected"
+                  >
+                    {selectedAssignment.correction_source_phase ===
+                    "adek_evaluation"
+                      ? "Return to Evaluator"
+                      : "Return to Proofreader"}
+                  </button>
+                ) : phase === "literary_proofreading" ? (
                   literaryPublicationSuitable === "no" ? (
                     <button
                       className="btn"
                       type="submit"
-                      name="literary_decision"
+                      name="literary_action"
                       value="needs_review"
                     >
                       Needs Review
@@ -1322,7 +1402,7 @@ export function WorkspaceClient({
                       <button
                         className="btn"
                         type="submit"
-                        name="literary_decision"
+                        name="literary_action"
                         value="completed"
                       >
                         Mark Done
@@ -1331,7 +1411,7 @@ export function WorkspaceClient({
                       <button
                         className="btn secondary"
                         type="submit"
-                        name="literary_decision"
+                        name="literary_action"
                         value="needs_correction"
                       >
                         Send for Correction
@@ -1344,19 +1424,18 @@ export function WorkspaceClient({
                     type="submit"
                     name="task_action"
                     value={
-                      phase === "adek_evaluation" && adekFileQualityClear === "no"
+                      phase === "adek_evaluation" &&
+                      adekFileQualityClear === "no"
                         ? "send_correction"
                         : "complete"
                     }
                   >
-                    {phase === "coordinator_check"
-                      ? "Ready for Proofreader"
-                      : phase === "final_review"
-                        ? "Mark as Ready"
-                        : phase === "adek_evaluation" &&
-                            adekFileQualityClear === "no"
-                          ? "Send for Correction"
-                          : "Mark Done & Open Next"}
+                    {phase === "final_review"
+                      ? "Mark as Ready"
+                      : phase === "adek_evaluation" &&
+                          adekFileQualityClear === "no"
+                        ? "Send for Correction"
+                        : "Mark Done & Open Next"}
                   </button>
                 )}
               </div>
