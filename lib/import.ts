@@ -541,6 +541,12 @@ export async function processImportWorkbook(
     }
 
     await updateProgress(batchId, {
+      current_step: "Refreshing analytics dashboard",
+    });
+
+    await refreshAnalyticsAfterImport(batchId);
+
+    await updateProgress(batchId, {
       status: "completed",
       current_step: "Import completed",
       rows_processed: totalRows,
@@ -582,6 +588,22 @@ export async function processImportWorkbook(
       },
     });
   }
+}
+
+async function refreshAnalyticsAfterImport(batchId: string) {
+  const { error } = await supabaseAdmin.rpc("refresh_analytics_materialized_views");
+
+  if (!error) return;
+
+  console.error("Analytics refresh after import failed:", error.message);
+
+  await supabaseAdmin.from("import_errors").insert({
+    import_batch_id: batchId,
+    row_number: null,
+    reference_id: null,
+    error_type: "analytics_refresh_failed",
+    error_message: error.message,
+  });
 }
 
 function chunkArray<T>(items: T[], size: number) {
