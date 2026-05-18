@@ -27,8 +27,18 @@ function languageLabel(value: string | null | undefined) {
   return "Not classified";
 }
 
-export default async function LiteraryLanguagePage() {
+export default async function LiteraryLanguagePage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const user = await requireUser(["admin"]);
+  const params = (await searchParams) ?? {};
+
+  const saved = Array.isArray(params.saved) ? params.saved[0] : params.saved;
+  const errorMessage = Array.isArray(params.error)
+    ? params.error[0]
+    : params.error;
 
   const { data, error } = await supabaseAdmin
     .from("submissions")
@@ -36,6 +46,7 @@ export default async function LiteraryLanguagePage() {
       `
       id,
       reference_id,
+      art_link,
       artwork_title_en,
       artwork_title_ar,
       description_en,
@@ -54,6 +65,8 @@ export default async function LiteraryLanguagePage() {
         "art_sub_pathway_name_en.ilike.%Literary%",
         "art_pathway_name_en.ilike.%Literary Expressions%",
         "art_sub_pathway_name_en.ilike.%Frontliner Tribute%",
+        "art_pathway_name_ar.ilike.%الأدبية%",
+        "art_sub_pathway_name_ar.ilike.%الأدبية%",
       ].join(",")
     )
     .order("literary_language", { ascending: true, nullsFirst: true })
@@ -61,8 +74,15 @@ export default async function LiteraryLanguagePage() {
     .limit(500);
 
   const submissions = data ?? [];
-  const notClassified = submissions.filter((row: any) => !row.literary_language);
-  const arabic = submissions.filter((row: any) => row.literary_language === "arabic");
+
+  const notClassified = submissions.filter(
+    (row: any) => !row.literary_language
+  );
+
+  const arabic = submissions.filter(
+    (row: any) => row.literary_language === "arabic"
+  );
+
   const englishOrOthers = submissions.filter(
     (row: any) => row.literary_language === "english_or_others"
   );
@@ -74,6 +94,7 @@ export default async function LiteraryLanguagePage() {
       <div className="table-title-row">
         <div>
           <h1>Literary Language Classification</h1>
+
           <p className="muted">
             Classify literary submissions as Arabic or English/Others so the
             system can send them to the correct literary proofreader.
@@ -81,7 +102,27 @@ export default async function LiteraryLanguagePage() {
         </div>
       </div>
 
-      <div className="grid grid-3">
+      {saved && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <p className="pill">Language classification saved.</p>
+        </div>
+      )}
+
+      {errorMessage && (
+        <div
+          className="card"
+          style={{
+            marginTop: 16,
+            background: "#fff1f1",
+            border: "1px solid #d88",
+          }}
+        >
+          <strong>Error:</strong>{" "}
+          <span className="muted">{decodeURIComponent(errorMessage)}</span>
+        </div>
+      )}
+
+      <div className="grid grid-3" style={{ marginTop: 16 }}>
         <div className="card">
           <strong>Not Classified</strong>
           <p className="stat-number">{notClassified.length}</p>
@@ -107,6 +148,11 @@ export default async function LiteraryLanguagePage() {
         <div className="card" style={{ marginTop: 16 }}>
           <h2>Literary Submissions</h2>
 
+          <p className="muted">
+            Open the source file when needed to review the artwork before
+            classifying the language.
+          </p>
+
           <div className="table-wrap">
             <table>
               <thead>
@@ -115,6 +161,7 @@ export default async function LiteraryLanguagePage() {
                   <th>Reference ID</th>
                   <th>Pathway</th>
                   <th>Grade</th>
+                  <th>Source File</th>
                   <th>Current Language</th>
                   <th>Classify</th>
                 </tr>
@@ -125,6 +172,7 @@ export default async function LiteraryLanguagePage() {
                   <tr key={submission.id}>
                     <td>
                       <strong dir="auto">{getTitle(submission)}</strong>
+
                       <div className="muted small" dir="auto">
                         {displayText(
                           submission.description_en || submission.description_ar
@@ -136,12 +184,30 @@ export default async function LiteraryLanguagePage() {
 
                     <td>
                       {displayText(submission.art_pathway_name_en)}
+
                       <div className="muted small">
                         {displayText(submission.art_sub_pathway_name_en)}
                       </div>
                     </td>
 
-                    <td>{displayText(submission.participating_students_grades)}</td>
+                    <td>
+                      {displayText(submission.participating_students_grades)}
+                    </td>
+
+                    <td>
+                      {submission.art_link ? (
+                        <a
+                          className="btn secondary"
+                          href={submission.art_link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Open Source File
+                        </a>
+                      ) : (
+                        <span className="muted small">No source file</span>
+                      )}
+                    </td>
 
                     <td>
                       <span className="pill">
@@ -184,7 +250,7 @@ export default async function LiteraryLanguagePage() {
 
                 {submissions.length === 0 && (
                   <tr>
-                    <td colSpan={6}>No literary submissions found.</td>
+                    <td colSpan={7}>No literary submissions found.</td>
                   </tr>
                 )}
               </tbody>

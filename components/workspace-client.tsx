@@ -38,8 +38,6 @@ const correctionSourceLabels: Record<string, string> = {
   adek_evaluation: "ADEK Evaluation",
   proofreading: "General Proofreading",
   literary_proofreading: "Literary Proofreading",
-  final_review: "Final Review",
-  management_review: "Management Review",
   coordinator_check: "Coordinator Correction",
 };
 
@@ -676,10 +674,7 @@ export function WorkspaceClient({
     ethicalAppropriateness
   );
 
-  const isLimitedSubmissionDetailsView =
-    phase === "adek_evaluation" ||
-    phase === "proofreading" ||
-    phase === "literary_proofreading";
+  const isAdekEvaluatorView = phase === "adek_evaluation";
 
   return (
     <div className="workspace-shell">
@@ -710,11 +705,11 @@ export function WorkspaceClient({
                   {fields?.artworkName ?? submission?.reference_id ?? "Unknown"}
                 </strong>
 
-                {!isLimitedSubmissionDetailsView && (
+                {!isAdekEvaluatorView && (
                   <span>{submission?.institution_name ?? "Unknown school"}</span>
                 )}
 
-                {isLimitedSubmissionDetailsView && (
+                {isAdekEvaluatorView && (
                   <span>
                     {submission?.art_pathway_name_en ?? "Unknown pathway"} ·{" "}
                     {normalizeGrade(
@@ -746,8 +741,6 @@ export function WorkspaceClient({
       </aside>
 
       <section className="workspace-main">
-        {phase === "literary_proofreading" && <LiteraryCriteriaCard />}
-
         {!selectedAssignment || !selectedSubmission || !derived ? (
           <div className="card">
             <h2>No artwork selected</h2>
@@ -760,7 +753,7 @@ export function WorkspaceClient({
                 <div>
                   <h2 style={{ marginTop: 0 }}>{derived.artworkName}</h2>
 
-                  {!isLimitedSubmissionDetailsView && (
+                  {!isAdekEvaluatorView && (
                     <p className="muted small">
                       Reference ID: {selectedSubmission.reference_id}
                     </p>
@@ -781,7 +774,7 @@ export function WorkspaceClient({
               </div>
 
               <dl className="detail-grid" style={{ marginTop: 18 }}>
-                {isLimitedSubmissionDetailsView ? (
+                {isAdekEvaluatorView ? (
                   <>
                     <DetailField
                       label="Pathway"
@@ -861,7 +854,7 @@ export function WorkspaceClient({
                   </>
                 )}
 
-                {!isLimitedSubmissionDetailsView && selectedSubmission.artistic_rating && (
+                {!isAdekEvaluatorView && selectedSubmission.artistic_rating && (
                   <DetailField
                     label="ADEK Artistic Rating"
                     value={
@@ -871,7 +864,7 @@ export function WorkspaceClient({
                   />
                 )}
 
-                {!isLimitedSubmissionDetailsView &&
+                {!isAdekEvaluatorView &&
                   selectedSubmission.management_artistic_rating && (
                     <DetailField
                       label="Management Artistic Rating"
