@@ -7,10 +7,16 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function redirectBack(req: Request, params: Record<string, string>) {
+  const page = params.page;
   const url = new URL("/admin/literary-language", req.url);
 
   for (const [key, value] of Object.entries(params)) {
+    if (key === "page") continue;
     url.searchParams.set(key, value);
+  }
+
+  if (page) {
+    url.searchParams.set("page", page);
   }
 
   return NextResponse.redirect(url, {
@@ -19,12 +25,15 @@ function redirectBack(req: Request, params: Record<string, string>) {
 }
 
 export async function POST(req: Request) {
+  let page = "1";
+
   try {
     const user = await requireUser(["admin"]);
     const form = await req.formData();
 
     const submissionId = String(form.get("submission_id") ?? "");
     const literaryLanguage = String(form.get("literary_language") ?? "");
+    page = String(form.get("page") ?? "1");
 
     if (!submissionId) throw new Error("Missing submission ID.");
 
@@ -63,12 +72,14 @@ export async function POST(req: Request) {
 
     return redirectBack(req, {
       saved: "1",
+      page,
     });
   } catch (error: any) {
     console.error("Literary language update failed:", error);
 
     return redirectBack(req, {
       error: error.message ?? "Could not update literary language.",
+      page,
     });
   }
 }

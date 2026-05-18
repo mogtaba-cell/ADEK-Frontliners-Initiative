@@ -1,8 +1,20 @@
+import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { Nav } from "@/components/nav";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
+
+const PAGE_SIZE = 100;
+
+const LITERARY_FILTER = [
+  "art_pathway_name_en.ilike.%Literary%",
+  "art_sub_pathway_name_en.ilike.%Literary%",
+  "art_pathway_name_en.ilike.%Literary Expressions%",
+  "art_sub_pathway_name_en.ilike.%Frontliner Tribute%",
+  "art_pathway_name_ar.ilike.%الأدبية%",
+  "art_sub_pathway_name_ar.ilike.%الأدبية%",
+].join(",");
 
 function displayText(value: unknown, fallback = "—") {
   if (value === null || value === undefined || String(value).trim() === "") {
@@ -27,6 +39,36 @@ function languageLabel(value: string | null | undefined) {
   return "Not classified";
 }
 
+function getSingleParam(
+  params: Record<string, string | string[] | undefined>,
+  key: string
+) {
+  const value = params[key];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function buildPageHref(page: number) {
+  return `/admin/literary-language?page=${page}`;
+}
+
+async function getLiteraryLanguageCount(
+  language: "arabic" | "english_or_others" | null
+) {
+  let query = supabaseAdmin
+    .from("submissions")
+    .select("id", { count: "exact", head: true })
+    .or(LITERARY_FILTER);
+
+  if (language === null) {
+    query = query.is("literary_language", null);
+  } else {
+    query = query.eq("literary_language", language);
+  }
+
+  const { count } = await query;
+  return count ?? 0;
+}
+
 export default async function LiteraryLanguagePage({
   searchParams,
 }: {
@@ -35,12 +77,16 @@ export default async function LiteraryLanguagePage({
   const user = await requireUser(["admin"]);
   const params = (await searchParams) ?? {};
 
-  const saved = Array.isArray(params.saved) ? params.saved[0] : params.saved;
-  const errorMessage = Array.isArray(params.error)
-    ? params.error[0]
-    : params.error;
+  const pageParam = Number(getSingleParam(params, "page") ?? "1");
+  const currentPage = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
 
-  const { data, error } = await supabaseAdmin
+  const saved = getSingleParam(params, "saved");
+  const errorMessage = getSingleParam(params, "error");
+
+  const from = (currentPage - 1) * PAGE_SIZE;
+  const to = from + PAGE_SIZE - 1;
+
+  const submissionsQuery = supabaseAdmin
     .from("submissions")
     .select(
       `
@@ -57,35 +103,35 @@ export default async function LiteraryLanguagePage({
       literary_language,
       workflow_status,
       updated_at
-      `
+      `,
+      { count: "exact" }
     )
-    .or(
-      [
-        "art_pathway_name_en.ilike.%Literary%",
-        "art_sub_pathway_name_en.ilike.%Literary%",
-        "art_pathway_name_en.ilike.%Literary Expressions%",
-        "art_sub_pathway_name_en.ilike.%Frontliner Tribute%",
-        "art_pathway_name_ar.ilike.%الأدبية%",
-        "art_sub_pathway_name_ar.ilike.%الأدبية%",
-      ].join(",")
-    )
+    .or(LITERARY_FILTER)
     .order("literary_language", { ascending: true, nullsFirst: true })
     .order("updated_at", { ascending: false })
-    .limit(500);
+    .range(from, to);
+
+  const [
+    submissionsResult,
+    notClassifiedCount,
+    arabicCount,
+    englishOrOthersCount,
+  ] = await Promise.all([
+    submissionsQuery,
+    getLiteraryLanguageCount(null),
+    getLiteraryLanguageCount("arabic"),
+    getLiteraryLanguageCount("english_or_others"),
+  ]);
+
+  const { data, error, count } = submissionsResult;
 
   const submissions = data ?? [];
+  const totalSubmissions = count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalSubmissions / PAGE_SIZE));
 
-  const notClassified = submissions.filter(
-    (row: any) => !row.literary_language
-  );
-
-  const arabic = submissions.filter(
-    (row: any) => row.literary_language === "arabic"
-  );
-
-  const englishOrOthers = submissions.filter(
-    (row: any) => row.literary_language === "english_or_others"
-  );
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const showingFrom = totalSubmissions === 0 ? 0 : from + 1;
+  const showingTo = Math.min(from + submissions.length, totalSubmissions);
 
   return (
     <main className="container">
@@ -125,17 +171,17 @@ export default async function LiteraryLanguagePage({
       <div className="grid grid-3" style={{ marginTop: 16 }}>
         <div className="card">
           <strong>Not Classified</strong>
-          <p className="stat-number">{notClassified.length}</p>
+          <p className="stat-number">{notClassifiedCount}</p>
         </div>
 
         <div className="card">
           <strong>Arabic</strong>
-          <p className="stat-number">{arabic.length}</p>
+          <p className="stat-number">{arabicCount}</p>
         </div>
 
         <div className="card">
           <strong>English or Others</strong>
-          <p className="stat-number">{englishOrOthers.length}</p>
+          <p className="stat-number">{englishOrOthersCount}</p>
         </div>
       </div>
 
@@ -146,12 +192,55 @@ export default async function LiteraryLanguagePage({
         </div>
       ) : (
         <div className="card" style={{ marginTop: 16 }}>
-          <h2>Literary Submissions</h2>
+          <div className="table-title-row">
+            <div>
+              <h2>Literary Submissions</h2>
+
+              <p className="muted">
+                Showing {showingFrom}–{showingTo} of {totalSubmissions} literary
+                submissions. Each page loads {PAGE_SIZE} records only.
+              </p>
+            </div>
+
+            <div className="actions">
+              <span className="pill">
+                Page {safeCurrentPage} of {totalPages}
+              </span>
+            </div>
+          </div>
 
           <p className="muted">
             Open the source file when needed to review the artwork before
             classifying the language.
           </p>
+
+          <div className="actions" style={{ marginBottom: 16 }}>
+            {safeCurrentPage > 1 ? (
+              <Link
+                className="btn secondary"
+                href={buildPageHref(safeCurrentPage - 1)}
+              >
+                Previous
+              </Link>
+            ) : (
+              <button className="btn secondary" type="button" disabled>
+                Previous
+              </button>
+            )}
+
+            {safeCurrentPage < totalPages ? (
+              <Link
+                className="btn secondary"
+                href={buildPageHref(safeCurrentPage + 1)}
+              >
+                Next
+              </Link>
+            ) : (
+              <button className="btn secondary" type="button" disabled>
+                Next
+              </button>
+            )}
+          </div>
 
           <div className="table-wrap">
             <table>
@@ -227,6 +316,12 @@ export default async function LiteraryLanguagePage({
                           value={submission.id}
                         />
 
+                        <input
+                          type="hidden"
+                          name="page"
+                          value={safeCurrentPage}
+                        />
+
                         <select
                           className="input compact-input"
                           name="literary_language"
@@ -255,6 +350,38 @@ export default async function LiteraryLanguagePage({
                 )}
               </tbody>
             </table>
+          </div>
+
+          <div className="actions" style={{ marginTop: 16 }}>
+            {safeCurrentPage > 1 ? (
+              <Link
+                className="btn secondary"
+                href={buildPageHref(safeCurrentPage - 1)}
+              >
+                Previous
+              </Link>
+            ) : (
+              <button className="btn secondary" type="button" disabled>
+                Previous
+              </button>
+            )}
+
+            {safeCurrentPage < totalPages ? (
+              <Link
+                className="btn secondary"
+                href={buildPageHref(safeCurrentPage + 1)}
+              >
+                Next
+              </Link>
+            ) : (
+              <button className="btn secondary" type="button" disabled>
+                Next
+              </button>
+            )}
+
+            <span className="pill">
+              Page {safeCurrentPage} of {totalPages}
+            </span>
           </div>
         </div>
       )}
