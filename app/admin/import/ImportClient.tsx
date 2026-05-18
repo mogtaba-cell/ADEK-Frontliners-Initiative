@@ -52,11 +52,15 @@ async function readResponse(res: Response) {
 function downloadUserTemplateCsv() {
   const csv = [
     "full_name,email,username,role,proofreader_type,temp_password,is_active",
-    "Test Coordinator,coordinator1@test.local,coordinator1,coordinator,,TempPass123!,true",
-    "Test Evaluator,evaluator1@test.local,evaluator1,evaluator,,TempPass123!,true",
-    "Test Management,management1@test.local,management1,management,,TempPass123!,true",
-    "Test General Proofreader,proofreader1@test.local,proofreader1,proofreader,general,TempPass123!,true",
-    "Test Reviewer,reviewer1@test.local,reviewer1,reviewer,,TempPass123!,true",
+    "Admin User,admin@example.com,admin_user,admin,,ChangeMe@2026,true",
+    "ADEK HQ User,adek_hq@example.com,adek_hq_user,adek_hq,,ChangeMe@2026,true",
+    "ADEK Evaluator 1,adek_evaluator_1@example.com,adek_evaluator_1,evaluator,,ChangeMe@2026,true",
+    "Coordinator 1,coordinator_1@example.com,coordinator_1,coordinator,,ChangeMe@2026,true",
+    "Management 1,management_1@example.com,management_1,management,,ChangeMe@2026,true",
+    "General Proofreader 1,general_proofreader_1@example.com,general_proofreader_1,proofreader,general,ChangeMe@2026,true",
+    "Arabic Literary Proofreader 1,arabic_literary_1@example.com,arabic_literary_1,proofreader,literary_arabic,ChangeMe@2026,true",
+    "English or Other Literary Proofreader 1,english_literary_1@example.com,english_literary_1,proofreader,literary_english_or_others,ChangeMe@2026,true",
+    "Reviewer 1,reviewer_1@example.com,reviewer_1,reviewer,,ChangeMe@2026,true",
   ].join("\n");
 
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
@@ -81,7 +85,9 @@ export default function ImportClient() {
 
   const [userFile, setUserFile] = useState<File | null>(null);
   const [isUserImporting, setIsUserImporting] = useState(false);
-  const [userImportMessage, setUserImportMessage] = useState<string | null>(null);
+  const [userImportMessage, setUserImportMessage] = useState<string | null>(
+    null
+  );
   const [userImportError, setUserImportError] = useState<string | null>(null);
   const [userImportResult, setUserImportResult] =
     useState<UserImportResult | null>(null);
@@ -237,7 +243,11 @@ export default function ImportClient() {
           </a>
         </div>
 
-        <form onSubmit={startImport} className="grid">
+        <form
+          onSubmit={startImport}
+          className="grid"
+          data-no-global-loading="true"
+        >
           <input
             className="input"
             type="file"
@@ -401,16 +411,23 @@ export default function ImportClient() {
         >
           <strong>Required columns:</strong>
           <p className="muted small" style={{ marginBottom: 0 }}>
-            full_name, email, username, role, proofreader_type, temp_password, is_active
+            full_name, email, username, role, proofreader_type, temp_password,
+            is_active
           </p>
 
           <p className="muted small">
             Allowed roles: admin, coordinator, evaluator, management,
-            proofreader, reviewer, adek_hq. For proofreaders use proofreader_type: general or literary
+            proofreader, reviewer, adek_hq. For proofreaders use
+            proofreader_type: general, literary_arabic, or
+            literary_english_or_others.
           </p>
         </div>
 
-        <form onSubmit={startUserImport} className="grid">
+        <form
+          onSubmit={startUserImport}
+          className="grid"
+          data-no-global-loading="true"
+        >
           <input
             className="input"
             type="file"

@@ -26,16 +26,45 @@ function shouldIgnoreLink(link: HTMLAnchorElement) {
   if (link.target && link.target !== "_self") return true;
   if (link.hasAttribute("download")) return true;
   if (link.getAttribute("aria-disabled") === "true") return true;
+  if (link.dataset.noGlobalLoading === "true") return true;
 
   try {
     const url = new URL(href, window.location.href);
+
     if (url.origin !== window.location.origin) return true;
-    if (url.pathname === window.location.pathname && url.search === window.location.search) {
+
+    if (
+      url.pathname === window.location.pathname &&
+      url.search === window.location.search
+    ) {
       return true;
     }
   } catch {
     return true;
   }
+
+  return false;
+}
+
+function shouldIgnoreForm(form: HTMLFormElement) {
+  const target = form.getAttribute("target");
+
+  if (target && target !== "_self") return true;
+
+  if (form.dataset.noGlobalLoading === "true") return true;
+
+  const action = form.getAttribute("action") ?? "";
+
+  if (action.includes("/api/import")) return true;
+  if (action.includes("/admin/import")) return true;
+  if (action.includes("/api/admin/users/bulk-import")) return true;
+  if (action.includes("/api/submissions/updated-artwork")) return true;
+  if (action.includes("/api/admin/export/google-drive")) return true;
+  if (action.includes("/api/export/google-drive")) return true;
+
+  const enctype = form.getAttribute("enctype") ?? form.enctype ?? "";
+
+  if (enctype.toLowerCase().includes("multipart/form-data")) return true;
 
   return false;
 }
@@ -91,8 +120,7 @@ export function GlobalLoading() {
       const form = event.target as HTMLFormElement | null;
       if (!form) return;
 
-      const target = form.getAttribute("target");
-      if (target && target !== "_self") return;
+      if (shouldIgnoreForm(form)) return;
 
       showLoading();
     }
