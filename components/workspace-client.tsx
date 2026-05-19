@@ -258,6 +258,48 @@ function getOriginalImportedFields(submission: any) {
   };
 }
 
+function getReviewerEditableFields(
+  submission: any,
+  derived: ReturnType<typeof getDerivedFields>
+) {
+  const latestFields = {
+    englishTitle: derived.englishTitle,
+    arabicTitle: derived.arabicTitle,
+    englishDescription: derived.englishDescription,
+    arabicDescription: derived.arabicDescription,
+    influence: derived.influence,
+    enjoyable: derived.enjoyable,
+    elements: derived.elements,
+  };
+
+  const literaryUpdatedContent = String(
+    submission?.literary_updated_content ?? ""
+  ).trim();
+
+  if (!literaryUpdatedContent) {
+    return latestFields;
+  }
+
+  if (submission?.literary_language === "arabic") {
+    return {
+      ...latestFields,
+      arabicDescription: literaryUpdatedContent,
+    };
+  }
+
+  if (submission?.literary_language === "english_or_others") {
+    return {
+      ...latestFields,
+      englishDescription: literaryUpdatedContent,
+    };
+  }
+
+  return {
+    ...latestFields,
+    englishDescription: literaryUpdatedContent,
+  };
+}
+
 function DetailField({ label, value }: { label: string; value: unknown }) {
   return (
     <>
@@ -1150,28 +1192,28 @@ export function WorkspaceClient({
                           <option value="excellent">ممتاز / Excellent</option>
                         </select>
                       </label>
-
-                      <label style={{ display: "block", marginTop: 16 }}>
-                        <span className="small">
-                          <strong>Evaluator Comment</strong>
-                          <br />
-                          ملاحظات المحكم
-                        </span>
-
-                        <textarea
-                          className="input"
-                          name="evaluator_comment"
-                          rows={5}
-                          dir="auto"
-                          placeholder="Add any notes or comments about this evaluation..."
-                          defaultValue={displayText(
-                            selectedSubmission.evaluator_comment,
-                            ""
-                          )}
-                        />
-                      </label>
                     </>
                   )}
+
+                  <label style={{ display: "block", marginTop: 16 }}>
+                    <span className="small">
+                      <strong>Evaluator Comment</strong>
+                      <br />
+                      ملاحظات المحكم
+                    </span>
+
+                    <textarea
+                      className="input"
+                      name="evaluator_comment"
+                      rows={5}
+                      dir="auto"
+                      placeholder="Add any notes or comments about this evaluation..."
+                      defaultValue={displayText(
+                        selectedSubmission.evaluator_comment,
+                        ""
+                      )}
+                    />
+                  </label>
                 </>
               )}
 
@@ -1375,6 +1417,10 @@ export function WorkspaceClient({
                   <EditableArtworkText
                     key={`reviewer-edit-${selectedSubmission.id}`}
                     derived={derived}
+                    reviewerFields={getReviewerEditableFields(
+                      selectedSubmission,
+                      derived
+                    )}
                   />
 
                   <label style={{ display: "block", marginTop: 12 }}>
@@ -1462,16 +1508,28 @@ export function WorkspaceClient({
 
 function EditableArtworkText({
   derived,
+  reviewerFields,
 }: {
   derived: ReturnType<typeof getDerivedFields>;
+  reviewerFields?: ReturnType<typeof getReviewerEditableFields>;
 }) {
+  const fields = reviewerFields ?? {
+    englishTitle: derived.englishTitle,
+    arabicTitle: derived.arabicTitle,
+    englishDescription: derived.englishDescription,
+    arabicDescription: derived.arabicDescription,
+    influence: derived.influence,
+    enjoyable: derived.enjoyable,
+    elements: derived.elements,
+  };
+
   return (
     <div className="grid grid-2">
       <label>
         <span className="small">English Title</span>
         <textarea
           name="artwork_title_en"
-          defaultValue={displayText(derived.englishTitle, "")}
+          defaultValue={displayText(fields.englishTitle, "")}
           rows={3}
           dir="auto"
         />
@@ -1481,7 +1539,7 @@ function EditableArtworkText({
         <span className="small">Arabic Title</span>
         <textarea
           name="artwork_title_ar"
-          defaultValue={displayText(derived.arabicTitle, "")}
+          defaultValue={displayText(fields.arabicTitle, "")}
           rows={3}
           dir="auto"
         />
@@ -1491,7 +1549,7 @@ function EditableArtworkText({
         <span className="small">English Description</span>
         <textarea
           name="description_en"
-          defaultValue={displayText(derived.englishDescription, "")}
+          defaultValue={displayText(fields.englishDescription, "")}
           rows={8}
           dir="auto"
         />
@@ -1501,7 +1559,7 @@ function EditableArtworkText({
         <span className="small">Arabic Description</span>
         <textarea
           name="description_ar"
-          defaultValue={displayText(derived.arabicDescription, "")}
+          defaultValue={displayText(fields.arabicDescription, "")}
           rows={8}
           dir="auto"
         />
@@ -1514,7 +1572,7 @@ function EditableArtworkText({
         </span>
         <textarea
           name="influence_idea_source"
-          defaultValue={displayText(derived.influence, "")}
+          defaultValue={displayText(fields.influence, "")}
           rows={5}
           dir="auto"
         />
@@ -1526,7 +1584,7 @@ function EditableArtworkText({
         </span>
         <textarea
           name="most_enjoyable_part"
-          defaultValue={displayText(derived.enjoyable, "")}
+          defaultValue={displayText(fields.enjoyable, "")}
           rows={5}
           dir="auto"
         />
@@ -1538,7 +1596,7 @@ function EditableArtworkText({
         </span>
         <textarea
           name="focused_elements"
-          defaultValue={displayText(derived.elements, "")}
+          defaultValue={displayText(fields.elements, "")}
           rows={5}
           dir="auto"
         />
