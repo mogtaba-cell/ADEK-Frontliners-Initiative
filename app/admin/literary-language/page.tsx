@@ -7,13 +7,11 @@ export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 100;
 
+// Only show submissions from the main "Literary Expressions" pathway.
+// This avoids pulling Frontliner Tribute or other sub-pathways into the page.
 const LITERARY_FILTER = [
-  "art_pathway_name_en.ilike.%Literary%",
-  "art_sub_pathway_name_en.ilike.%Literary%",
   "art_pathway_name_en.ilike.%Literary Expressions%",
-  "art_sub_pathway_name_en.ilike.%Frontliner Tribute%",
-  "art_pathway_name_ar.ilike.%الأدبية%",
-  "art_sub_pathway_name_ar.ilike.%الأدبية%",
+  "art_pathway_name_ar.ilike.%التعبيرات الأدبية%",
 ].join(",");
 
 function displayText(value: unknown, fallback = "—") {
@@ -98,6 +96,7 @@ export default async function LiteraryLanguagePage({
       description_en,
       description_ar,
       art_pathway_name_en,
+      art_pathway_name_ar,
       art_sub_pathway_name_en,
       participating_students_grades,
       literary_language,
@@ -142,8 +141,9 @@ export default async function LiteraryLanguagePage({
           <h1>Literary Language Classification</h1>
 
           <p className="muted">
-            Classify literary submissions as Arabic or English/Others so the
-            system can send them to the correct literary proofreader.
+            Classify Literary Expressions submissions as Arabic or
+            English/Others so the system can send them to the correct literary
+            proofreader.
           </p>
         </div>
       </div>
@@ -194,11 +194,12 @@ export default async function LiteraryLanguagePage({
         <div className="card" style={{ marginTop: 16 }}>
           <div className="table-title-row">
             <div>
-              <h2>Literary Submissions</h2>
+              <h2>Literary Expressions Submissions</h2>
 
               <p className="muted">
-                Showing {showingFrom}–{showingTo} of {totalSubmissions} literary
-                submissions. Each page loads {PAGE_SIZE} records only.
+                Showing {showingFrom}–{showingTo} of {totalSubmissions} Literary
+                Expressions submissions. Each page loads {PAGE_SIZE} records
+                only.
               </p>
             </div>
 
@@ -345,7 +346,9 @@ export default async function LiteraryLanguagePage({
 
                 {submissions.length === 0 && (
                   <tr>
-                    <td colSpan={7}>No literary submissions found.</td>
+                    <td colSpan={7}>
+                      No Literary Expressions submissions found.
+                    </td>
                   </tr>
                 )}
               </tbody>

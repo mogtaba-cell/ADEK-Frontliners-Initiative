@@ -4,6 +4,12 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { audit } from "@/lib/audit";
 import { bulkAssignAdekAfterImport } from "@/lib/assignment";
 
+const EXISTING_LOOKUP_CHUNK_SIZE = 100;
+const IMPORT_CHUNK_SIZE = 100;
+const STUDENT_CHUNK_SIZE = 500;
+const SCHOOL_CHUNK_SIZE = 500;
+const ERROR_CHUNK_SIZE = 500;
+
 const mapStatus = (s: unknown) => {
   const v = String(s ?? "").trim().toLowerCase();
 
@@ -121,7 +127,14 @@ function normalizeGradeList(value: unknown) {
 }
 
 async function updateProgress(batchId: string, updates: Record<string, any>) {
-  await supabaseAdmin.from("import_batches").update(updates).eq("id", batchId);
+  const { error } = await supabaseAdmin
+    .from("import_batches")
+    .update(updates)
+    .eq("id", batchId);
+
+  if (error) {
+    console.error("Import progress update failed:", error.message);
+  }
 }
 
 export async function createImportBatch(fileName: string, actorId: string) {
@@ -385,7 +398,7 @@ export async function processImportWorkbook(
       rows_inserted: 0,
       rows_updated: 0,
       rows_skipped: skipped,
-      current_step: "Checking existing submissions",
+      current_step: "Preparing import rows",
     });
 
     const uniqueRowsByReferenceId = new Map<string, (typeof allRows)[number]>();
@@ -393,6 +406,7 @@ export async function processImportWorkbook(
     for (const item of allRows) {
       if (uniqueRowsByReferenceId.has(item.reference_id)) {
         skipped++;
+
         errors.push({
           import_batch_id: batchId,
           row_number: item.rowNumber,
@@ -409,18 +423,32 @@ export async function processImportWorkbook(
     const uniqueRows = Array.from(uniqueRowsByReferenceId.values());
     const referenceIds = uniqueRows.map((item) => item.reference_id);
 
+    await updateProgress(batchId, {
+      rows_skipped: skipped,
+      current_step: `Checking existing submissions 0 of ${referenceIds.length}`,
+    });
+
     const existingByReferenceId = new Map<
       string,
       { id: string; workflow_status: string | null }
     >();
 
-    for (const referenceChunk of chunkArray(referenceIds, 500)) {
+    let checkedReferenceIds = 0;
+
+    for (const referenceChunk of chunkArray(
+      referenceIds,
+      EXISTING_LOOKUP_CHUNK_SIZE
+    )) {
       const { data, error } = await supabaseAdmin
         .from("submissions")
         .select("id,reference_id,workflow_status")
         .in("reference_id", referenceChunk);
 
-      if (error) throw error;
+      if (error) {
+        throw new Error(
+          `Failed while checking existing submissions: ${error.message}`
+        );
+      }
 
       for (const row of data ?? []) {
         existingByReferenceId.set(row.reference_id, {
@@ -428,6 +456,12 @@ export async function processImportWorkbook(
           workflow_status: row.workflow_status,
         });
       }
+
+      checkedReferenceIds += referenceChunk.length;
+
+      await updateProgress(batchId, {
+        current_step: `Checking existing submissions ${checkedReferenceIds} of ${referenceIds.length}`,
+      });
     }
 
     await updateProgress(batchId, {
@@ -435,7 +469,7 @@ export async function processImportWorkbook(
       current_step: `Importing ${uniqueRows.length} unique submissions`,
     });
 
-    for (const rowChunk of chunkArray(uniqueRows, 250)) {
+    for (const rowChunk of chunkArray(uniqueRows, IMPORT_CHUNK_SIZE)) {
       const payloads = rowChunk.map((item) => {
         const existing = existingByReferenceId.get(item.reference_id);
 
@@ -452,7 +486,9 @@ export async function processImportWorkbook(
           .upsert(payloads, { onConflict: "reference_id" })
           .select("id,reference_id,registration_status");
 
-      if (upsertError) throw upsertError;
+      if (upsertError) {
+        throw new Error(`Failed while importing submissions: ${upsertError.message}`);
+      }
 
       const submissionIdByReferenceId = new Map<string, string>();
 
@@ -480,25 +516,35 @@ export async function processImportWorkbook(
           .delete()
           .in("submission_id", submissionIds);
 
-        if (deleteStudentsError) throw deleteStudentsError;
+        if (deleteStudentsError) {
+          throw new Error(
+            `Failed while clearing existing students: ${deleteStudentsError.message}`
+          );
+        }
       }
 
       const studentRows: any[] = [];
 
       for (const payload of payloads) {
-        const submissionId = submissionIdByReferenceId.get(String(payload.reference_id));
+        const submissionId = submissionIdByReferenceId.get(
+          String(payload.reference_id)
+        );
 
         if (!submissionId) continue;
 
         studentRows.push(...buildStudentRows(submissionId, payload));
       }
 
-      for (const studentChunk of chunkArray(studentRows, 500)) {
+      for (const studentChunk of chunkArray(studentRows, STUDENT_CHUNK_SIZE)) {
         const { error: studentInsertError } = await supabaseAdmin
           .from("students")
           .insert(studentChunk);
 
-        if (studentInsertError) throw studentInsertError;
+        if (studentInsertError) {
+          throw new Error(
+            `Failed while importing students: ${studentInsertError.message}`
+          );
+        }
       }
 
       processed += rowChunk.length;
@@ -534,9 +580,14 @@ export async function processImportWorkbook(
     }
 
     if (errors.length > 0) {
-      for (const errorChunk of chunkArray(errors, 500)) {
-        const { error } = await supabaseAdmin.from("import_errors").insert(errorChunk);
-        if (error) throw error;
+      for (const errorChunk of chunkArray(errors, ERROR_CHUNK_SIZE)) {
+        const { error } = await supabaseAdmin
+          .from("import_errors")
+          .insert(errorChunk);
+
+        if (error) {
+          throw new Error(`Failed while saving import errors: ${error.message}`);
+        }
       }
     }
 
@@ -591,7 +642,9 @@ export async function processImportWorkbook(
 }
 
 async function refreshAnalyticsAfterImport(batchId: string) {
-  const { error } = await supabaseAdmin.rpc("refresh_analytics_materialized_views");
+  const { error } = await supabaseAdmin.rpc(
+    "refresh_analytics_materialized_views"
+  );
 
   if (!error) return;
 
@@ -620,7 +673,8 @@ async function bulkUpsertSchools(payloads: any[]) {
   const schoolsByKey = new Map<string, any>();
 
   for (const payload of payloads) {
-    const institutionRef = payload.institution_ref_number || payload.institution_name;
+    const institutionRef =
+      payload.institution_ref_number || payload.institution_name;
 
     if (!institutionRef) continue;
 
@@ -633,12 +687,17 @@ async function bulkUpsertSchools(payloads: any[]) {
     });
   }
 
-  for (const schoolChunk of chunkArray(Array.from(schoolsByKey.values()), 500)) {
+  for (const schoolChunk of chunkArray(
+    Array.from(schoolsByKey.values()),
+    SCHOOL_CHUNK_SIZE
+  )) {
     const { error } = await supabaseAdmin.from("schools").upsert(schoolChunk, {
       onConflict: "institution_ref_number",
     });
 
-    if (error) throw error;
+    if (error) {
+      throw new Error(`Failed while importing schools: ${error.message}`);
+    }
   }
 }
 
