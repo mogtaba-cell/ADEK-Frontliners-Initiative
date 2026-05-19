@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 100;
 
-// Only show submissions from the main "Literary Expressions" pathway.
+// Only show approved submissions from the main "Literary Expressions" pathway.
 // This avoids pulling Frontliner Tribute or other sub-pathways into the page.
 const LITERARY_FILTER = [
   "art_pathway_name_en.ilike.%Literary Expressions%",
@@ -55,7 +55,8 @@ async function getLiteraryLanguageCount(
   let query = supabaseAdmin
     .from("submissions")
     .select("id", { count: "exact", head: true })
-    .or(LITERARY_FILTER);
+    .or(LITERARY_FILTER)
+    .eq("evaluation_decision", "approved");
 
   if (language === null) {
     query = query.is("literary_language", null);
@@ -101,11 +102,13 @@ export default async function LiteraryLanguagePage({
       participating_students_grades,
       literary_language,
       workflow_status,
+      evaluation_decision,
       updated_at
       `,
       { count: "exact" }
     )
     .or(LITERARY_FILTER)
+    .eq("evaluation_decision", "approved")
     .order("literary_language", { ascending: true, nullsFirst: true })
     .order("updated_at", { ascending: false })
     .range(from, to);
@@ -141,7 +144,7 @@ export default async function LiteraryLanguagePage({
           <h1>Literary Language Classification</h1>
 
           <p className="muted">
-            Classify Literary Expressions submissions as Arabic or
+            Classify approved Literary Expressions submissions as Arabic or
             English/Others so the system can send them to the correct literary
             proofreader.
           </p>
@@ -194,12 +197,12 @@ export default async function LiteraryLanguagePage({
         <div className="card" style={{ marginTop: 16 }}>
           <div className="table-title-row">
             <div>
-              <h2>Literary Expressions Submissions</h2>
+              <h2>Approved Literary Expressions Submissions</h2>
 
               <p className="muted">
-                Showing {showingFrom}–{showingTo} of {totalSubmissions} Literary
-                Expressions submissions. Each page loads {PAGE_SIZE} records
-                only.
+                Showing {showingFrom}–{showingTo} of {totalSubmissions} approved
+                Literary Expressions submissions. Each page loads {PAGE_SIZE}
+                records only.
               </p>
             </div>
 
@@ -347,7 +350,7 @@ export default async function LiteraryLanguagePage({
                 {submissions.length === 0 && (
                   <tr>
                     <td colSpan={7}>
-                      No Literary Expressions submissions found.
+                      No approved Literary Expressions submissions found.
                     </td>
                   </tr>
                 )}
