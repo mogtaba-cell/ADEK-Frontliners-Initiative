@@ -2,6 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { Nav } from "@/components/nav";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { DownloadPdfButton } from "./DownloadPdfButton";
+import { AnalyticsAutoRefresh } from "./AnalyticsAutoRefresh";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -443,6 +444,7 @@ export default async function AnalyticsPage({
 
   return (
     <main className="container" data-analytics-export-area>
+      {!exportPdfMode && <AnalyticsAutoRefresh intervalMs={15000} />}
       {!exportPdfMode && <Nav role={user.role} />}
 
       <div className="table-title-row">

@@ -406,7 +406,6 @@ export async function processImportWorkbook(
     for (const item of allRows) {
       if (uniqueRowsByReferenceId.has(item.reference_id)) {
         skipped++;
-
         errors.push({
           import_batch_id: batchId,
           row_number: item.rowNumber,
@@ -526,9 +525,7 @@ export async function processImportWorkbook(
       const studentRows: any[] = [];
 
       for (const payload of payloads) {
-        const submissionId = submissionIdByReferenceId.get(
-          String(payload.reference_id)
-        );
+        const submissionId = submissionIdByReferenceId.get(String(payload.reference_id));
 
         if (!submissionId) continue;
 
@@ -642,9 +639,7 @@ export async function processImportWorkbook(
 }
 
 async function refreshAnalyticsAfterImport(batchId: string) {
-  const { error } = await supabaseAdmin.rpc(
-    "refresh_analytics_materialized_views"
-  );
+  const { error } = await supabaseAdmin.rpc("refresh_analytics_materialized_views");
 
   if (!error) return;
 
@@ -673,8 +668,7 @@ async function bulkUpsertSchools(payloads: any[]) {
   const schoolsByKey = new Map<string, any>();
 
   for (const payload of payloads) {
-    const institutionRef =
-      payload.institution_ref_number || payload.institution_name;
+    const institutionRef = payload.institution_ref_number || payload.institution_name;
 
     if (!institutionRef) continue;
 

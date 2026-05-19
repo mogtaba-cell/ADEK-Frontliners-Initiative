@@ -83,7 +83,7 @@ export function KpiHeader() {
 
     loadKpis();
 
-    const interval = window.setInterval(loadKpis, 30000);
+    const interval = window.setInterval(loadKpis, 10000);
 
     function onFocus() {
       loadKpis();

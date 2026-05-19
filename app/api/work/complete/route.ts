@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { audit } from "@/lib/audit";
@@ -600,6 +600,19 @@ export async function POST(req: Request) {
         phase,
         submission_id: submissionId,
       },
+    });
+
+    // Keep materialized analytics views fresh after workflow changes.
+    // User Progress and KPI values are live, but this keeps any cached
+    // analytics summaries aligned without blocking the user redirect.
+    after(async () => {
+      const { error } = await supabaseAdmin.rpc(
+        "refresh_analytics_materialized_views"
+      );
+
+      if (error) {
+        console.error("Analytics refresh after workflow failed:", error.message);
+      }
     });
 
     return redirectWithRefresh(req, redirectTo);
