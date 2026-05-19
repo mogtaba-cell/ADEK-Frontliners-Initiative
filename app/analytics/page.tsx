@@ -53,6 +53,7 @@ function isUaeNationality(name: string) {
 
 function cycleForGrade(value: unknown) {
   const raw = String(value ?? "").trim().toLowerCase();
+
   if (!raw) return "Unspecified";
   if (/kg|kindergarten|fs\s*1|fs\s*2/.test(raw)) return "Cycle 1";
 
@@ -62,6 +63,7 @@ function cycleForGrade(value: unknown) {
   if (!Number.isFinite(grade)) return "Unspecified";
   if (grade <= 5) return "Cycle 1";
   if (grade <= 8) return "Cycle 2";
+
   return "Cycle 3";
 }
 
@@ -76,6 +78,7 @@ async function getLiveStudentCycles(): Promise<ChartRow[]> {
   }
 
   const seen = new Set<string>();
+
   const counts: Record<string, number> = {
     "Cycle 1": 0,
     "Cycle 2": 0,
@@ -85,6 +88,7 @@ async function getLiveStudentCycles(): Promise<ChartRow[]> {
 
   for (const row of data ?? []) {
     if (!row.student_key || seen.has(row.student_key)) continue;
+
     seen.add(row.student_key);
 
     const cycle = cycleForGrade(row.grade);
@@ -92,7 +96,10 @@ async function getLiveStudentCycles(): Promise<ChartRow[]> {
   }
 
   return ["Cycle 1", "Cycle 2", "Cycle 3", "Unspecified"]
-    .map((name) => ({ name, value: counts[name] ?? 0 }))
+    .map((name) => ({
+      name,
+      value: counts[name] ?? 0,
+    }))
     .filter((row) => row.value > 0 || row.name !== "Unspecified");
 }
 
@@ -123,9 +130,11 @@ function BarChart({
             return (
               <div className="chart-row" key={row.name}>
                 <div className="chart-label">{row.name}</div>
+
                 <div className="chart-track">
                   <div className="chart-fill" style={{ width: `${width}%` }} />
                 </div>
+
                 <div className="chart-value">{row.value}</div>
               </div>
             );
@@ -166,6 +175,7 @@ function NationalityPie({ uae, nonUae }: { uae: number; nonUae: number }) {
                 background: "#1C3E3B",
               }}
             />
+
             <div
               title={`Non-UAE: ${nonUae}`}
               style={{
@@ -181,6 +191,7 @@ function NationalityPie({ uae, nonUae }: { uae: number; nonUae: number }) {
                 <span className="pie-dot" />
                 UAE
               </span>
+
               <strong>
                 {uae} ({uaePct}%)
               </strong>
@@ -191,6 +202,7 @@ function NationalityPie({ uae, nonUae }: { uae: number; nonUae: number }) {
                 <span className="pie-dot secondary" />
                 Non-UAE
               </span>
+
               <strong>
                 {nonUae} ({nonUaePct}%)
               </strong>
@@ -220,86 +232,26 @@ async function getFilterOptions() {
 }
 
 async function getLiveUserProgress(): Promise<UserProgressRow[]> {
-  const [
-    { data: users, error: usersError },
-    { data: assignments, error: assignmentsError },
-  ] = await Promise.all([
-    supabaseAdmin
-      .from("profiles")
-      .select("id,full_name,role,is_active")
-      .not("role", "in", "(admin,adek_hq)")
-      .eq("is_active", true)
-      .order("role", { ascending: true })
-      .order("full_name", { ascending: true }),
+  const { data, error } = await supabaseAdmin
+    .from("analytics_user_progress_live")
+    .select("full_name,role,assigned,completed,remaining,completion_rate")
+    .order("assigned", { ascending: false })
+    .order("completed", { ascending: false })
+    .order("full_name", { ascending: true });
 
-    supabaseAdmin.from("assignments").select("assigned_to,status"),
-  ]);
-
-  if (usersError) {
-    console.error("Live user progress users query failed:", usersError.message);
+  if (error) {
+    console.error("Live user progress query failed:", error.message);
     return [];
   }
 
-  if (assignmentsError) {
-    console.error(
-      "Live user progress assignments query failed:",
-      assignmentsError.message
-    );
-    return [];
-  }
-
-  const progressMap = new Map<
-    string,
-    {
-      assigned: number;
-      completed: number;
-    }
-  >();
-
-  for (const user of users ?? []) {
-    progressMap.set(user.id, {
-      assigned: 0,
-      completed: 0,
-    });
-  }
-
-  for (const assignment of assignments ?? []) {
-    if (!assignment.assigned_to) continue;
-
-    const current = progressMap.get(assignment.assigned_to);
-    if (!current) continue;
-
-    current.assigned += 1;
-
-    if (assignment.status === "completed") {
-      current.completed += 1;
-    }
-  }
-
-  return (users ?? [])
-    .map((user: any) => {
-      const progress = progressMap.get(user.id) ?? {
-        assigned: 0,
-        completed: 0,
-      };
-
-      const remaining = Math.max(0, progress.assigned - progress.completed);
-      const completionRate = pct(progress.completed, progress.assigned);
-
-      return {
-        full_name: user.full_name ?? user.id,
-        role: user.role,
-        assigned: progress.assigned,
-        completed: progress.completed,
-        remaining,
-        completion_rate: completionRate,
-      };
-    })
-    .sort((a, b) => {
-      if (b.assigned !== a.assigned) return b.assigned - a.assigned;
-      if (b.completed !== a.completed) return b.completed - a.completed;
-      return a.full_name.localeCompare(b.full_name);
-    });
+  return (data ?? []).map((row: any) => ({
+    full_name: row.full_name,
+    role: row.role,
+    assigned: Number(row.assigned ?? 0),
+    completed: Number(row.completed ?? 0),
+    remaining: Number(row.remaining ?? 0),
+    completion_rate: Number(row.completion_rate ?? 0),
+  }));
 }
 
 async function getMaterializedAnalytics() {
@@ -335,6 +287,7 @@ async function getMaterializedAnalytics() {
       .order("unique_students", { ascending: false }),
 
     getLiveUserProgress(),
+
     getLiveStudentCycles(),
   ]);
 
@@ -450,9 +403,10 @@ export default async function AnalyticsPage({
       <div className="table-title-row">
         <div>
           <h1>Analytics Dashboard</h1>
+
           <p className="muted">
             Charts use optimized analytics summaries. User progress is live from
-            the assignments table.
+            the database view.
           </p>
         </div>
 
@@ -465,8 +419,10 @@ export default async function AnalyticsPage({
         <form className="grid grid-3 no-print" method="get">
           <label>
             <span className="small">Pathway</span>
+
             <select name="pathway" defaultValue={filters.pathway}>
               <option value="">All pathways</option>
+
               {(options.pathway ?? []).map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -477,8 +433,10 @@ export default async function AnalyticsPage({
 
           <label>
             <span className="small">Subpathway</span>
+
             <select name="subpathway" defaultValue={filters.subpathway}>
               <option value="">All subpathways</option>
+
               {(options.subpathway ?? []).map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -489,8 +447,10 @@ export default async function AnalyticsPage({
 
           <label>
             <span className="small">School Type</span>
+
             <select name="school_type" defaultValue={filters.schoolType}>
               <option value="">All school types</option>
+
               {(options.school_type ?? []).map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -501,8 +461,10 @@ export default async function AnalyticsPage({
 
           <label>
             <span className="small">Region</span>
+
             <select name="region" defaultValue={filters.region}>
               <option value="">All regions</option>
+
               {(options.region ?? []).map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -513,11 +475,13 @@ export default async function AnalyticsPage({
 
           <label>
             <span className="small">Registration Status</span>
+
             <select
               name="registration_status"
               defaultValue={filters.registrationStatus}
             >
               <option value="">All registration statuses</option>
+
               {(options.registration_status ?? []).map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -528,11 +492,13 @@ export default async function AnalyticsPage({
 
           <label>
             <span className="small">Workflow Status</span>
+
             <select
               name="workflow_status"
               defaultValue={filters.workflowStatus}
             >
               <option value="">All workflow statuses</option>
+
               {(options.workflow_status ?? []).map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -545,6 +511,7 @@ export default async function AnalyticsPage({
             <button className="btn" type="submit">
               Apply Filters
             </button>
+
             <a className="btn secondary" href="/analytics">
               Clear
             </a>
@@ -587,11 +554,13 @@ export default async function AnalyticsPage({
 
       <div className="grid grid-2 analytics-section">
         <NationalityPie uae={analytics.uaeCount} nonUae={analytics.nonUaeCount} />
+
         <BarChart title="Unique Students by Gender" rows={analytics.genderRows} />
       </div>
 
       <div className="grid grid-2 analytics-section">
         <BarChart title="Unique Students by Grade" rows={analytics.gradeRows} />
+
         <BarChart title="Unique Students by Cycle" rows={analytics.cycleRows} />
       </div>
 
@@ -601,6 +570,7 @@ export default async function AnalyticsPage({
 
       <div className="grid grid-2 analytics-section">
         <BarChart title="Submissions by Pathway" rows={analytics.byPathway} />
+
         <BarChart
           title="Submissions by Subpathway"
           rows={analytics.bySubpathway}
@@ -608,7 +578,11 @@ export default async function AnalyticsPage({
       </div>
 
       <div className="grid grid-2 analytics-section">
-        <BarChart title="Submissions by School Type" rows={analytics.bySchoolType} />
+        <BarChart
+          title="Submissions by School Type"
+          rows={analytics.bySchoolType}
+        />
+
         <BarChart
           title="Unique Schools by Region"
           rows={analytics.uniqueSchoolsByRegion}
@@ -658,10 +632,12 @@ export default async function AnalyticsPage({
         <div className="table-title-row">
           <div>
             <h2>User Progress</h2>
+
             <p className="muted">
-              Live numbers from assignments. No SQL refresh needed.
+              Live numbers from database view. No SQL refresh needed.
             </p>
           </div>
+
           <span className="pill">Live</span>
         </div>
 
