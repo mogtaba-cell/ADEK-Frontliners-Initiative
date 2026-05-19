@@ -26,11 +26,44 @@ const correctionReasonLabels: Record<string, string> = {
   incomplete_narrative:
     "Incomplete Narrative: Required narrative fields are blank, missing, or incomplete.",
   inappropriate_flagged_content:
-    "Inappropriate or Flagged Content: The artwork contains elements that require correction or clarification before review can continue.",
-  link_access_issue:
-    "Link or Access Issue: The artwork file link cannot be opened, is restricted, or is missing.",
-  other: "Other: Additional correction is required before the workflow can continue.",
+    "Inappropriate / Flagged Content: Sensitive, inappropriate, or guideline-violating content requires coordinator revision.",
+  literary_needs_review: "Literary proofreader requested Management review.",
+  literary_needs_correction:
+    "Literary proofreader requested correction after checking publication suitability.",
+  adek_file_quality:
+    "Artwork file quality / clarity issue: the submitted image, video, or audio file cannot be evaluated clearly.",
+  no_school_response: "No response from school.",
+  incomplete_faulty_after_correction:
+    "New submission remains incomplete/faulty after correction.",
 };
+
+const correctionSourceLabels: Record<string, string> = {
+  adek_evaluation: "ADEK Evaluation",
+  proofreading: "General Proofreading",
+  literary_proofreading: "Literary Proofreading",
+  coordinator_check: "Coordinator Correction",
+};
+
+const artisticRatingLabels: Record<string, string> = {
+  weak: "ضعيف / Weak",
+  medium: "متوسط / Medium",
+  good: "جيد / Good",
+  excellent: "ممتاز / Excellent",
+};
+
+function rawText(rawData: any, keys: string[]) {
+  if (!rawData || typeof rawData !== "object") return "";
+
+  for (const key of keys) {
+    const value = rawData[key];
+
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      return String(value).trim();
+    }
+  }
+
+  return "";
+}
 
 function displayText(value: unknown, fallback = "—") {
   if (value === null || value === undefined || String(value).trim() === "") {
@@ -40,545 +73,514 @@ function displayText(value: unknown, fallback = "—") {
   return String(value);
 }
 
-function getDerivedFields(submission: any) {
-  const raw = submission?.raw_data ?? {};
+function fallbackText(submission: any, directValue: unknown, rawKeys: string[]) {
+  if (
+    directValue !== null &&
+    directValue !== undefined &&
+    String(directValue).trim() !== ""
+  ) {
+    return directValue;
+  }
+
+  return rawText(submission.raw_data, rawKeys);
+}
+
+function normalizeGrade(value: unknown) {
+  const raw = String(value ?? "").trim();
+
+  if (!raw) return "";
+
+  return raw
+    .split(";")
+    .map((item) => {
+      const match = item.match(/grade\s*([0-9]{1,2})/i);
+      if (match) return `Grade ${Number(match[1])}`;
+      return item.trim();
+    })
+    .filter(Boolean)
+    .join("; ");
+}
+
+function calculateAdekDecisionLabel(a: string, b: string, c: string) {
+  const cultural = a === "yes";
+  const artistic = b === "yes";
+  const ethical = c === "yes";
+
+  if (cultural && artistic && ethical) {
+    return {
+      label: "Approved",
+      className: "decision-approved",
+    };
+  }
+
+  if (!cultural || !ethical) {
+    return {
+      label: "Disqualified",
+      className: "decision-disqualified",
+    };
+  }
 
   return {
-    englishTitle:
-      submission?.artwork_title_en ??
-      raw.ArtWorkTitleEn ??
-      raw.ArtworkTitleEn ??
-      raw["Artwork Title En"] ??
-      raw.TitleEn ??
-      raw["English Title"] ??
-      "",
-    arabicTitle:
-      submission?.artwork_title_ar ??
-      raw.ArtWorkTitleAr ??
-      raw.ArtworkTitleAr ??
-      raw["Artwork Title Ar"] ??
-      raw.TitleAr ??
-      raw["Arabic Title"] ??
-      "",
-    englishDescription:
-      submission?.description_en ??
-      raw.ArtWorkDescrEn ??
-      raw.ArtworkDescriptionEn ??
-      raw.DescriptionEn ??
-      raw.NarrativeEn ??
-      raw["English Description"] ??
-      "",
-    arabicDescription:
-      submission?.description_ar ??
-      raw.ArtWorkDescrAr ??
-      raw.ArtworkDescriptionAr ??
-      raw.DescriptionAr ??
-      raw.NarrativeAr ??
-      raw["Arabic Description"] ??
-      "",
-    influence:
-      submission?.influence_idea_source ??
-      raw["Did anyone or anything influence your idea (family, artist, place)?"] ??
-      raw["Did anyone or anything influence your idea"] ??
-      "",
-    enjoyable:
-      submission?.most_enjoyable_part ??
-      raw["What was the most enjoyable part of creating your work?"] ??
-      raw["Most enjoyable part"] ??
-      "",
-    elements:
-      submission?.focused_elements ??
-      raw["What elements did you focus on, and why?"] ??
-      raw["What elements did you focus on"] ??
-      "",
-    groupName:
-      submission?.group_name ??
-      raw.GroupName ??
-      raw["Group Name"] ??
-      raw.group_name ??
-      raw.GroupNameEn ??
-      "",
+    label: "Needs Review",
+    className: "decision-needs-review",
+  };
+}
+
+function getCorrectionSourceLabel(value: string | null | undefined) {
+  if (!value) return "Unknown phase";
+  return correctionSourceLabels[value] ?? labelPhase(value) ?? value;
+}
+
+function getDerivedFields(submission: any) {
+  const englishTitle = fallbackText(submission, submission.artwork_title_en, [
+    "ArtWorkTitleEn",
+    "ArtworkTitleEn",
+    "Artwork Title En",
+    "TitleEn",
+    "English Title",
+    "Artwork Name",
+    "Name",
+  ]);
+
+  const arabicTitle = fallbackText(submission, submission.artwork_title_ar, [
+    "ArtWorkTitleAr",
+    "ArtworkTitleAr",
+    "Artwork Title Ar",
+    "TitleAr",
+    "Arabic Title",
+  ]);
+
+  const englishDescription = fallbackText(submission, submission.description_en, [
+    "ArtWorkDescrEn",
+    "ArtworkDescriptionEn",
+    "DescriptionEn",
+    "NarrativeEn",
+    "English Description",
+  ]);
+
+  const arabicDescription = fallbackText(submission, submission.description_ar, [
+    "ArtWorkDescrAr",
+    "ArtworkDescriptionAr",
+    "DescriptionAr",
+    "NarrativeAr",
+    "Arabic Description",
+  ]);
+
+  const studentNames = fallbackText(
+    submission,
+    submission.participating_students_names,
+    [
+      "ParticipatingStudentsNamesEn",
+      "ParticipatingStudentsNames",
+      "StudentNames",
+      "StudentsNames",
+      "Student Names",
+      "Student Name",
+      "Student Full Name",
+    ]
+  );
+
+  return {
+    artworkName: displayText(
+      englishTitle,
+      displayText(arabicTitle, submission.reference_id)
+    ),
+    englishTitle,
+    arabicTitle,
+    englishDescription,
+    arabicDescription,
+    studentNames,
+    arabicPathway: fallbackText(submission, submission.art_pathway_name_ar, [
+      "ArtPathwayNameAr",
+    ]),
+    arabicSubpathway: fallbackText(
+      submission,
+      submission.art_sub_pathway_name_ar,
+      ["ArtSubPathwayNameAr"]
+    ),
+    influence: fallbackText(submission, submission.influence_idea_source, [
+      "Did anyone or anything influence your idea (family, artist, place)?",
+      "Did anyone or anything influence your idea",
+    ]),
+    enjoyable: fallbackText(submission, submission.most_enjoyable_part, [
+      "What was the most enjoyable part of creating your work?",
+      "Most enjoyable part",
+    ]),
+    elements: fallbackText(submission, submission.focused_elements, [
+      "What elements did you focus on, and why?",
+      "What elements did you focus on",
+    ]),
   };
 }
 
 function getOriginalImportedFields(submission: any) {
-  const raw = submission?.raw_data ?? {};
-
   return {
-    englishTitle:
-      raw.ArtWorkTitleEn ??
-      raw.ArtworkTitleEn ??
-      raw["Artwork Title En"] ??
-      raw.TitleEn ??
-      raw["English Title"] ??
-      submission?.artwork_title_en ??
-      "",
-    arabicTitle:
-      raw.ArtWorkTitleAr ??
-      raw.ArtworkTitleAr ??
-      raw["Artwork Title Ar"] ??
-      raw.TitleAr ??
-      raw["Arabic Title"] ??
-      submission?.artwork_title_ar ??
-      "",
-    englishDescription:
-      raw.ArtWorkDescrEn ??
-      raw.ArtworkDescriptionEn ??
-      raw.DescriptionEn ??
-      raw.NarrativeEn ??
-      raw["English Description"] ??
-      submission?.description_en ??
-      "",
-    arabicDescription:
-      raw.ArtWorkDescrAr ??
-      raw.ArtworkDescriptionAr ??
-      raw.DescriptionAr ??
-      raw.NarrativeAr ??
-      raw["Arabic Description"] ??
-      submission?.description_ar ??
-      "",
-    influence:
-      raw["Did anyone or anything influence your idea (family, artist, place)?"] ??
-      raw["Did anyone or anything influence your idea"] ??
-      submission?.influence_idea_source ??
-      "",
-    enjoyable:
-      raw["What was the most enjoyable part of creating your work?"] ??
-      raw["Most enjoyable part"] ??
-      submission?.most_enjoyable_part ??
-      "",
-    elements:
-      raw["What elements did you focus on, and why?"] ??
-      raw["What elements did you focus on"] ??
-      submission?.focused_elements ??
-      "",
+    englishTitle: rawText(submission.raw_data, [
+      "ArtWorkTitleEn",
+      "ArtworkTitleEn",
+      "Artwork Title En",
+      "TitleEn",
+      "English Title",
+    ]),
+    arabicTitle: rawText(submission.raw_data, [
+      "ArtWorkTitleAr",
+      "ArtworkTitleAr",
+      "Artwork Title Ar",
+      "TitleAr",
+      "Arabic Title",
+    ]),
+    englishDescription: rawText(submission.raw_data, [
+      "ArtWorkDescrEn",
+      "ArtworkDescriptionEn",
+      "DescriptionEn",
+      "NarrativeEn",
+      "English Description",
+    ]),
+    arabicDescription: rawText(submission.raw_data, [
+      "ArtWorkDescrAr",
+      "ArtworkDescriptionAr",
+      "DescriptionAr",
+      "NarrativeAr",
+      "Arabic Description",
+    ]),
+    influence: rawText(submission.raw_data, [
+      "Did anyone or anything influence your idea (family, artist, place)?",
+      "Did anyone or anything influence your idea",
+    ]),
+    enjoyable: rawText(submission.raw_data, [
+      "What was the most enjoyable part of creating your work?",
+      "Most enjoyable part",
+    ]),
+    elements: rawText(submission.raw_data, [
+      "What elements did you focus on, and why?",
+      "What elements did you focus on",
+    ]),
   };
 }
 
-function getTitle(submission: any) {
-  const derived = getDerivedFields(submission);
-
+function DetailField({ label, value }: { label: string; value: unknown }) {
   return (
-    derived.englishTitle ||
-    derived.arabicTitle ||
-    submission?.reference_id ||
-    "Untitled submission"
+    <>
+      <dt>{label}</dt>
+      <dd dir="auto">{displayText(value)}</dd>
+    </>
   );
 }
 
-function sourceUrl(submission: any) {
-  return submission?.art_link || submission?.raw_data?.ArtLink || "";
-}
-
-function isLiteraryPathway(submission: any) {
-  const combined = `${submission?.art_pathway_name_en ?? ""} ${
-    submission?.art_sub_pathway_name_en ?? ""
-  } ${submission?.art_pathway_name_ar ?? ""} ${
-    submission?.art_sub_pathway_name_ar ?? ""
-  }`.toLowerCase();
-
+function TextBlock({ label, value }: { label: string; value: unknown }) {
   return (
-    combined.includes("literary") ||
-    combined.includes("الأدبية") ||
-    combined.includes("ادبية")
+    <div className="submission-text-block">
+      <strong>{label}</strong>
+      <div dir="auto">{displayText(value)}</div>
+    </div>
   );
 }
 
-function isLiteraryArabic(submission: any) {
-  return submission?.literary_language === "arabic";
+function ComparisonRow({
+  label,
+  original,
+  updated,
+}: {
+  label: string;
+  original: unknown;
+  updated: unknown;
+}) {
+  return (
+    <div
+      className="grid grid-2"
+      style={{
+        gap: 12,
+        padding: "14px 0",
+        borderTop: "1px solid rgba(28, 62, 59, 0.12)",
+      }}
+    >
+      <div className="submission-text-block">
+        <strong>Original {label}</strong>
+        <div dir="auto">{displayText(original)}</div>
+      </div>
+
+      <div className="submission-text-block">
+        <strong>Updated / Proofread {label}</strong>
+        <div dir="auto">{displayText(updated)}</div>
+      </div>
+    </div>
+  );
 }
 
-function isLiteraryEnglishOrOthers(submission: any) {
-  return submission?.literary_language === "english_or_others";
-}
+function ReviewerOriginalUpdatedComparison({
+  submission,
+  derived,
+}: {
+  submission: any;
+  derived: ReturnType<typeof getDerivedFields>;
+}) {
+  const original = getOriginalImportedFields(submission);
 
-function taskOwnerLabel(assignment: Assignment) {
-  if (assignment.phase === "proofreading") return "General Proofreader";
-  if (assignment.phase === "literary_proofreading") {
-    if (assignment.proofreader_type === "literary_arabic") {
-      return "Arabic Literary Proofreader";
-    }
+  return (
+    <div className="card">
+      <div className="table-title-row">
+        <div>
+          <h3 style={{ marginTop: 0 }}>Original vs Updated Content</h3>
+          <p className="muted">
+            Review the original imported text beside the latest proofread or
+            updated version before marking the artwork as ready.
+          </p>
+        </div>
+      </div>
 
-    if (assignment.proofreader_type === "literary_english_or_others") {
-      return "English/Other Literary Proofreader";
-    }
+      <ComparisonRow
+        label="English Title"
+        original={original.englishTitle}
+        updated={derived.englishTitle}
+      />
 
-    return "Literary Proofreader";
-  }
+      <ComparisonRow
+        label="Arabic Title"
+        original={original.arabicTitle}
+        updated={derived.arabicTitle}
+      />
 
-  return labelPhase(assignment.phase);
-}
+      <ComparisonRow
+        label="English Description"
+        original={original.englishDescription}
+        updated={derived.englishDescription}
+      />
 
-function formatDate(value: unknown) {
-  if (!value) return "—";
+      <ComparisonRow
+        label="Arabic Description"
+        original={original.arabicDescription}
+        updated={derived.arabicDescription}
+      />
 
-  const parsed = new Date(String(value));
+      <ComparisonRow
+        label="Influence / Idea Source"
+        original={original.influence}
+        updated={derived.influence}
+      />
 
-  if (Number.isNaN(parsed.getTime())) return String(value);
+      <ComparisonRow
+        label="Most Enjoyable Part"
+        original={original.enjoyable}
+        updated={derived.enjoyable}
+      />
 
-  return parsed.toLocaleString();
+      <ComparisonRow
+        label="Focused Elements"
+        original={original.elements}
+        updated={derived.elements}
+      />
+
+      {submission.literary_updated_content && (
+        <ComparisonRow
+          label="Literary Updated Content"
+          original=""
+          updated={submission.literary_updated_content}
+        />
+      )}
+    </div>
+  );
 }
 
 function TaskHistory({ history }: { history: any[] }) {
-  if (!history?.length) {
-    return null;
-  }
+  if (!history?.length) return null;
 
   return (
-    <div className="card" style={{ marginTop: 16 }}>
-      <h3>Task History</h3>
+    <div className="card">
+      <h3>Task Flow</h3>
 
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Phase</th>
-              <th>Status</th>
-              <th>Assigned To</th>
-              <th>Completed</th>
-              <th>Correction Notes</th>
-            </tr>
-          </thead>
+      <div className="task-flow-list">
+        {history.map((item) => (
+          <div className="task-flow-item" key={item.id}>
+            <span className={statusClassName(item.status)}>{item.status}</span>
 
-          <tbody>
-            {history.map((item) => (
-              <tr key={item.id}>
-                <td>{labelPhase(item.phase)}</td>
-                <td>{displayText(item.status)}</td>
-                <td>{displayText(item.assigned_to_profile?.full_name)}</td>
-                <td>{formatDate(item.completed_at)}</td>
-                <td>{displayText(item.correction_notes)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            <strong>{labelPhase(item.phase)}</strong>
+
+            <span className="muted small">
+              {item.assigned_user?.full_name
+                ? `Assigned to: ${item.assigned_user.full_name}`
+                : "Assigned user unavailable"}
+              {item.assigned_user?.proofreader_type
+                ? ` (${item.assigned_user.proofreader_type})`
+                : ""}
+            </span>
+
+            {item.requested_by_user?.full_name && (
+              <span className="muted small">
+                Requested by: {item.requested_by_user.full_name}
+              </span>
+            )}
+
+            {item.return_to_user?.full_name && (
+              <span className="muted small">
+                Returns to: {item.return_to_user.full_name}
+              </span>
+            )}
+
+            {item.correction_source_phase && (
+              <span className="muted small">
+                Correction source:{" "}
+                {getCorrectionSourceLabel(item.correction_source_phase)}
+              </span>
+            )}
+
+            {item.correction_reason && (
+              <span className="muted small">
+                Reason:{" "}
+                {correctionReasonLabels[item.correction_reason] ??
+                  item.correction_reason}
+              </span>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
 function SourceButtons({ submission }: { submission: any }) {
-  const url = sourceUrl(submission);
+  const hasSource = Boolean(submission?.art_link);
+  const hasUpdated = Boolean(submission?.updated_artwork_file_url);
 
-  if (!url) {
-    return (
-      <div className="card" style={{ marginTop: 16 }}>
-        <p className="muted">No artwork source file link found.</p>
-      </div>
-    );
-  }
+  if (!hasSource && !hasUpdated) return null;
 
   return (
-    <div className="card" style={{ marginTop: 16 }}>
-      <h3>Artwork Source File</h3>
-
-      <p className="muted">
-        Open the submitted artwork file in a new tab to review the image, video,
-        audio, or document.
-      </p>
-
-      <a className="btn" href={url} target="_blank" rel="noopener noreferrer">
-        Open Source File
-      </a>
-    </div>
-  );
-}
-
-function ArtworkDetails({ submission }: { submission: any }) {
-  const derived = getDerivedFields(submission);
-
-  return (
-    <div className="card">
-      <h2>{getTitle(submission)}</h2>
-
-      <div className="grid grid-2">
-        <p>
-          <strong>Reference ID</strong>
-          <br />
-          {displayText(submission?.reference_id)}
-        </p>
-
-        <p>
-          <strong>Workflow Status</strong>
-          <br />
-          <span className={statusClassName(submission?.workflow_status)}>
-            {labelWorkflowStatus(submission?.workflow_status)}
-          </span>
-        </p>
-
-        <p>
-          <strong>Pathway</strong>
-          <br />
-          {displayText(submission?.art_pathway_name_en)}
-        </p>
-
-        <p>
-          <strong>Sub-pathway</strong>
-          <br />
-          {displayText(submission?.art_sub_pathway_name_en)}
-        </p>
-
-        <p>
-          <strong>School</strong>
-          <br />
-          {displayText(submission?.institution_name)}
-        </p>
-
-        <p>
-          <strong>Region</strong>
-          <br />
-          {displayText(submission?.school_region)}
-        </p>
-
-        <p>
-          <strong>Student Names</strong>
-          <br />
-          {displayText(submission?.participating_students_names)}
-        </p>
-
-        <p>
-          <strong>Grades</strong>
-          <br />
-          {displayText(submission?.participating_students_grades)}
-        </p>
-      </div>
-
-      {derived.groupName && (
-        <p>
-          <strong>Group Name</strong>
-          <br />
-          {displayText(derived.groupName)}
-        </p>
+    <div className="actions" style={{ marginTop: 12 }}>
+      {hasSource && (
+        <a
+          className="btn secondary"
+          href={submission.art_link}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Open Source File
+        </a>
       )}
 
-      <div className="grid grid-2" style={{ marginTop: 16 }}>
-        <div>
-          <h3>English Description</h3>
-          <p dir="auto">{displayText(derived.englishDescription)}</p>
-        </div>
-
-        <div>
-          <h3>Arabic Description</h3>
-          <p dir="auto">{displayText(derived.arabicDescription)}</p>
-        </div>
-      </div>
-
-      <div className="grid grid-3" style={{ marginTop: 16 }}>
-        <p>
-          <strong>Influence</strong>
-          <br />
-          {displayText(derived.influence)}
-        </p>
-
-        <p>
-          <strong>Most Enjoyable Part</strong>
-          <br />
-          {displayText(derived.enjoyable)}
-        </p>
-
-        <p>
-          <strong>Focused Elements</strong>
-          <br />
-          {displayText(derived.elements)}
-        </p>
-      </div>
+      {hasUpdated && (
+        <a
+          className="btn secondary"
+          href={submission.updated_artwork_file_url}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Open Updated File
+        </a>
+      )}
     </div>
   );
 }
 
-function OriginalImportedArtworkDetails({ submission }: { submission: any }) {
-  const fields = getOriginalImportedFields(submission);
-
-  return (
-    <div className="card" style={{ marginTop: 16 }}>
-      <h3>Original Imported Artwork Text</h3>
-
-      <p className="muted">
-        This is the original text from the uploaded import file before any
-        coordinator, proofreader, or reviewer edits.
-      </p>
-
-      <div className="grid grid-2">
-        <p>
-          <strong>English Title</strong>
-          <br />
-          {displayText(fields.englishTitle)}
-        </p>
-
-        <p>
-          <strong>Arabic Title</strong>
-          <br />
-          {displayText(fields.arabicTitle)}
-        </p>
-
-        <p>
-          <strong>English Description</strong>
-          <br />
-          {displayText(fields.englishDescription)}
-        </p>
-
-        <p>
-          <strong>Arabic Description</strong>
-          <br />
-          {displayText(fields.arabicDescription)}
-        </p>
-
-        <p>
-          <strong>Influence</strong>
-          <br />
-          {displayText(fields.influence)}
-        </p>
-
-        <p>
-          <strong>Most Enjoyable Part</strong>
-          <br />
-          {displayText(fields.enjoyable)}
-        </p>
-
-        <p>
-          <strong>Focused Elements</strong>
-          <br />
-          {displayText(fields.elements)}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function LiveAdekDecision({
-  fileQualityClear,
-  culturalAuthenticity,
-  artisticExcellence,
-  ethicalAppropriateness,
-  artisticRating,
-}: {
-  fileQualityClear: string;
-  culturalAuthenticity: string;
-  artisticExcellence: string;
-  ethicalAppropriateness: string;
-  artisticRating: string;
-}) {
-  if (fileQualityClear === "no") {
-    return {
-      decision: "send_correction",
-      label: "Send for Correction",
-      className: "warning",
-    };
-  }
-
-  if (
-    culturalAuthenticity === "no" ||
-    artisticExcellence === "no" ||
-    ethicalAppropriateness === "no"
-  ) {
-    return {
-      decision: "disqualified",
-      label: "Disqualified",
-      className: "danger",
-    };
-  }
-
-  if (artisticRating === "excellent") {
-    return {
-      decision: "approved",
-      label: "Approved",
-      className: "success",
-    };
-  }
-
-  return {
-    decision: "needs_management_review",
-    label: "Needs Management Review",
-    className: "warning",
-  };
-}
-
-function ManagementDecisionBadge({
-  decision,
-}: {
-  decision: string;
-}) {
-  if (decision === "approved") {
-    return (
-      <div className="decision-badge success">
-        <span>Decision</span>
-        <strong>Approved</strong>
-      </div>
-    );
-  }
-
-  if (decision === "disqualified") {
-    return (
-      <div className="decision-badge danger">
-        <span>Decision</span>
-        <strong>Disqualified</strong>
-      </div>
-    );
-  }
-
-  return (
-    <div className="decision-badge warning">
-      <span>Decision</span>
-      <strong>Pending</strong>
-    </div>
-  );
-}
-
-function CorrectionNotice({ assignment }: { assignment: Assignment }) {
-  if (!assignment.correction_reason && !assignment.correction_notes) {
+function CorrectionSourceCard({ assignment }: { assignment: Assignment }) {
+  if (!assignment.correction_reason && !assignment.correction_source_phase) {
     return null;
   }
 
   return (
-    <div className="card" style={{ marginTop: 16, borderColor: "#d99" }}>
-      <h3>Correction Request</h3>
+    <div className="card">
+      <h3 style={{ marginTop: 0 }}>Correction Request Details</h3>
 
-      {assignment.correction_reason && (
-        <p>
-          <strong>Reason</strong>
-          <br />
-          {correctionReasonLabels[assignment.correction_reason] ??
-            assignment.correction_reason}
-        </p>
-      )}
+      <dl className="detail-grid">
+        <DetailField
+          label="Correction requested from"
+          value={getCorrectionSourceLabel(assignment.correction_source_phase)}
+        />
 
-      {assignment.correction_notes && (
-        <p>
-          <strong>Notes</strong>
-          <br />
-          {assignment.correction_notes}
-        </p>
-      )}
+        <DetailField
+          label="Correction reason"
+          value={
+            correctionReasonLabels[assignment.correction_reason ?? ""] ??
+            assignment.correction_reason
+          }
+        />
+      </dl>
+
+      <p className="muted small" style={{ marginTop: 12 }}>
+        After you finish the correction, this artwork will return to the same
+        user who requested the correction.
+      </p>
     </div>
   );
 }
 
-function CoordinatorUploadBox({ assignment }: { assignment: Assignment }) {
+function LiteraryCriteriaCard() {
   return (
-    <div className="card" style={{ marginTop: 16 }}>
-      <h3>Upload Corrected Artwork Link</h3>
+    <div className="card">
+      <h3 style={{ marginTop: 0 }}>Criteria for Literary Proofreading</h3>
+
+      <div className="grid grid-3">
+        <div className="submission-text-block">
+          <strong>Proofreading and linguistic editing</strong>
+          <div dir="rtl">التدقيق اللغوي والتصحيح</div>
+        </div>
+
+        <div className="submission-text-block">
+          <strong>
+            Reviewing content and assessing its suitability for publication
+          </strong>
+          <div dir="rtl">مراجعة المحتوى وتقييم ملاءمته للنشر</div>
+        </div>
+
+        <div className="submission-text-block">
+          <strong>
+            Ensuring alignment of the submissions with the objectives of the
+            initiative
+          </strong>
+          <div dir="rtl">التأكد من توافق النصوص مع أهداف المبادرة</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CoordinatorUpdatedArtworkUpload({
+  submission,
+  currentPath,
+}: {
+  submission: any;
+  currentPath: string;
+}) {
+  return (
+    <div className="card" style={{ boxShadow: "none", marginTop: 16 }}>
+      <h4 style={{ marginTop: 0 }}>Updated Artwork Attachment</h4>
 
       <p className="muted">
-        Update the artwork source link after correction, then send the task back
-        to the requester.
+        Upload corrected or replacement artwork file(s) only if needed. If you
+        upload more than one file, the files will be saved in a Google Drive
+        folder named with the submission reference ID.
       </p>
 
-      <form action="/api/work/complete" method="post">
-        <input type="hidden" name="assignment_id" value={assignment.id} />
-        <input type="hidden" name="task_action" value="return_correction" />
+      {submission.updated_artwork_file_url && (
+        <p className="muted small">
+          Current updated file/folder:{" "}
+          <a
+            href={submission.updated_artwork_file_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ textDecoration: "underline" }}
+          >
+            {submission.updated_artwork_file_name ?? "Open Updated File"}
+          </a>
+        </p>
+      )}
+
+      <form
+        action="/api/submissions/updated-artwork"
+        method="post"
+        encType="multipart/form-data"
+        className="grid"
+        data-no-global-loading="true"
+      >
+        <input type="hidden" name="submission_id" value={submission.id} />
+        <input type="hidden" name="redirect_to" value={currentPath} />
 
         <label>
-          <span className="small">Corrected Artwork Link</span>
-          <input className="input" name="art_link" type="url" required />
-        </label>
-
-        <label>
-          <span className="small">Coordinator Notes</span>
-          <textarea
+          <span className="small">Updated artwork file(s)</span>
+          <input
             className="input"
-            name="coordinator_notes"
-            rows={4}
-            placeholder="Describe what was corrected..."
+            type="file"
+            name="updated_artwork_file"
+            multiple
+            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.ppt,.pptx"
           />
         </label>
 
@@ -617,474 +619,671 @@ export function WorkspaceClient({
   const [managementArtisticRating, setManagementArtisticRating] =
     useState("good");
   const [generalProofreaderDecision, setGeneralProofreaderDecision] =
-    useState("approved");
+    useState("ready");
   const [literaryPublicationSuitable, setLiteraryPublicationSuitable] =
     useState("yes");
-  const [literaryManagementDecision, setLiteraryManagementDecision] =
-    useState("approved");
 
   const selectedAssignment = useMemo(
-    () => assignments.find((assignment) => assignment.id === selectedId) ?? null,
+    () =>
+      assignments.find((assignment) => assignment.id === selectedId) ??
+      assignments[0] ??
+      null,
     [assignments, selectedId]
   );
 
   const selectedSubmission = selectedAssignment?.submissions ?? null;
+  const derived = selectedSubmission ? getDerivedFields(selectedSubmission) : null;
 
   useEffect(() => {
+    if (!assignments.length) {
+      setSelectedId(null);
+      return;
+    }
+
+    if (!selectedId || !assignments.some((assignment) => assignment.id === selectedId)) {
+      setSelectedId(assignments[0].id);
+    }
+  }, [assignments, selectedId]);
+
+  useEffect(() => {
+    if (!selectedSubmission) return;
+
     setAdekFileQualityClear(
-      selectedSubmission?.evaluator_file_quality_clear === false ? "no" : "yes"
+      selectedSubmission.evaluator_file_quality_clear === false ? "no" : "yes"
     );
 
-    setCulturalAuthenticity(
-      selectedSubmission?.cultural_authenticity === false ? "no" : "yes"
-    );
+    setCulturalAuthenticity("yes");
+    setArtisticExcellence("yes");
+    setEthicalAppropriateness("yes");
 
-    setArtisticExcellence(
-      selectedSubmission?.artistic_excellence === false ? "no" : "yes"
-    );
+    setArtisticRating(selectedSubmission.artistic_rating ?? "good");
 
-    setEthicalAppropriateness(
-      selectedSubmission?.ethical_public_appropriateness === false
-        ? "no"
-        : "yes"
-    );
-
-    setArtisticRating(selectedSubmission?.artistic_rating ?? "good");
     setManagementArtisticRating(
-      selectedSubmission?.management_artistic_rating ?? "good"
+      selectedSubmission.management_artistic_rating ??
+        selectedSubmission.artistic_rating ??
+        "good"
     );
-    setGeneralProofreaderDecision(
-      selectedSubmission?.general_proofreader_decision ?? "approved"
-    );
+
+    setGeneralProofreaderDecision("ready");
+
     setLiteraryPublicationSuitable(
-      selectedSubmission?.literary_publication_suitable === false ? "no" : "yes"
-    );
-    setLiteraryManagementDecision(
-      selectedSubmission?.literary_management_decision ?? "approved"
+      selectedSubmission.literary_publication_suitable === false ? "no" : "yes"
     );
   }, [selectedSubmission?.id]);
 
-  const liveAdekDecision = LiveAdekDecision({
-    fileQualityClear: adekFileQualityClear,
+  const liveAdekDecision = calculateAdekDecisionLabel(
     culturalAuthenticity,
     artisticExcellence,
-    ethicalAppropriateness,
-    artisticRating,
-  });
+    ethicalAppropriateness
+  );
 
-  if (!assignments.length) {
-    return (
-      <div className="grid grid-2">
-        <section className="card">
-          <h2>No tasks available</h2>
-          <p className="muted">
-            There are no active {labelPhase(phase)} tasks assigned to you.
-          </p>
-        </section>
-      </div>
-    );
-  }
-
-  const derived = selectedSubmission ? getDerivedFields(selectedSubmission) : null;
-  const selectedIsLiterary = selectedSubmission
-    ? isLiteraryPathway(selectedSubmission)
-    : false;
+  const isLimitedSubmissionDetailsView =
+    phase === "adek_evaluation" ||
+    phase === "proofreading" ||
+    phase === "literary_proofreading";
 
   return (
-    <div className="grid grid-2 workspace-layout">
-      <section className="card">
-        <h2>Task List</h2>
+    <div className="workspace-shell original-workspace-layout">
+      <aside className="workspace-sidebar">
+        <div className="workspace-sidebar-header">
+          <h2>Assigned Artworks</h2>
+          <p className="muted small">
+            {assignments.length} artwork{assignments.length === 1 ? "" : "s"} in
+            this view.
+          </p>
+        </div>
 
-        <p className="muted">
-          Select a task to review. Tasks are shown with the newest assigned work
-          first.
-        </p>
-
-        <div className="task-list">
-          {assignments.map((assignment) => {
+        <div className="workspace-list">
+          {assignments.map((assignment, index) => {
             const submission = assignment.submissions;
-            const active = assignment.id === selectedId;
+            const fields = submission ? getDerivedFields(submission) : null;
+            const isSelected = assignment.id === selectedAssignment?.id;
 
             return (
               <button
-                key={assignment.id}
                 type="button"
-                className={`task-card ${active ? "active" : ""}`}
+                key={assignment.id}
+                className={`workspace-list-item ${isSelected ? "selected" : ""}`}
                 onClick={() => setSelectedId(assignment.id)}
               >
-                <span className="task-card-title">
-                  {getTitle(submission)}
-                </span>
+                <strong>
+                  {index + 1}.{" "}
+                  {fields?.artworkName ?? submission?.reference_id ?? "Unknown"}
+                </strong>
 
-                <span className="task-card-meta">
-                  {displayText(submission?.reference_id)}
-                </span>
+                {!isLimitedSubmissionDetailsView && (
+                  <span>{submission?.institution_name ?? "Unknown school"}</span>
+                )}
 
-                <span className="task-card-meta">
-                  {taskOwnerLabel(assignment)}
-                </span>
+                {isLimitedSubmissionDetailsView && (
+                  <span>
+                    {submission?.art_pathway_name_en ?? "Unknown pathway"} ·{" "}
+                    {normalizeGrade(submission?.participating_students_grades) ||
+                      "Grade unavailable"}
+                  </span>
+                )}
 
-                <span className={statusClassName(submission?.workflow_status)}>
-                  {labelWorkflowStatus(submission?.workflow_status)}
+                {assignment.correction_source_phase && (
+                  <span>
+                    From:{" "}
+                    {getCorrectionSourceLabel(assignment.correction_source_phase)}
+                  </span>
+                )}
+
+                <span className={statusClassName(assignment.status)}>
+                  {assignment.status}
                 </span>
               </button>
             );
           })}
-        </div>
-      </section>
 
-      <section>
+          {assignments.length === 0 && (
+            <div className="workspace-empty">
+              No artworks match the selected filters.
+            </div>
+          )}
+        </div>
+      </aside>
+
+      <section className="workspace-main">
         {!selectedAssignment || !selectedSubmission || !derived ? (
           <div className="card">
-            <h2>Select a task</h2>
+            <h2>No artwork selected</h2>
+            <p className="muted">
+              Select an artwork from the left sidebar to begin.
+            </p>
           </div>
         ) : (
           <>
-            <ArtworkDetails submission={selectedSubmission} />
-            <OriginalImportedArtworkDetails submission={selectedSubmission} />
-            <CorrectionNotice assignment={selectedAssignment} />
+            <div className="workspace-detail-stack">
+              {phase === "literary_proofreading" && <LiteraryCriteriaCard />}
 
-            {phase === "coordinator_check" && (
-              <CoordinatorUploadBox assignment={selectedAssignment} />
-            )}
-
-            <form action="/api/work/complete" method="post">
-              <input
-                type="hidden"
-                name="assignment_id"
-                value={selectedAssignment.id}
-              />
-
-              <div className="card" style={{ marginTop: 16 }}>
+              <div className="card">
                 <div className="table-title-row">
                   <div>
-                    <h2>{labelPhase(phase)} Action</h2>
+                    <h2 style={{ marginTop: 0 }}>{derived.artworkName}</h2>
 
-                    <p className="muted">
-                      Complete the required decision fields for this task.
-                    </p>
-
-                    {phase === "adek_evaluation" && (
-                      <p className="muted small" style={{ marginBottom: 0 }}>
-                        The final evaluator decision will be calculated
-                        automatically.
+                    {!isLimitedSubmissionDetailsView && (
+                      <p className="muted small">
+                        Reference ID: {selectedSubmission.reference_id}
                       </p>
                     )}
 
-                    {phase === "literary_proofreading" && (
-                      <p className="muted small" style={{ marginBottom: 0 }}>
-                        First confirm whether the artwork is aligned with the
-                        initiative and suitable for publication.
+                    <div className="actions">
+                      <span className={statusClassName(selectedSubmission.workflow_status)}>
+                        {labelWorkflowStatus(selectedSubmission.workflow_status)}
+                      </span>
+
+                      <span className="pill pill-info">{labelPhase(phase)}</span>
+
+                      <span className={statusClassName(selectedAssignment.status)}>
+                        Assignment: {selectedAssignment.status}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <dl className="detail-grid" style={{ marginTop: 18 }}>
+                  {isLimitedSubmissionDetailsView ? (
+                    <>
+                      <DetailField
+                        label="Pathway"
+                        value={selectedSubmission.art_pathway_name_en}
+                      />
+
+                      <DetailField
+                        label="Students Grades"
+                        value={normalizeGrade(
+                          selectedSubmission.participating_students_grades
+                        )}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <DetailField
+                        label="Reference ID"
+                        value={selectedSubmission.reference_id}
+                      />
+                      <DetailField
+                        label="Registration ID"
+                        value={selectedSubmission.registration_id}
+                      />
+                      <DetailField
+                        label="Registration Status"
+                        value={selectedSubmission.registration_status}
+                      />
+                      <DetailField
+                        label="Submission Date"
+                        value={
+                          selectedSubmission.submission_date_value ??
+                          selectedSubmission.submission_date
+                        }
+                      />
+                      <DetailField
+                        label="School"
+                        value={selectedSubmission.institution_name}
+                      />
+                      <DetailField
+                        label="School Type"
+                        value={selectedSubmission.institution_type}
+                      />
+                      <DetailField
+                        label="Group Name"
+                        value={selectedSubmission.group_name}
+                      />
+                      <DetailField
+                        label="Region"
+                        value={selectedSubmission.school_region}
+                      />
+                      <DetailField
+                        label="Pathway"
+                        value={selectedSubmission.art_pathway_name_en}
+                      />
+                      <DetailField
+                        label="Arabic Pathway"
+                        value={derived.arabicPathway}
+                      />
+                      <DetailField
+                        label="Subpathway"
+                        value={selectedSubmission.art_sub_pathway_name_en}
+                      />
+                      <DetailField
+                        label="Arabic Subpathway"
+                        value={derived.arabicSubpathway}
+                      />
+                      <DetailField
+                        label="Students ESIS"
+                        value={
+                          selectedSubmission.participating_students_esis_numbers
+                        }
+                      />
+                      <DetailField
+                        label="Students Names"
+                        value={derived.studentNames}
+                      />
+                      <DetailField
+                        label="Students Grades"
+                        value={normalizeGrade(
+                          selectedSubmission.participating_students_grades
+                        )}
+                      />
+                      <DetailField
+                        label="Genders"
+                        value={selectedSubmission.participating_students_genders}
+                      />
+                      <DetailField
+                        label="Nationalities"
+                        value={
+                          selectedSubmission.participating_students_nationalities
+                        }
+                      />
+                    </>
+                  )}
+
+                  {!isLimitedSubmissionDetailsView &&
+                    selectedSubmission.artistic_rating && (
+                      <DetailField
+                        label="ADEK Artistic Rating"
+                        value={
+                          artisticRatingLabels[
+                            selectedSubmission.artistic_rating
+                          ] ?? selectedSubmission.artistic_rating
+                        }
+                      />
+                    )}
+
+                  {!isLimitedSubmissionDetailsView &&
+                    selectedSubmission.management_artistic_rating && (
+                      <DetailField
+                        label="Management Artistic Rating"
+                        value={
+                          artisticRatingLabels[
+                            selectedSubmission.management_artistic_rating
+                          ] ?? selectedSubmission.management_artistic_rating
+                        }
+                      />
+                    )}
+
+                  {selectedAssignment.correction_source_phase && (
+                    <DetailField
+                      label="Correction requested from"
+                      value={getCorrectionSourceLabel(
+                        selectedAssignment.correction_source_phase
+                      )}
+                    />
+                  )}
+
+                  {selectedAssignment.correction_reason && (
+                    <DetailField
+                      label="Correction Reason"
+                      value={
+                        correctionReasonLabels[
+                          selectedAssignment.correction_reason
+                        ] ?? selectedAssignment.correction_reason
+                      }
+                    />
+                  )}
+                </dl>
+              </div>
+
+              {phase === "coordinator_check" && (
+                <CorrectionSourceCard assignment={selectedAssignment} />
+              )}
+
+              {phase === "final_review" && (
+                <ReviewerOriginalUpdatedComparison
+                  submission={selectedSubmission}
+                  derived={derived}
+                />
+              )}
+
+              {phase !== "adek_evaluation" && (
+                <div className="card">
+                  <h3>Artwork Text and Narrative</h3>
+
+                  <div className="grid grid-2">
+                    <TextBlock
+                      label="English Title"
+                      value={derived.englishTitle}
+                    />
+                    <TextBlock
+                      label="Arabic Title"
+                      value={derived.arabicTitle}
+                    />
+                    <TextBlock
+                      label="English Description"
+                      value={derived.englishDescription}
+                    />
+                    <TextBlock
+                      label="Arabic Description"
+                      value={derived.arabicDescription}
+                    />
+
+                    <TextBlock
+                      label="Did anyone or anything influence your idea, such as family, an artist, or a place?"
+                      value={derived.influence}
+                    />
+
+                    <TextBlock
+                      label="What was the most enjoyable part of creating your work?"
+                      value={derived.enjoyable}
+                    />
+
+                    <TextBlock
+                      label="What elements did you focus on in your artwork, and why?"
+                      value={derived.elements}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <form
+              key={`${selectedAssignment.id}-${selectedSubmission.id}`}
+              className="card workspace-task-action-box"
+              action="/api/work/complete"
+              method="post"
+            >
+              <input type="hidden" name="assignment_id" value={selectedAssignment.id} />
+              <input type="hidden" name="submission_id" value={selectedSubmission.id} />
+              <input type="hidden" name="phase" value={phase} />
+              <input type="hidden" name="redirect_to" value={currentPath} />
+              <input
+                type="hidden"
+                name="proofreader_type"
+                value={proofreaderType ?? ""}
+              />
+
+              <div className="task-action-header">
+                <div>
+                  <h3 style={{ marginTop: 0 }}>Task Action</h3>
+
+                  {phase === "adek_evaluation" && (
+                    <p className="muted small" style={{ marginBottom: 0 }}>
+                      First confirm whether the submitted file is clear enough to
+                      evaluate. If it is clear, the rubric will appear and the
+                      decision will be calculated automatically.
+                    </p>
+                  )}
+
+                  {phase === "literary_proofreading" && (
+                    <p className="muted small" style={{ marginBottom: 0 }}>
+                      First confirm whether the artwork is aligned with the
+                      initiative and suitable for publication.
+                    </p>
+                  )}
+                </div>
+
+                {phase === "adek_evaluation" && adekFileQualityClear === "yes" && (
+                  <div className={`decision-badge ${liveAdekDecision.className}`}>
+                    <span>Decision</span>
+                    <strong>{liveAdekDecision.label}</strong>
+                  </div>
+                )}
+              </div>
+
+              <SourceButtons submission={selectedSubmission} />
+
+              {phase === "adek_evaluation" && (
+                <>
+                  <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
+                    <h4 style={{ marginTop: 0 }}>Artwork File Quality Check</h4>
+
+                    <label>
+                      <span className="small">
+                        <strong>
+                          Can this artwork be evaluated based on the quality and
+                          clarity of the submitted image, video, or audio file?
+                        </strong>
+                        <br />
+                        هل يمكن تقييم العمل الفني بناءً على جودة ووضوح ملف الصورة
+                        أو الفيديو أو الصوت المرفق؟
+                      </span>
+
+                      <select
+                        className="input"
+                        name="adek_file_quality_clear"
+                        value={adekFileQualityClear}
+                        onChange={(event) =>
+                          setAdekFileQualityClear(event.target.value)
+                        }
+                        style={{ marginTop: 8 }}
+                      >
+                        <option value="yes">نعم / Yes</option>
+                        <option value="no">لا / No</option>
+                      </select>
+                    </label>
+
+                    {adekFileQualityClear === "no" && (
+                      <p className="muted small" style={{ marginTop: 12 }}>
+                        The evaluation rubric will not be shown. This artwork will
+                        be sent to the Coordinator for correction, then returned to
+                        you for evaluation.
                       </p>
                     )}
                   </div>
 
-                  {phase === "adek_evaluation" &&
-                    adekFileQualityClear === "yes" && (
-                      <div
-                        className={`decision-badge ${liveAdekDecision.className}`}
-                      >
-                        <span>Decision</span>
-                        <strong>{liveAdekDecision.label}</strong>
-                      </div>
-                    )}
-                </div>
-
-                <SourceButtons submission={selectedSubmission} />
-
-                {phase === "adek_evaluation" && (
-                  <>
-                    <div
-                      className="card"
-                      style={{ marginTop: 16, boxShadow: "none" }}
-                    >
-                      <label>
-                        <span className="small">
-                          <strong>
-                            Can the artwork be evaluated based on the quality and
-                            clarity of the submitted image, video, or audio file?
-                          </strong>
-                          <br />
-                          هل يمكن تقييم العمل الفني بناءً على جودة ووضوح ملف
-                          الصورة أو الفيديو أو الصوت المرفق؟
-                        </span>
-
-                        <select
-                          className="input"
-                          name="adek_file_quality_clear"
-                          value={adekFileQualityClear}
-                          onChange={(event) =>
-                            setAdekFileQualityClear(event.target.value)
-                          }
-                          style={{ marginTop: 8 }}
-                        >
-                          <option value="yes">نعم / Yes</option>
-                          <option value="no">لا / No</option>
-                        </select>
-                      </label>
-
-                      {adekFileQualityClear === "no" && (
-                        <p className="muted small" style={{ marginTop: 12 }}>
-                          The evaluation rubric will not be shown. This artwork
-                          will be sent to the Coordinator for correction, then
-                          returned to you for evaluation.
-                        </p>
-                      )}
-                    </div>
-
-                    {adekFileQualityClear === "yes" && (
-                      <>
-                        <div className="grid grid-3" style={{ marginTop: 18 }}>
-                          <label>
-                            <span className="small">
-                              <strong>أ. الأصالة الثقافية</strong>
-                              <br />
-                              Cultural Authenticity
-                            </span>
-
-                            <select
-                              className="input"
-                              name="cultural_authenticity"
-                              value={culturalAuthenticity}
-                              onChange={(event) =>
-                                setCulturalAuthenticity(event.target.value)
-                              }
-                            >
-                              <option value="yes">نعم / Yes</option>
-                              <option value="no">لا / No</option>
-                            </select>
-                          </label>
-
-                          <label>
-                            <span className="small">
-                              <strong>
-                                ب. التميز الفني / الجودة والارتباط بالموضوع
-                              </strong>
-                              <br />
-                              Artistic Excellence / Quality & Relevance
-                            </span>
-
-                            <select
-                              className="input"
-                              name="artistic_excellence"
-                              value={artisticExcellence}
-                              onChange={(event) =>
-                                setArtisticExcellence(event.target.value)
-                              }
-                            >
-                              <option value="yes">نعم / Yes</option>
-                              <option value="no">لا / No</option>
-                            </select>
-                          </label>
-
-                          <label>
-                            <span className="small">
-                              <strong>ج. الملاءمة الأخلاقية والعامة</strong>
-                              <br />
-                              Ethical & Public Appropriateness
-                            </span>
-
-                            <select
-                              className="input"
-                              name="ethical_public_appropriateness"
-                              value={ethicalAppropriateness}
-                              onChange={(event) =>
-                                setEthicalAppropriateness(event.target.value)
-                              }
-                            >
-                              <option value="yes">نعم / Yes</option>
-                              <option value="no">لا / No</option>
-                            </select>
-                          </label>
-                        </div>
-
-                        <label style={{ display: "block", marginTop: 16 }}>
+                  {adekFileQualityClear === "yes" && (
+                    <>
+                      <div className="grid grid-3" style={{ marginTop: 18 }}>
+                        <label>
                           <span className="small">
-                            <strong>التقييم الفني</strong>
+                            <strong>أ. الأصالة الثقافية</strong>
                             <br />
-                            Artistic Rating
+                            Cultural Authenticity
                           </span>
 
                           <select
                             className="input"
-                            name="artistic_rating"
-                            value={artisticRating}
+                            name="cultural_authenticity"
+                            value={culturalAuthenticity}
                             onChange={(event) =>
-                              setArtisticRating(event.target.value)
+                              setCulturalAuthenticity(event.target.value)
                             }
                           >
-                            <option value="weak">ضعيف / Weak</option>
-                            <option value="medium">متوسط / Medium</option>
-                            <option value="good">جيد / Good</option>
-                            <option value="excellent">
-                              ممتاز / Excellent
-                            </option>
+                            <option value="yes">نعم / Yes</option>
+                            <option value="no">لا / No</option>
                           </select>
                         </label>
-                      </>
-                    )}
 
-                    <label style={{ display: "block", marginTop: 16 }}>
-                      <span className="small">
-                        <strong>Evaluator Comment</strong>
-                        <br />
-                        ملاحظات المحكم
-                      </span>
+                        <label>
+                          <span className="small">
+                            <strong>
+                              ب. التميز الفني / الجودة والارتباط بالموضوع
+                            </strong>
+                            <br />
+                            Artistic Excellence / Quality & Relevance
+                          </span>
 
-                      <textarea
-                        className="input"
-                        name="evaluator_comment"
-                        rows={5}
-                        dir="auto"
-                        placeholder="Add any notes or comments about this evaluation..."
-                        defaultValue={displayText(
-                          selectedSubmission.evaluator_comment,
-                          ""
-                        )}
-                      />
-                    </label>
-                  </>
-                )}
+                          <select
+                            className="input"
+                            name="artistic_excellence"
+                            value={artisticExcellence}
+                            onChange={(event) =>
+                              setArtisticExcellence(event.target.value)
+                            }
+                          >
+                            <option value="yes">نعم / Yes</option>
+                            <option value="no">لا / No</option>
+                          </select>
+                        </label>
 
-                {phase === "coordinator_check" && (
-                  <>
-                    <p className="muted small">
-                      Revise the title, description, and student narrative
-                      fields, then send it back to the same user who requested
-                      the correction.
+                        <label>
+                          <span className="small">
+                            <strong>ج. الملاءمة الأخلاقية والعامة</strong>
+                            <br />
+                            Ethical & Public Appropriateness
+                          </span>
+
+                          <select
+                            className="input"
+                            name="ethical_public_appropriateness"
+                            value={ethicalAppropriateness}
+                            onChange={(event) =>
+                              setEthicalAppropriateness(event.target.value)
+                            }
+                          >
+                            <option value="yes">نعم / Yes</option>
+                            <option value="no">لا / No</option>
+                          </select>
+                        </label>
+                      </div>
+
+                      <label style={{ display: "block", marginTop: 16 }}>
+                        <span className="small">
+                          <strong>التقييم الفني</strong>
+                          <br />
+                          Artistic Rating
+                        </span>
+
+                        <select
+                          className="input"
+                          name="artistic_rating"
+                          value={artisticRating}
+                          onChange={(event) =>
+                            setArtisticRating(event.target.value)
+                          }
+                        >
+                          <option value="weak">ضعيف / Weak</option>
+                          <option value="medium">متوسط / Medium</option>
+                          <option value="good">جيد / Good</option>
+                          <option value="excellent">ممتاز / Excellent</option>
+                        </select>
+                      </label>
+
+                      <label style={{ display: "block", marginTop: 16 }}>
+                        <span className="small">
+                          <strong>Evaluator Comment</strong>
+                          <br />
+                          ملاحظات المحكم
+                        </span>
+
+                        <textarea
+                          className="input"
+                          name="evaluator_comment"
+                          rows={5}
+                          dir="auto"
+                          placeholder="Add any notes or comments about this evaluation..."
+                          defaultValue={displayText(
+                            selectedSubmission.evaluator_comment,
+                            ""
+                          )}
+                        />
+                      </label>
+                    </>
+                  )}
+                </>
+              )}
+
+              {phase === "coordinator_check" && (
+                <>
+                  <p className="muted small">
+                    Revise the title, description, and student narrative fields,
+                    then send it back to the same user who requested the correction.
+                  </p>
+
+                  <EditableArtworkText
+                    key={`coordinator-edit-${selectedSubmission.id}`}
+                    derived={derived}
+                  />
+
+                  <CoordinatorUpdatedArtworkUpload
+                    submission={selectedSubmission}
+                    currentPath={currentPath}
+                  />
+
+                  <div
+                    style={{
+                      marginTop: 18,
+                      padding: 16,
+                      borderRadius: 16,
+                      background: "#fff1f1",
+                      border: "1px solid rgba(155, 47, 47, 0.25)",
+                    }}
+                  >
+                    <strong>Coordinator Disqualification</strong>
+
+                    <p className="muted small" style={{ marginTop: 8 }}>
+                      Use only if the correction cannot be completed.
                     </p>
 
-                    <EditableArtworkText derived={derived} />
-                  </>
-                )}
-
-                {phase === "management_review" && (
-                  <>
-                    <label>
-                      <span className="small">Management Artistic Rating</span>
-
-                      <select
-                        className="input"
-                        name="management_artistic_rating"
-                        value={managementArtisticRating}
-                        onChange={(event) =>
-                          setManagementArtisticRating(event.target.value)
-                        }
+                    <div className="actions" style={{ marginTop: 12 }}>
+                      <button
+                        className="btn secondary"
+                        type="submit"
+                        name="coordinator_action"
+                        value="disqualify_no_school_response"
                       >
-                        <option value="weak">Weak</option>
-                        <option value="medium">Medium</option>
-                        <option value="good">Good</option>
-                        <option value="excellent">Excellent</option>
-                      </select>
-                    </label>
+                        Disqualify: No response from school
+                      </button>
 
-                    <ManagementDecisionBadge
-                      decision={
-                        managementArtisticRating === "excellent"
-                          ? "approved"
-                          : "disqualified"
+                      <button
+                        className="btn secondary"
+                        type="submit"
+                        name="coordinator_action"
+                        value="disqualify_incomplete_faulty"
+                      >
+                        Disqualify: New submission remains incomplete/faulty
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {phase === "proofreading" && (
+                <>
+                  <EditableArtworkText
+                    key={`proofreader-edit-${selectedSubmission.id}`}
+                    derived={derived}
+                  />
+
+                  <label style={{ display: "block", marginTop: 12 }}>
+                    <span className="small">Decision</span>
+
+                    <select
+                      className="input"
+                      name="general_proofreader_decision"
+                      value={generalProofreaderDecision}
+                      onChange={(event) =>
+                        setGeneralProofreaderDecision(event.target.value)
                       }
-                    />
+                    >
+                      <option value="ready">Ready for Next Stage</option>
+                      <option value="needs_correction">Needs Correction</option>
+                    </select>
+                  </label>
 
-                    <label style={{ display: "block", marginTop: 16 }}>
-                      <span className="small">Management Notes</span>
-
-                      <textarea
-                        className="input"
-                        name="management_notes"
-                        rows={5}
-                        placeholder="Add management notes..."
-                        defaultValue={displayText(
-                          selectedSubmission.management_notes,
-                          ""
-                        )}
-                      />
-                    </label>
-                  </>
-                )}
-
-                {phase === "proofreading" && (
-                  <>
-                    <EditableArtworkText derived={derived} />
-
+                  {generalProofreaderDecision === "needs_correction" && (
                     <label style={{ display: "block", marginTop: 12 }}>
-                      <span className="small">General Proofreader Decision</span>
+                      <span className="small">Correction Reason</span>
 
-                      <select
-                        className="input"
-                        name="general_proofreader_decision"
-                        value={generalProofreaderDecision}
-                        onChange={(event) =>
-                          setGeneralProofreaderDecision(event.target.value)
-                        }
-                      >
-                        <option value="approved">Approve</option>
-                        <option value="needs_correction">
-                          Send for Correction
+                      <select className="input" name="correction_reason">
+                        <option value="artwork_mismatch">Artwork Mismatch</option>
+                        <option value="incomplete_narrative">
+                          Incomplete Narrative
+                        </option>
+                        <option value="inappropriate_flagged_content">
+                          Inappropriate / Flagged Content
                         </option>
                       </select>
                     </label>
+                  )}
+                </>
+              )}
 
-                    <label style={{ display: "block", marginTop: 12 }}>
-                      <span className="small">General Proofreader Notes</span>
+              {phase === "literary_proofreading" && (
+                <>
+                  <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
+                    <h4 style={{ marginTop: 0 }}>Literary Suitability Check</h4>
 
-                      <textarea
-                        className="input"
-                        name="general_proofreader_notes"
-                        rows={4}
-                        defaultValue={displayText(
-                          selectedSubmission.general_proofreader_notes,
-                          ""
-                        )}
-                      />
-                    </label>
-                  </>
-                )}
-
-                {phase === "literary_proofreading" && (
-                  <>
-                    {proofreaderType === "literary_arabic" ||
-                    isLiteraryArabic(selectedSubmission) ? (
-                      <label style={{ display: "block" }}>
-                        <span className="small">
-                          Updated Arabic Literary Content
-                        </span>
-
-                        <textarea
-                          className="input"
-                          name="literary_updated_content"
-                          rows={10}
-                          dir="auto"
-                          defaultValue={displayText(
-                            selectedSubmission.literary_updated_content ||
-                              selectedSubmission.description_ar,
-                            ""
-                          )}
-                        />
-                      </label>
-                    ) : (
-                      <label style={{ display: "block" }}>
-                        <span className="small">
-                          Updated English/Other Literary Content
-                        </span>
-
-                        <textarea
-                          className="input"
-                          name="literary_updated_content"
-                          rows={10}
-                          dir="auto"
-                          defaultValue={displayText(
-                            selectedSubmission.literary_updated_content ||
-                              selectedSubmission.description_en,
-                            ""
-                          )}
-                        />
-                      </label>
-                    )}
-
-                    <label style={{ display: "block", marginTop: 12 }}>
+                    <label>
                       <span className="small">
-                        Suitable for Publication / Aligned With Initiative
+                        <strong>
+                          Is the artwork aligned with the initiative and suitable
+                          for publication?
+                        </strong>
+                        <br />
+                        هل يتوافق العمل الفني مع أهداف المبادرة، وهل هو مناسب للنشر؟
                       </span>
 
                       <select
@@ -1094,158 +1293,162 @@ export function WorkspaceClient({
                         onChange={(event) =>
                           setLiteraryPublicationSuitable(event.target.value)
                         }
+                        style={{ marginTop: 8 }}
                       >
-                        <option value="yes">Yes</option>
-                        <option value="no">No</option>
+                        <option value="yes">نعم / Yes</option>
+                        <option value="no">لا / No</option>
                       </select>
                     </label>
 
-                    <label style={{ display: "block", marginTop: 12 }}>
-                      <span className="small">Literary Notes</span>
-
-                      <textarea
-                        className="input"
-                        name="literary_notes"
-                        rows={4}
-                        defaultValue={displayText(
-                          selectedSubmission.literary_notes,
-                          ""
-                        )}
-                      />
-                    </label>
-                  </>
-                )}
-
-                {phase === "final_review" && (
-                  <>
-                    <EditableArtworkText derived={derived} />
-
-                    <label style={{ display: "block", marginTop: 12 }}>
-                      <span className="small">Reviewer Decision</span>
-
-                      <select className="input" name="reviewer_decision">
-                        <option value="completed">Mark as Ready</option>
-                      </select>
-                    </label>
-                  </>
-                )}
-
-                {phase === "literary_proofreading" &&
-                literaryPublicationSuitable === "no" ? (
-                  <div className="card" style={{ marginTop: 16 }}>
-                    <h3>Correction Details</h3>
-
-                    <label>
-                      <span className="small">Correction Reason</span>
-
-                      <select
-                        className="input"
-                        name="correction_reason"
-                        required
-                      >
-                        <option value="">Select reason</option>
-                        {Object.entries(correctionReasonLabels).map(
-                          ([value, label]) => (
-                            <option key={value} value={value}>
-                              {label}
-                            </option>
-                          )
-                        )}
-                      </select>
-                    </label>
-
-                    <label>
-                      <span className="small">Correction Notes</span>
-
-                      <textarea
-                        className="input"
-                        name="correction_notes"
-                        rows={4}
-                        required
-                      />
-                    </label>
+                    {literaryPublicationSuitable === "no" && (
+                      <p className="muted small" style={{ marginTop: 12 }}>
+                        The content update field will not be shown. This artwork
+                        will be sent to Management for final review.
+                      </p>
+                    )}
                   </div>
-                ) : null}
 
-                {phase === "proofreading" &&
-                generalProofreaderDecision === "needs_correction" ? (
-                  <div className="card" style={{ marginTop: 16 }}>
-                    <h3>Correction Details</h3>
+                  {literaryPublicationSuitable === "yes" && (
+                    <>
+                      <label style={{ display: "block", marginTop: 12 }}>
+                        <span className="small">Updated Content</span>
 
-                    <label>
-                      <span className="small">Correction Reason</span>
+                        <textarea
+                          key={`literary-content-${selectedSubmission.id}`}
+                          name="literary_updated_content"
+                          rows={10}
+                          dir="auto"
+                          defaultValue={displayText(
+                            selectedSubmission.literary_updated_content,
+                            ""
+                          )}
+                        />
+                      </label>
 
-                      <select
-                        className="input"
-                        name="correction_reason"
-                        required
-                      >
-                        <option value="">Select reason</option>
-                        {Object.entries(correctionReasonLabels).map(
-                          ([value, label]) => (
-                            <option key={value} value={value}>
-                              {label}
-                            </option>
-                          )
-                        )}
-                      </select>
-                    </label>
+                      <p className="muted small" style={{ marginTop: 12 }}>
+                        Choose Mark Done if the literary content is ready, or Send
+                        for Correction if the Coordinator needs to correct/update
+                        the submission first.
+                      </p>
+                    </>
+                  )}
+                </>
+              )}
 
-                    <label>
-                      <span className="small">Correction Notes</span>
+              {phase === "management_review" && (
+                <>
+                  <label>
+                    <span className="small">Management Decision</span>
 
-                      <textarea
-                        className="input"
-                        name="correction_notes"
-                        rows={4}
-                        required
-                      />
-                    </label>
-                  </div>
-                ) : null}
+                    <select className="input" name="management_decision">
+                      <option value="approved">Approve</option>
+                      <option value="disqualified">Disqualify</option>
+                    </select>
+                  </label>
 
-                <div className="actions" style={{ marginTop: 16 }}>
-                  {phase === "literary_proofreading" &&
+                  <label style={{ display: "block", marginTop: 12 }}>
+                    <span className="small">
+                      <strong>التقييم الفني</strong>
+                      <br />
+                      Artistic Rating
+                    </span>
+
+                    <select
+                      className="input"
+                      name="management_artistic_rating"
+                      value={managementArtisticRating}
+                      onChange={(event) =>
+                        setManagementArtisticRating(event.target.value)
+                      }
+                    >
+                      <option value="weak">ضعيف / Weak</option>
+                      <option value="medium">متوسط / Medium</option>
+                      <option value="good">جيد / Good</option>
+                      <option value="excellent">ممتاز / Excellent</option>
+                    </select>
+                  </label>
+                </>
+              )}
+
+              {phase === "final_review" && (
+                <>
+                  <EditableArtworkText
+                    key={`reviewer-edit-${selectedSubmission.id}`}
+                    derived={derived}
+                  />
+
+                  <label style={{ display: "block", marginTop: 12 }}>
+                    <span className="small">Reviewer Decision</span>
+
+                    <select className="input" name="reviewer_decision">
+                      <option value="completed">Mark as Ready</option>
+                    </select>
+                  </label>
+                </>
+              )}
+
+              <div className="actions" style={{ marginTop: 16 }}>
+                {phase === "coordinator_check" ? (
+                  <button
+                    className="btn"
+                    type="submit"
+                    name="coordinator_action"
+                    value="return_corrected"
+                  >
+                    {selectedAssignment.correction_source_phase === "adek_evaluation"
+                      ? "Return to Evaluator"
+                      : "Return to Proofreader"}
+                  </button>
+                ) : phase === "literary_proofreading" ? (
                   literaryPublicationSuitable === "no" ? (
-                    <button
-                      className="btn secondary"
-                      type="submit"
-                      name="literary_action"
-                      value="needs_correction"
-                    >
-                      Send for Correction
-                    </button>
-                  ) : phase === "proofreading" &&
-                    generalProofreaderDecision === "needs_correction" ? (
-                    <button
-                      className="btn secondary"
-                      type="submit"
-                      name="task_action"
-                      value="send_correction"
-                    >
-                      Send for Correction
-                    </button>
-                  ) : (
                     <button
                       className="btn"
                       type="submit"
-                      name="task_action"
-                      value={
-                        phase === "adek_evaluation" &&
-                        adekFileQualityClear === "no"
-                          ? "send_correction"
-                          : "complete"
-                      }
+                      name="literary_action"
+                      value="needs_review"
                     >
-                      {phase === "final_review"
-                        ? "Mark as Ready"
-                        : phase === "adek_evaluation" &&
+                      Needs Review
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        className="btn"
+                        type="submit"
+                        name="literary_action"
+                        value="completed"
+                      >
+                        Mark Done
+                      </button>
+
+                      <button
+                        className="btn secondary"
+                        type="submit"
+                        name="literary_action"
+                        value="needs_correction"
+                      >
+                        Send for Correction
+                      </button>
+                    </>
+                  )
+                ) : (
+                  <button
+                    className="btn"
+                    type="submit"
+                    name="task_action"
+                    value={
+                      phase === "adek_evaluation" && adekFileQualityClear === "no"
+                        ? "send_correction"
+                        : "complete"
+                    }
+                  >
+                    {phase === "final_review"
+                      ? "Mark as Ready"
+                      : phase === "adek_evaluation" &&
                           adekFileQualityClear === "no"
                         ? "Send for Correction"
                         : "Mark Done & Open Next"}
-                    </button>
-                  )}
-                </div>
+                  </button>
+                )}
               </div>
             </form>
 
