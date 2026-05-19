@@ -7,8 +7,9 @@ type KpiData = {
   totalSubmissions: number;
   totalEvaluated: number;
   totalSelected: number;
+  totalSentForCorrection: number;
   totalProofread: number;
-  totalReviewed: number;
+  totalLiteraryProofread: number;
   totalReady: number;
 };
 
@@ -16,8 +17,9 @@ const emptyKpis: KpiData = {
   totalSubmissions: 0,
   totalEvaluated: 0,
   totalSelected: 0,
+  totalSentForCorrection: 0,
   totalProofread: 0,
-  totalReviewed: 0,
+  totalLiteraryProofread: 0,
   totalReady: 0,
 };
 
@@ -39,11 +41,18 @@ function normalizeKpis(payload: any): KpiData {
     totalSelected: numberFrom(
       data.totalSelected ?? data.total_selected ?? data.selected
     ),
+    totalSentForCorrection: numberFrom(
+      data.totalSentForCorrection ??
+        data.total_sent_for_correction ??
+        data.sent_for_correction
+    ),
     totalProofread: numberFrom(
       data.totalProofread ?? data.total_proofread ?? data.proofread
     ),
-    totalReviewed: numberFrom(
-      data.totalReviewed ?? data.total_reviewed ?? data.reviewed
+    totalLiteraryProofread: numberFrom(
+      data.totalLiteraryProofread ??
+        data.total_literary_proofread ??
+        data.literary_proofread
     ),
     totalReady: numberFrom(data.totalReady ?? data.total_ready ?? data.ready),
   };
@@ -102,8 +111,9 @@ export function KpiHeader() {
     { label: "Total Submissions", value: kpis.totalSubmissions },
     { label: "Total Evaluated", value: kpis.totalEvaluated },
     { label: "Total Selected", value: kpis.totalSelected },
-    { label: "Total Proofread", value: kpis.totalProofread },
-    { label: "Total Reviewed", value: kpis.totalReviewed },
+    { label: "Sent to Correction", value: kpis.totalSentForCorrection },
+    { label: "Proofread", value: kpis.totalProofread },
+    { label: "Lit Proofread", value: kpis.totalLiteraryProofread },
     { label: "Total Ready", value: kpis.totalReady },
   ];
 

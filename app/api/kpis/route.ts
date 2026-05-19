@@ -67,36 +67,31 @@ async function countDistinctRows({
   const { data, error } = await query;
 
   if (error) {
-    console.error(`KPI distinct count failed for ${table}.${column}:`, error.message);
+    console.error(
+      `KPI distinct count failed for ${table}.${column}:`,
+      error.message
+    );
     return 0;
   }
 
-  return new Set((data ?? []).map((row: any) => row[column]).filter(Boolean)).size;
+  return new Set((data ?? []).map((row: any) => row[column]).filter(Boolean))
+    .size;
 }
 
 export async function GET() {
   try {
-    const selectedWorkflowStatuses = [
-      "selected_for_proofreading",
-      "proofreading_in_progress",
-      "proofreading_done",
-      "final_review_in_progress",
-      "completed",
-    ];
-
     const [
       totalSubmissions,
       totalEvaluated,
       totalSelected,
+      totalSentForCorrection,
       totalProofread,
-      totalReviewed,
+      totalLiteraryProofread,
       totalReady,
     ] = await Promise.all([
       countRows({ table: "submissions" }),
 
-      // The current workflow stores ADEK results on submissions and completes
-      // ADEK assignments. The old evaluations table may be empty, so count live
-      // completed ADEK assignment submissions instead.
+      // Evaluated = ADEK evaluation task completed.
       countDistinctRows({
         table: "assignments",
         column: "submission_id",
@@ -106,39 +101,49 @@ export async function GET() {
         ],
       }),
 
+      // Selected = evaluated and approved by evaluator.
+      // This should not count management/reviewer/proofreading movement.
       countRows({
         table: "submissions",
-        filters: [
-          {
-            column: "workflow_status",
-            operator: "in",
-            value: selectedWorkflowStatuses,
-          },
-        ],
+        filters: [{ column: "evaluation_decision", value: "approved" }],
       }),
 
+      // Sent for correction = currently active coordinator correction tasks.
+      // This number drops when coordinator completes/sends it back.
       countDistinctRows({
         table: "assignments",
         column: "submission_id",
         filters: [
+          { column: "phase", value: "coordinator_check" },
           {
-            column: "phase",
+            column: "status",
             operator: "in",
-            value: ["proofreading", "literary_proofreading"],
+            value: ["assigned", "in_progress"],
           },
-          { column: "status", value: "completed" },
         ],
       }),
 
+      // General proofread only.
       countDistinctRows({
         table: "assignments",
         column: "submission_id",
         filters: [
-          { column: "phase", value: "final_review" },
+          { column: "phase", value: "proofreading" },
           { column: "status", value: "completed" },
         ],
       }),
 
+      // Literary proofread separately.
+      countDistinctRows({
+        table: "assignments",
+        column: "submission_id",
+        filters: [
+          { column: "phase", value: "literary_proofreading" },
+          { column: "status", value: "completed" },
+        ],
+      }),
+
+      // Ready = completed workflow.
       countRows({
         table: "submissions",
         filters: [{ column: "workflow_status", value: "completed" }],
@@ -152,14 +157,16 @@ export async function GET() {
           totalSubmissions,
           totalEvaluated,
           totalSelected,
+          totalSentForCorrection,
           totalProofread,
-          totalReviewed,
+          totalLiteraryProofread,
           totalReady,
         },
       },
       {
         headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+          "Cache-Control":
+            "no-store, no-cache, must-revalidate, proxy-revalidate",
           Pragma: "no-cache",
           Expires: "0",
         },
@@ -176,15 +183,17 @@ export async function GET() {
           totalSubmissions: 0,
           totalEvaluated: 0,
           totalSelected: 0,
+          totalSentForCorrection: 0,
           totalProofread: 0,
-          totalReviewed: 0,
+          totalLiteraryProofread: 0,
           totalReady: 0,
         },
       },
       {
         status: 500,
         headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+          "Cache-Control":
+            "no-store, no-cache, must-revalidate, proxy-revalidate",
         },
       }
     );

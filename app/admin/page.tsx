@@ -12,6 +12,7 @@ export default async function AdminPage() {
     activeAssignments,
     lastExport,
     readyForAdek,
+    sentForCorrection,
     needsManagementReview,
     selectedForProofreading,
     proofreadingDone,
@@ -36,6 +37,14 @@ export default async function AdminPage() {
       .from("submissions")
       .select("id", { count: "exact", head: true })
       .eq("workflow_status", "ready_for_adek"),
+
+    // Sent for correction = currently active Coordinator correction tasks.
+    // This drops automatically after the Coordinator sends it back.
+    supabaseAdmin
+      .from("assignments")
+      .select("submission_id", { count: "exact", head: true })
+      .eq("phase", "coordinator_check")
+      .in("status", ["assigned", "in_progress"]),
 
     supabaseAdmin
       .from("submissions")
@@ -93,6 +102,11 @@ export default async function AdminPage() {
           <div>
             <strong>Ready for ADEK</strong>
             <p className="stat-number">{readyForAdek.count ?? 0}</p>
+          </div>
+
+          <div>
+            <strong>Sent for Correction</strong>
+            <p className="stat-number">{sentForCorrection.count ?? 0}</p>
           </div>
 
           <div>
