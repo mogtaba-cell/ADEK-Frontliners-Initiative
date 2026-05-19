@@ -423,6 +423,60 @@ function ReviewerOriginalUpdatedComparison({
   );
 }
 
+function EvaluatorCommentNotice({ submission }: { submission: any }) {
+  const comment = String(submission?.evaluator_comment ?? "").trim();
+
+  if (!comment) return null;
+
+  return (
+    <div
+      className="card"
+      style={{
+        borderColor: "#d8b45f",
+        background: "#fff9ea",
+      }}
+    >
+      <h3 style={{ marginTop: 0 }}>Evaluator Comment</h3>
+
+      <p className="muted small" style={{ marginTop: 0 }}>
+        This comment was added by the evaluator and should be considered while
+        reviewing or correcting this submission.
+      </p>
+
+      <p dir="auto" style={{ whiteSpace: "pre-wrap" }}>
+        {comment}
+      </p>
+    </div>
+  );
+}
+
+function LiteraryProofreaderCommentNotice({ submission }: { submission: any }) {
+  const comment = String(submission?.literary_proofreader_comment ?? "").trim();
+
+  if (!comment) return null;
+
+  return (
+    <div
+      className="card"
+      style={{
+        borderColor: "#d8b45f",
+        background: "#fff9ea",
+      }}
+    >
+      <h3 style={{ marginTop: 0 }}>Literary Proofreader Comment</h3>
+
+      <p className="muted small" style={{ marginTop: 0 }}>
+        This comment was added by the literary proofreader and should be
+        considered while reviewing or correcting this submission.
+      </p>
+
+      <p dir="auto" style={{ whiteSpace: "pre-wrap" }}>
+        {comment}
+      </p>
+    </div>
+  );
+}
+
 function TaskHistory({ history }: { history: any[] }) {
   if (!history?.length) return null;
 
@@ -697,7 +751,6 @@ export function WorkspaceClient({
     setCulturalAuthenticity("yes");
     setArtisticExcellence("yes");
     setEthicalAppropriateness("yes");
-
     setArtisticRating(selectedSubmission.artistic_rating ?? "good");
 
     setManagementArtisticRating(
@@ -969,7 +1022,11 @@ export function WorkspaceClient({
               </div>
 
               {phase === "coordinator_check" && (
-                <CorrectionSourceCard assignment={selectedAssignment} />
+                <>
+                  <CorrectionSourceCard assignment={selectedAssignment} />
+                  <EvaluatorCommentNotice submission={selectedSubmission} />
+                  <LiteraryProofreaderCommentNotice submission={selectedSubmission} />
+                </>
               )}
 
               {phase === "final_review" && (
@@ -1277,6 +1334,7 @@ export function WorkspaceClient({
                   <EditableArtworkText
                     key={`proofreader-edit-${selectedSubmission.id}`}
                     derived={derived}
+                    showNarrativeQuestions={false}
                   />
 
                   <label style={{ display: "block", marginTop: 12 }}>
@@ -1349,6 +1407,26 @@ export function WorkspaceClient({
                       </p>
                     )}
                   </div>
+
+                  <label style={{ display: "block", marginTop: 12 }}>
+                    <span className="small">
+                      <strong>Literary Proofreader Comment</strong>
+                      <br />
+                      ملاحظات المدقق الأدبي
+                    </span>
+
+                    <textarea
+                      className="input"
+                      name="literary_proofreader_comment"
+                      rows={5}
+                      dir="auto"
+                      placeholder="Add any notes or comments for the Coordinator or Management..."
+                      defaultValue={displayText(
+                        selectedSubmission.literary_proofreader_comment,
+                        ""
+                      )}
+                    />
+                  </label>
 
                   {literaryPublicationSuitable === "yes" && (
                     <>
@@ -1509,9 +1587,11 @@ export function WorkspaceClient({
 function EditableArtworkText({
   derived,
   reviewerFields,
+  showNarrativeQuestions = true,
 }: {
   derived: ReturnType<typeof getDerivedFields>;
   reviewerFields?: ReturnType<typeof getReviewerEditableFields>;
+  showNarrativeQuestions?: boolean;
 }) {
   const fields = reviewerFields ?? {
     englishTitle: derived.englishTitle,
@@ -1565,42 +1645,46 @@ function EditableArtworkText({
         />
       </label>
 
-      <label>
-        <span className="small">
-          Did anyone or anything influence your idea, such as family, an artist,
-          or a place?
-        </span>
-        <textarea
-          name="influence_idea_source"
-          defaultValue={displayText(fields.influence, "")}
-          rows={5}
-          dir="auto"
-        />
-      </label>
+      {showNarrativeQuestions && (
+        <>
+          <label>
+            <span className="small">
+              Did anyone or anything influence your idea, such as family, an artist,
+              or a place?
+            </span>
+            <textarea
+              name="influence_idea_source"
+              defaultValue={displayText(fields.influence, "")}
+              rows={5}
+              dir="auto"
+            />
+          </label>
 
-      <label>
-        <span className="small">
-          What was the most enjoyable part of creating your work?
-        </span>
-        <textarea
-          name="most_enjoyable_part"
-          defaultValue={displayText(fields.enjoyable, "")}
-          rows={5}
-          dir="auto"
-        />
-      </label>
+          <label>
+            <span className="small">
+              What was the most enjoyable part of creating your work?
+            </span>
+            <textarea
+              name="most_enjoyable_part"
+              defaultValue={displayText(fields.enjoyable, "")}
+              rows={5}
+              dir="auto"
+            />
+          </label>
 
-      <label>
-        <span className="small">
-          What elements did you focus on in your artwork, and why?
-        </span>
-        <textarea
-          name="focused_elements"
-          defaultValue={displayText(fields.elements, "")}
-          rows={5}
-          dir="auto"
-        />
-      </label>
+          <label>
+            <span className="small">
+              What elements did you focus on in your artwork, and why?
+            </span>
+            <textarea
+              name="focused_elements"
+              defaultValue={displayText(fields.elements, "")}
+              rows={5}
+              dir="auto"
+            />
+          </label>
+        </>
+      )}
     </div>
   );
 }

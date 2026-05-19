@@ -461,12 +461,17 @@ export async function POST(req: Request) {
       const literaryAction = String(form.get("literary_action") ?? "completed");
       const publicationSuitable = yesNo(form.get("literary_publication_suitable"));
       const literaryUpdatedContent = textValue(form, "literary_updated_content");
+      const literaryProofreaderComment = textValue(
+        form,
+        "literary_proofreader_comment"
+      );
 
       await safeUpdate(
         "submissions",
         {
           literary_publication_suitable: publicationSuitable,
           literary_updated_content: literaryUpdatedContent,
+          literary_proofreader_comment: literaryProofreaderComment,
           updated_at: new Date().toISOString(),
         },
         "id",
@@ -506,7 +511,7 @@ export async function POST(req: Request) {
           requesterId: assignment.assigned_to ?? user.id,
           sourcePhase: "literary_proofreading",
           correctionReason: "literary_needs_correction",
-          correctionNotes: literaryUpdatedContent,
+          correctionNotes: literaryProofreaderComment ?? literaryUpdatedContent,
         });
       } else {
         const completedAt = new Date().toISOString();
@@ -515,6 +520,7 @@ export async function POST(req: Request) {
           "submissions",
           {
             literary_proofreading_completed_at: completedAt,
+            literary_proofreader_comment: literaryProofreaderComment,
             updated_at: completedAt,
           },
           "id",

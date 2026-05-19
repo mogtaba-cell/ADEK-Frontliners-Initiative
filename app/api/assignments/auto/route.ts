@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { requireUser } from "@/lib/auth";
 import {
   createAssignmentBatch,
@@ -58,18 +59,24 @@ export async function POST(req: Request) {
       },
     });
 
-    await processAutoAssignPendingToEvaluators(
-      batchId,
-      evaluatorIds,
-      limit,
-      user.id
-    );
+    after(async () => {
+      try {
+        await processAutoAssignPendingToEvaluators(
+          batchId,
+          evaluatorIds,
+          limit,
+          user.id
+        );
+      } catch (error) {
+        console.error("Manual evaluator assignment failed:", error);
+      }
+    });
 
     redirect(`/admin?assignment_batch=${batchId}`);
   }
 
   if (phase === "repair_missing") {
-    const repaired: {
+    const createdBatches: {
       phase: WorkflowPhase;
       batchId: string;
     }[] = [];
@@ -88,20 +95,33 @@ export async function POST(req: Request) {
         },
       });
 
-      await processAutoAssignPending(batchId, repairPhase, limit, user.id);
-
-      repaired.push({
+      createdBatches.push({
         phase: repairPhase,
         batchId,
       });
     }
 
-    const lastBatchId = repaired[repaired.length - 1]?.batchId;
+    after(async () => {
+      for (const batch of createdBatches) {
+        try {
+          await processAutoAssignPending(
+            batch.batchId,
+            batch.phase,
+            limit,
+            user.id
+          );
+        } catch (error) {
+          console.error(`Repair failed for ${batch.phase}:`, error);
+        }
+      }
+    });
+
+    const firstBatchId = createdBatches[0]?.batchId;
 
     redirect(
-      lastBatchId
-        ? `/admin?repair=completed&assignment_batch=${lastBatchId}`
-        : "/admin?repair=completed"
+      firstBatchId
+        ? `/admin?repair=started&assignment_batch=${firstBatchId}`
+        : "/admin?repair=started"
     );
   }
 
