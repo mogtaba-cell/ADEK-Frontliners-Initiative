@@ -1,14 +1,20 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
-import { autoAssignPending } from "@/lib/assignment";
+import {
+  autoAssignPending,
+  createAssignmentBatch,
+  processAutoAssignPending,
+  processAutoAssignPendingToEvaluators,
+} from "@/lib/assignment";
 import type { WorkflowPhase } from "@/lib/types";
+import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 const repairPhases: WorkflowPhase[] = [
-  "adek_evaluation",
-  "management_review",
+  "coordinator_check",
   "proofreading",
   "literary_proofreading",
   "final_review",
@@ -41,7 +47,8 @@ async function readPayload(req: Request) {
   return {
     payload: {
       phase: String(form.get("phase") ?? ""),
-      limit: Number(form.get("limit") ?? 250),
+      limit: Number(form.get("limit") ?? 5000),
+      evaluator_ids: form.getAll("evaluator_ids").map((value) => String(value)),
     },
     wantsJson: false,
   };
@@ -53,51 +60,120 @@ export async function POST(req: Request) {
     const { payload, wantsJson } = await readPayload(req);
 
     const phase = String(payload.phase ?? "");
-    const limit = Number(payload.limit ?? 250);
+    const limit = Number.isFinite(Number(payload.limit))
+      ? Number(payload.limit)
+      : 5000;
+    const evaluatorIds = Array.isArray(payload.evaluator_ids)
+      ? payload.evaluator_ids.map((value: unknown) => String(value)).filter(Boolean)
+      : [];
 
     if (!phase) {
       throw new Error("Missing assignment phase.");
     }
 
-    if (phase === "repair_missing") {
-      const results = await Promise.all(
-        repairPhases.map(async (repairPhase) => {
-          try {
-            const result = await autoAssignPending(repairPhase, limit, user.id);
-
-            return {
-              phase: repairPhase,
-              ok: true,
-              result,
-            };
-          } catch (error: any) {
-            return {
-              phase: repairPhase,
+    if (phase === "adek_evaluation") {
+      if (!evaluatorIds.length) {
+        if (wantsJson) {
+          return NextResponse.json(
+            {
               ok: false,
-              error: error.message ?? "Repair failed.",
-            };
-          }
-        })
-      );
+              error: "Select at least one evaluator before assigning artworks.",
+            },
+            { status: 400 }
+          );
+        }
 
-      const failed = results.filter((result) => !result.ok);
+        return redirectBack(req, {
+          maintenance_error: "select_evaluators",
+        });
+      }
+
+      const batchId = await createAssignmentBatch("adek_evaluation", user.id);
+
+      await audit({
+        actorId: user.id,
+        action: "manual_evaluator_assignment_started",
+        entityType: "assignment_batch",
+        entityId: batchId,
+        after: {
+          phase: "adek_evaluation",
+          evaluatorIds,
+          limit,
+        },
+      });
+
+      await processAutoAssignPendingToEvaluators(
+        batchId,
+        evaluatorIds,
+        limit,
+        user.id
+      );
 
       if (wantsJson) {
         return NextResponse.json({
-          ok: failed.length === 0,
+          ok: true,
+          phase: "adek_evaluation",
+          batchId,
+        });
+      }
+
+      return redirectBack(req, {
+        maintenance: "assigned",
+        phase: "adek_evaluation",
+        assignment_batch: batchId,
+      });
+    }
+
+    if (phase === "repair_missing") {
+      const results = await Promise.all(
+        repairPhases.map(async (repairPhase) => {
+          const batchId = await createAssignmentBatch(repairPhase, user.id);
+
+          await audit({
+            actorId: user.id,
+            action: "repair_missing_assignment_started",
+            entityType: "assignment_batch",
+            entityId: batchId,
+            after: {
+              phase: repairPhase,
+              limit,
+            },
+          });
+
+          await processAutoAssignPending(repairPhase, limit, user.id);
+
+          return {
+            phase: repairPhase,
+            ok: true,
+            batchId,
+          };
+        })
+      );
+
+      if (wantsJson) {
+        return NextResponse.json({
+          ok: true,
           mode: "repair_missing",
           results,
         });
       }
 
       return redirectBack(req, {
-        maintenance: failed.length ? "repair_partial" : "repair_completed",
+        maintenance: "repair_completed",
       });
+    }
+
+    // JSON-only compatibility for old admin tools. ADEK is blocked above;
+    // repair_missing is preferred for UI repairs.
+    if (phase === "management_review") {
+      throw new Error(
+        "Management tasks are created by the ADEK evaluation workflow, not by Repair Missing Assignments."
+      );
     }
 
     const result = await autoAssignPending(
       phase as WorkflowPhase,
-      Number.isFinite(limit) ? limit : 250,
+      Number.isFinite(limit) ? limit : 5000,
       user.id
     );
 

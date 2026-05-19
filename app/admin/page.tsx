@@ -8,15 +8,17 @@ export default async function AdminPage() {
   const user = await requireUser(["admin"]);
 
   const [
-    submissions,
-    activeAssignments,
+    totalSubmissions,
+    completedAdekEvaluations,
+    totalSelected,
+    totalDisqualified,
+    activeCoordinatorCorrections,
+    activeManagementReview,
+    completedGeneralProofreading,
+    completedLiteraryProofreading,
+    completedFinalReviewReady,
     lastExport,
-    readyForAdek,
-    sentForCorrection,
-    needsManagementReview,
-    selectedForProofreading,
-    proofreadingDone,
-    completed,
+    evaluators,
   ] = await Promise.all([
     supabaseAdmin
       .from("submissions")
@@ -24,8 +26,55 @@ export default async function AdminPage() {
 
     supabaseAdmin
       .from("assignments")
+      .select("submission_id", { count: "exact", head: true })
+      .eq("phase", "adek_evaluation")
+      .eq("status", "completed")
+      .not("completed_at", "is", null),
+
+    supabaseAdmin
+      .from("submissions")
       .select("id", { count: "exact", head: true })
+      .eq("evaluation_decision", "approved"),
+
+    supabaseAdmin
+      .from("submissions")
+      .select("id", { count: "exact", head: true })
+      .or(
+        "workflow_status.eq.disqualified,evaluation_decision.eq.disqualified,management_decision.eq.disqualified"
+      ),
+
+    supabaseAdmin
+      .from("assignments")
+      .select("submission_id", { count: "exact", head: true })
+      .eq("phase", "coordinator_check")
       .in("status", ["assigned", "in_progress"]),
+
+    supabaseAdmin
+      .from("assignments")
+      .select("submission_id", { count: "exact", head: true })
+      .eq("phase", "management_review")
+      .in("status", ["assigned", "in_progress"]),
+
+    supabaseAdmin
+      .from("assignments")
+      .select("submission_id", { count: "exact", head: true })
+      .eq("phase", "proofreading")
+      .eq("status", "completed")
+      .not("completed_at", "is", null),
+
+    supabaseAdmin
+      .from("assignments")
+      .select("submission_id", { count: "exact", head: true })
+      .eq("phase", "literary_proofreading")
+      .eq("status", "completed")
+      .not("completed_at", "is", null),
+
+    supabaseAdmin
+      .from("assignments")
+      .select("submission_id", { count: "exact", head: true })
+      .eq("phase", "final_review")
+      .eq("status", "completed")
+      .not("completed_at", "is", null),
 
     supabaseAdmin
       .from("export_batches")
@@ -34,37 +83,11 @@ export default async function AdminPage() {
       .limit(1),
 
     supabaseAdmin
-      .from("submissions")
-      .select("id", { count: "exact", head: true })
-      .eq("workflow_status", "ready_for_adek"),
-
-    // Sent for correction = currently active Coordinator correction tasks.
-    // This drops automatically after the Coordinator sends it back.
-    supabaseAdmin
-      .from("assignments")
-      .select("submission_id", { count: "exact", head: true })
-      .eq("phase", "coordinator_check")
-      .in("status", ["assigned", "in_progress"]),
-
-    supabaseAdmin
-      .from("submissions")
-      .select("id", { count: "exact", head: true })
-      .eq("workflow_status", "needs_management_review"),
-
-    supabaseAdmin
-      .from("submissions")
-      .select("id", { count: "exact", head: true })
-      .eq("workflow_status", "selected_for_proofreading"),
-
-    supabaseAdmin
-      .from("submissions")
-      .select("id", { count: "exact", head: true })
-      .eq("workflow_status", "proofreading_done"),
-
-    supabaseAdmin
-      .from("submissions")
-      .select("id", { count: "exact", head: true })
-      .eq("workflow_status", "completed"),
+      .from("profiles")
+      .select("id,full_name,email")
+      .eq("role", "evaluator")
+      .eq("is_active", true)
+      .order("full_name", { ascending: true }),
   ]);
 
   return (
@@ -76,12 +99,12 @@ export default async function AdminPage() {
       <div className="grid grid-3">
         <div className="card">
           <h2>Total Submissions</h2>
-          <p className="stat-number">{submissions.count ?? 0}</p>
+          <p className="stat-number">{totalSubmissions.count ?? 0}</p>
         </div>
 
         <div className="card">
-          <h2>Active Assignments</h2>
-          <p className="stat-number">{activeAssignments.count ?? 0}</p>
+          <h2>Completed ADEK Evaluations</h2>
+          <p className="stat-number">{completedAdekEvaluations.count ?? 0}</p>
         </div>
 
         <div className="card">
@@ -94,39 +117,54 @@ export default async function AdminPage() {
         <h2>Workflow Overview</h2>
 
         <p className="muted">
-          These counts show where submissions currently are in the workflow.
-          Normal movement between users is automatic after tasks are completed.
+          These live counts come from the current assignment state, so they stay
+          accurate after reassignment and repair actions.
         </p>
 
-        <div className="grid grid-4">
+        <div className="grid grid-3">
           <div>
-            <strong>Ready for ADEK</strong>
-            <p className="stat-number">{readyForAdek.count ?? 0}</p>
+            <strong>Total Submissions</strong>
+            <p className="stat-number">{totalSubmissions.count ?? 0}</p>
           </div>
 
           <div>
-            <strong>Sent for Correction</strong>
-            <p className="stat-number">{sentForCorrection.count ?? 0}</p>
+            <strong>Completed ADEK evaluations</strong>
+            <p className="stat-number">{completedAdekEvaluations.count ?? 0}</p>
           </div>
 
           <div>
-            <strong>Needs Management Review</strong>
-            <p className="stat-number">{needsManagementReview.count ?? 0}</p>
+            <strong>Total Selected</strong>
+            <p className="stat-number">{totalSelected.count ?? 0}</p>
           </div>
 
           <div>
-            <strong>Selected for Proofreading</strong>
-            <p className="stat-number">{selectedForProofreading.count ?? 0}</p>
+            <strong>Total Disqualified</strong>
+            <p className="stat-number">{totalDisqualified.count ?? 0}</p>
           </div>
 
           <div>
-            <strong>Proofreading Done</strong>
-            <p className="stat-number">{proofreadingDone.count ?? 0}</p>
+            <strong>Active coordinator corrections</strong>
+            <p className="stat-number">{activeCoordinatorCorrections.count ?? 0}</p>
           </div>
 
           <div>
-            <strong>Completed / Ready</strong>
-            <p className="stat-number">{completed.count ?? 0}</p>
+            <strong>Active management review</strong>
+            <p className="stat-number">{activeManagementReview.count ?? 0}</p>
+          </div>
+
+          <div>
+            <strong>Completed general proofreading</strong>
+            <p className="stat-number">{completedGeneralProofreading.count ?? 0}</p>
+          </div>
+
+          <div>
+            <strong>Completed literary proofreading</strong>
+            <p className="stat-number">{completedLiteraryProofreading.count ?? 0}</p>
+          </div>
+
+          <div>
+            <strong>Completed final review / ready</strong>
+            <p className="stat-number">{completedFinalReviewReady.count ?? 0}</p>
           </div>
         </div>
       </div>
@@ -135,10 +173,9 @@ export default async function AdminPage() {
         <h2>Workflow Maintenance</h2>
 
         <p className="muted">
-          Use these tools only after importing new submissions or if a workflow
-          task needs to be repaired. The normal workflow now creates Coordinator,
-          Management, Proofreading, Literary Proofreading, and Reviewer tasks
-          automatically.
+          Import only adds submissions. Select evaluators here to assign new
+          imported submissions. Repair Missing Assignments does not assign ADEK
+          evaluator or management tasks.
         </p>
 
         <div className="grid grid-2">
@@ -146,15 +183,57 @@ export default async function AdminPage() {
             <h3>Assign Imported Submissions to ADEK Evaluators</h3>
 
             <p className="muted">
-              Assigns newly imported submissions that are ready for ADEK
-              evaluation to active ADEK evaluators. This is the main button
-              needed after a fresh import.
+              Select the evaluators who should receive imported submissions.
+              Work will be distributed evenly only between the selected
+              evaluators.
             </p>
 
             <form action="/api/assignments/auto" method="post">
               <input type="hidden" name="phase" value="adek_evaluation" />
+              <input type="hidden" name="limit" value="5000" />
 
-              <button className="btn" type="submit">
+              <div
+                className="card"
+                style={{
+                  boxShadow: "none",
+                  marginTop: 12,
+                  maxHeight: 320,
+                  overflowY: "auto",
+                }}
+              >
+                <strong>Select Evaluators</strong>
+
+                <div className="grid grid-2" style={{ marginTop: 12 }}>
+                  {(evaluators.data ?? []).map((evaluator) => (
+                    <label
+                      key={evaluator.id}
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "flex-start",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        name="evaluator_ids"
+                        value={evaluator.id}
+                      />
+
+                      <span>
+                        <strong>{evaluator.full_name}</strong>
+                        <br />
+                        <span className="muted small">{evaluator.email}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+
+                {(evaluators.data ?? []).length === 0 && (
+                  <p className="muted">No active evaluators found.</p>
+                )}
+              </div>
+
+              <button className="btn" type="submit" style={{ marginTop: 12 }}>
                 Assign Imported Submissions
               </button>
             </form>
@@ -164,14 +243,13 @@ export default async function AdminPage() {
             <h3>Repair Missing Assignments</h3>
 
             <p className="muted">
-              Use only if a submission is in a workflow status but no active task
-              was created. This attempts to repair eligible ADEK, Management,
-              Proofreading, and Final Review queues without duplicating active
-              assignments.
+              Repairs missing tasks for Coordinators, General Proofreaders,
+              Literary Proofreaders, and Reviewers only.
             </p>
 
             <form action="/api/assignments/auto" method="post">
               <input type="hidden" name="phase" value="repair_missing" />
+              <input type="hidden" name="limit" value="5000" />
 
               <button className="btn secondary" type="submit">
                 Repair Missing Assignments

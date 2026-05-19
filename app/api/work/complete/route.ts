@@ -1,4 +1,4 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { audit } from "@/lib/audit";
@@ -101,11 +101,14 @@ async function markAssignmentCompleted(
   assignmentId: string,
   values: Record<string, any> = {}
 ) {
+  const completedAt = new Date().toISOString();
+
   await safeUpdate(
     "assignments",
     {
       status: "completed",
-      completed_at: new Date().toISOString(),
+      completed_at: completedAt,
+      updated_at: completedAt,
       ...values,
     },
     "id",
@@ -127,6 +130,16 @@ async function getCompletedGeneralProofreaderId(submissionId: string) {
 
   if (error) throw new Error(`General proofreader lookup failed: ${error.message}`);
   return data?.assigned_to ?? null;
+}
+
+function workflowStatusForReturnedSource(sourcePhase: WorkflowPhase) {
+  if (sourcePhase === "adek_evaluation") return "ready_for_adek";
+  if (sourcePhase === "management_review") return "needs_management_review";
+  if (sourcePhase === "proofreading" || sourcePhase === "literary_proofreading") {
+    return "selected_for_proofreading";
+  }
+  if (sourcePhase === "final_review") return "proofreading_done";
+  return "returned_for_correction";
 }
 
 async function sendToCoordinatorForCorrection({
@@ -152,6 +165,7 @@ async function sendToCoordinatorForCorrection({
       status: "returned_for_correction",
       decision: "needs_correction",
       completed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
       correction_reason: correctionReason,
       correction_notes: correctionNotes ?? null,
     },
@@ -226,7 +240,7 @@ async function returnCorrectedSubmission({
   await safeUpdate(
     "submissions",
     {
-      workflow_status: "returned_for_correction",
+      workflow_status: workflowStatusForReturnedSource(sourcePhase),
       updated_at: new Date().toISOString(),
     },
     "id",
@@ -416,8 +430,22 @@ export async function POST(req: Request) {
           correctionNotes: null,
         });
       } else {
+        const completedAt = new Date().toISOString();
+
+        await safeUpdate(
+          "submissions",
+          {
+            general_proofreading_completed_at: completedAt,
+            updated_at: completedAt,
+          },
+          "id",
+          submissionId
+        );
+
         await markAssignmentCompleted(assignmentId, {
           decision: "completed",
+          completed_at: completedAt,
+          updated_at: completedAt,
         });
 
         const generalProofreaderId = assignment.assigned_to ?? user.id;
@@ -481,8 +509,22 @@ export async function POST(req: Request) {
           correctionNotes: literaryUpdatedContent,
         });
       } else {
+        const completedAt = new Date().toISOString();
+
+        await safeUpdate(
+          "submissions",
+          {
+            literary_proofreading_completed_at: completedAt,
+            updated_at: completedAt,
+          },
+          "id",
+          submissionId
+        );
+
         await markAssignmentCompleted(assignmentId, {
           decision: "completed",
+          completed_at: completedAt,
+          updated_at: completedAt,
         });
 
         const generalProofreaderId = await getCompletedGeneralProofreaderId(
@@ -600,19 +642,6 @@ export async function POST(req: Request) {
         phase,
         submission_id: submissionId,
       },
-    });
-
-    // Keep materialized analytics views fresh after workflow changes.
-    // User Progress and KPI values are live, but this keeps any cached
-    // analytics summaries aligned without blocking the user redirect.
-    after(async () => {
-      const { error } = await supabaseAdmin.rpc(
-        "refresh_analytics_materialized_views"
-      );
-
-      if (error) {
-        console.error("Analytics refresh after workflow failed:", error.message);
-      }
     });
 
     return redirectWithRefresh(req, redirectTo);

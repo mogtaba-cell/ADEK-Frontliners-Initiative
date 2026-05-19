@@ -112,7 +112,7 @@ async function getLeastLoadedUser(
 
   if (options?.candidateIds?.length) {
     const candidates = new Set(options.candidateIds);
-    users = users.filter((user) => candidates.has(user.id));
+    users = users.filter((user: any) => candidates.has(user.id));
   }
 
   if (!users.length) {
@@ -128,7 +128,7 @@ async function getLeastLoadedUser(
     .select("assigned_to")
     .in(
       "assigned_to",
-      users.map((user) => user.id)
+      users.map((user: any) => user.id)
     )
     .in("status", activeAssignmentStatuses);
 
@@ -164,7 +164,7 @@ async function getCoordinatorForSchool(submissionId: string) {
     throw new Error("No active coordinator users available.");
   }
 
-  const coordinatorIds = new Set(coordinators.map((coordinator) => coordinator.id));
+  const coordinatorIds = new Set(coordinators.map((coordinator: any) => coordinator.id));
 
   const { data: existingSchoolAssignments, error: existingError } =
     await supabaseAdmin
@@ -365,6 +365,137 @@ export async function autoAssignPending(
   };
 }
 
+export async function autoAssignPendingToEvaluators(
+  evaluatorIds: string[],
+  limit = 5000,
+  actorId?: string
+) {
+  const uniqueEvaluatorIds = Array.from(new Set(evaluatorIds)).filter(Boolean);
+
+  if (!uniqueEvaluatorIds.length) {
+    throw new Error("Select at least one evaluator before assigning artworks.");
+  }
+
+  const { data: evaluators, error: evaluatorsError } = await supabaseAdmin
+    .from("profiles")
+    .select("id,full_name,email")
+    .eq("role", "evaluator")
+    .eq("is_active", true)
+    .in("id", uniqueEvaluatorIds);
+
+  if (evaluatorsError) throw evaluatorsError;
+
+  const validEvaluatorIds = (evaluators ?? []).map((evaluator: any) => evaluator.id);
+
+  if (!validEvaluatorIds.length) {
+    throw new Error("No active selected evaluators were found.");
+  }
+
+  const { data: activeAssignments, error: activeAssignmentsError } =
+    await supabaseAdmin
+      .from("assignments")
+      .select("assigned_to")
+      .in("assigned_to", validEvaluatorIds)
+      .in("status", activeAssignmentStatuses);
+
+  if (activeAssignmentsError) throw activeAssignmentsError;
+
+  const workload = new Map<string, number>();
+
+  for (const evaluatorId of validEvaluatorIds) {
+    workload.set(evaluatorId, 0);
+  }
+
+  for (const row of activeAssignments ?? []) {
+    workload.set(row.assigned_to, (workload.get(row.assigned_to) ?? 0) + 1);
+  }
+
+  const { data: submissions, error: submissionsError } = await supabaseAdmin
+    .from("submissions")
+    .select("id,reference_id,workflow_status,registration_status")
+    .eq("registration_status", "Submitted")
+    .in("workflow_status", ["ready_for_adek", "coordinator_pending", "imported"])
+    .limit(limit);
+
+  if (submissionsError) throw submissionsError;
+
+  const eligibleSubmissions = submissions ?? [];
+  const alreadyAssigned = new Set<string>();
+
+  for (const submissionChunk of chunkArray(
+    eligibleSubmissions.map((submission: any) => submission.id),
+    500
+  )) {
+    if (!submissionChunk.length) continue;
+
+    const { data, error } = await supabaseAdmin
+      .from("assignments")
+      .select("submission_id")
+      .in("submission_id", submissionChunk)
+      .eq("phase", "adek_evaluation")
+      .in("status", ["assigned", "in_progress", "completed"]);
+
+    if (error) throw error;
+
+    for (const row of data ?? []) {
+      alreadyAssigned.add(row.submission_id);
+    }
+  }
+
+  const assignmentsToInsert: any[] = [];
+  let skipped = 0;
+
+  for (const submission of eligibleSubmissions) {
+    if (alreadyAssigned.has(submission.id)) {
+      skipped++;
+      continue;
+    }
+
+    const assignedTo = Array.from(workload.entries()).sort(
+      (a, b) => a[1] - b[1]
+    )[0][0];
+
+    workload.set(assignedTo, (workload.get(assignedTo) ?? 0) + 1);
+
+    assignmentsToInsert.push({
+      submission_id: submission.id,
+      phase: "adek_evaluation",
+      assigned_to: assignedTo,
+      assigned_by: actorId ?? null,
+      status: "assigned",
+    });
+  }
+
+  for (const assignmentChunk of chunkArray(assignmentsToInsert, 500)) {
+    const { error } = await supabaseAdmin
+      .from("assignments")
+      .insert(assignmentChunk);
+
+    if (error) throw error;
+  }
+
+  if (assignmentsToInsert.length > 0) {
+    await supabaseAdmin
+      .from("submissions")
+      .update({
+        workflow_status: "ready_for_adek",
+        updated_at: new Date().toISOString(),
+      })
+      .in(
+        "id",
+        assignmentsToInsert.map((assignment) => assignment.submission_id)
+      );
+  }
+
+  return {
+    phase: "adek_evaluation" as WorkflowPhase,
+    eligible: eligibleSubmissions.length,
+    assigned: assignmentsToInsert.length,
+    skipped,
+    errors: [],
+  };
+}
+
 export async function assignAdekAfterImport(
   submissionId: string,
   actorId?: string
@@ -393,7 +524,7 @@ export async function bulkAssignAdekAfterImport(
 
   if (evaluatorsError) throw evaluatorsError;
 
-  const evaluatorIds = (evaluators ?? []).map((user) => user.id);
+  const evaluatorIds = (evaluators ?? []).map((user: any) => user.id);
 
   if (!evaluatorIds.length) {
     throw new Error("No active ADEK evaluators available.");
@@ -609,7 +740,7 @@ async function getReviewerForProofreader(generalProofreaderId: string) {
   if (error) throw error;
 
   const linkedReviewerIds = (links ?? [])
-    .map((row) => row.reviewer_id)
+    .map((row: any) => row.reviewer_id)
     .filter(Boolean);
 
   return getLeastLoadedUser("reviewer", {
@@ -705,6 +836,60 @@ export async function getAssignmentBatch(batchId: string) {
   };
 }
 
+export async function processAutoAssignPendingToEvaluators(
+  batchId: string,
+  evaluatorIds: string[],
+  limit = 5000,
+  actorId?: string
+) {
+  try {
+    await supabaseAdmin
+      .from("assignment_batches")
+      .update({
+        status: "processing",
+        current_step: "Preparing ADEK evaluator assignments",
+        started_at: new Date().toISOString(),
+      })
+      .eq("id", batchId);
+
+    const result = await autoAssignPendingToEvaluators(
+      evaluatorIds,
+      limit,
+      actorId
+    );
+
+    await supabaseAdmin
+      .from("assignment_batches")
+      .update({
+        status: "completed",
+        current_step: "Assignment completed",
+        eligible_count: result.eligible,
+        processed_count: result.eligible,
+        assigned_count: result.assigned,
+        skipped_count: result.skipped,
+        error_count: result.errors.length,
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", batchId);
+
+    try {
+      await supabaseAdmin.rpc("refresh_analytics_materialized_views");
+    } catch (error) {
+      console.error("Analytics refresh after assignment failed:", error);
+    }
+  } catch (error: any) {
+    await supabaseAdmin
+      .from("assignment_batches")
+      .update({
+        status: "failed",
+        current_step: "Assignment failed",
+        error_message: error?.message ?? "Assignment failed",
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", batchId);
+  }
+}
+
 export async function processAutoAssignPending(
   batchId: string,
   phase: WorkflowPhase,
@@ -722,20 +907,9 @@ export async function processAutoAssignPending(
       .eq("id", batchId);
 
     if (phase === "adek_evaluation") {
-      const { error: normalizeError } = await supabaseAdmin
-        .from("submissions")
-        .update({
-          workflow_status: "ready_for_adek",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("registration_status", "Submitted")
-        .in("workflow_status", ["imported", "coordinator_pending"]);
-
-      if (normalizeError) {
-        throw new Error(
-          `Could not prepare submitted artworks for ADEK assignment: ${normalizeError.message}`
-        );
-      }
+      throw new Error(
+        "ADEK evaluator assignment must be started from Admin Dashboard after selecting specific evaluators."
+      );
     }
 
     const result = await autoAssignPending(phase, limit, actorId);

@@ -101,54 +101,13 @@ function applySubmissionWorkflowGate(
   phase: WorkflowPhase,
   view: string
 ) {
-  if (phase === "management_review") {
-    if (view === "needs_review" || view === "not_completed") {
-      return query.eq("submissions.workflow_status", "needs_management_review");
-    }
-
-    return query;
-  }
-
-  if (phase === "coordinator_check") {
-    if (
-      view === "not_completed" ||
-      view === "sent_for_correction" ||
-      view === "returned_for_correction"
-    ) {
-      return query.eq("submissions.workflow_status", "returned_for_correction");
-    }
-
-    return query;
-  }
-
-  if (phase === "adek_evaluation") {
-    if (view === "sent_for_correction" || view === "returned_for_correction") {
-      return query.eq("submissions.workflow_status", "returned_for_correction");
-    }
-
-    if (view === "not_completed") {
-      return query.eq("submissions.workflow_status", "ready_for_adek");
-    }
-
-    return query;
-  }
-
-  if (!isProofreadingPhase(phase)) return query;
-
-  if (view === "not_completed") {
-    return query.eq("submissions.workflow_status", "selected_for_proofreading");
-  }
-
-  if (view === "sent_for_correction" || view === "returned_for_correction") {
-    return query.eq("submissions.workflow_status", "returned_for_correction");
-  }
-
-  if (view === "sent_for_review") {
-    return query.eq("submissions.workflow_status", "needs_management_review");
-  }
-
+  // Workspaces must be driven by assignment ownership/phase/status, not by
+  // submissions.workflow_status. Workflow status can lag after manual repairs,
+  // reassignment, or correction returns, while assignments are the source of
+  // truth for what each user should see.
   return query;
 }
+
 
 function applyDecisionGate(query: any, phase: WorkflowPhase, view: string) {
   if (view === "approved") return query.eq("decision", "approved");
@@ -167,16 +126,11 @@ function applySourceGate(query: any, correctionSourcePhase?: string) {
 }
 
 function applyCoordinatorCorrectionSafetyGate(query: any, phase: WorkflowPhase) {
-  if (phase !== "coordinator_check") return query;
-
-  return query
-    .eq("submissions.workflow_status", "returned_for_correction")
-    .in("correction_source_phase", [
-      "adek_evaluation",
-      "proofreading",
-      "literary_proofreading",
-    ]);
+  // Do not filter coordinator tasks by submission workflow status. Active
+  // coordinator_check assignments are the source of truth for correction work.
+  return query;
 }
+
 
 function applyProofreaderTypeGate(
   query: any,
@@ -216,6 +170,16 @@ function buildAssignmentCountQuery({
     .eq("assigned_to", userId)
     .eq("phase", phase)
     .in("status", statuses);
+
+  if (
+    statuses.includes("completed") &&
+    (view === "completed" ||
+      view === "approved" ||
+      view === "disqualified" ||
+      (view === "needs_review" && phase !== "management_review"))
+  ) {
+    query = query.not("completed_at", "is", null);
+  }
 
   query = applySubmissionWorkflowGate(query, phase, view);
   query = applyDecisionGate(query, phase, view);
@@ -591,6 +555,16 @@ export async function WorkQueuePage({
     .in("status", statuses)
     .order("created_at", { ascending: true })
     .limit(250);
+
+  if (
+    statuses.includes("completed") &&
+    (view === "completed" ||
+      view === "approved" ||
+      view === "disqualified" ||
+      (view === "needs_review" && phase !== "management_review"))
+  ) {
+    query = query.not("completed_at", "is", null);
+  }
 
   query = applySubmissionWorkflowGate(query, phase, view);
   query = applyDecisionGate(query, phase, view);

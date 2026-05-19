@@ -2,7 +2,6 @@ import "server-only";
 import * as XLSX from "xlsx";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { audit } from "@/lib/audit";
-import { bulkAssignAdekAfterImport } from "@/lib/assignment";
 
 const EXISTING_LOOKUP_CHUNK_SIZE = 100;
 const IMPORT_CHUNK_SIZE = 100;
@@ -330,8 +329,6 @@ export async function processImportWorkbook(
   let processed = 0;
 
   const errors: any[] = [];
-  const importedSubmittedSubmissionIds: string[] = [];
-
   try {
     await updateProgress(batchId, {
       status: "processing",
@@ -500,9 +497,6 @@ export async function processImportWorkbook(
           inserted++;
         }
 
-        if (submission.registration_status === "Submitted") {
-          importedSubmittedSubmissionIds.push(submission.id);
-        }
       }
 
       await bulkUpsertSchools(payloads);
@@ -559,22 +553,9 @@ export async function processImportWorkbook(
     }
 
     await updateProgress(batchId, {
-      current_step: "Creating ADEK assignments",
+      current_step:
+        "Import completed. ADEK evaluator assignment must be started manually from Admin Dashboard.",
     });
-
-    if (importedSubmittedSubmissionIds.length > 0) {
-      try {
-        await bulkAssignAdekAfterImport(importedSubmittedSubmissionIds, actorId);
-      } catch (assignmentError: any) {
-        errors.push({
-          import_batch_id: batchId,
-          row_number: null,
-          reference_id: null,
-          error_type: "adek_assignment_failed",
-          error_message: assignmentError?.message ?? "ADEK assignment failed",
-        });
-      }
-    }
 
     if (errors.length > 0) {
       for (const errorChunk of chunkArray(errors, ERROR_CHUNK_SIZE)) {
