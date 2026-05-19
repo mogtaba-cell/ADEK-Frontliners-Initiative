@@ -67,6 +67,17 @@ function literaryProofreaderTypeForSubmission(
   );
 }
 
+function schoolKeyFromSubmission(submission: {
+  institution_ref_number?: string | null;
+  institution_name?: string | null;
+}) {
+  return (
+    String(submission?.institution_ref_number ?? "").trim() ||
+    String(submission?.institution_name ?? "").trim() ||
+    "Unknown School"
+  );
+}
+
 async function getActiveUsers(
   role: Role,
   options?: { proofreaderType?: ProofreaderType }
@@ -136,6 +147,61 @@ async function getLeastLoadedUser(
   return Array.from(workload.entries()).sort((a, b) => a[1] - b[1])[0][0];
 }
 
+async function getCoordinatorForSchool(submissionId: string) {
+  const { data: submission, error: submissionError } = await supabaseAdmin
+    .from("submissions")
+    .select("institution_ref_number,institution_name")
+    .eq("id", submissionId)
+    .single();
+
+  if (submissionError) throw submissionError;
+
+  const schoolKey = schoolKeyFromSubmission(submission ?? {});
+
+  const coordinators = await getActiveUsers("coordinator");
+
+  if (!coordinators.length) {
+    throw new Error("No active coordinator users available.");
+  }
+
+  const coordinatorIds = new Set(coordinators.map((coordinator) => coordinator.id));
+
+  const { data: existingSchoolAssignments, error: existingError } =
+    await supabaseAdmin
+      .from("assignments")
+      .select(
+        `
+        assigned_to,
+        created_at,
+        submissions!inner(
+          institution_ref_number,
+          institution_name
+        )
+        `
+      )
+      .eq("phase", "coordinator_check")
+      .in("status", ["assigned", "in_progress", "completed"])
+      .order("created_at", { ascending: false });
+
+  if (existingError) throw existingError;
+
+  for (const assignment of existingSchoolAssignments ?? []) {
+    const assignedSchoolKey = schoolKeyFromSubmission(
+      (assignment as any).submissions ?? {}
+    );
+
+    if (
+      assignedSchoolKey === schoolKey &&
+      assignment.assigned_to &&
+      coordinatorIds.has(assignment.assigned_to)
+    ) {
+      return assignment.assigned_to;
+    }
+  }
+
+  return getLeastLoadedUser("coordinator");
+}
+
 export async function autoAssignOne(
   submissionId: string,
   phase: WorkflowPhase,
@@ -169,11 +235,17 @@ export async function autoAssignOne(
 
   const role = phaseToRole[phase];
 
-  const assignedTo =
-    options?.assignedTo ??
-    (await getLeastLoadedUser(role, {
+  let assignedTo = options?.assignedTo;
+
+  if (!assignedTo && phase === "coordinator_check") {
+    assignedTo = await getCoordinatorForSchool(submissionId);
+  }
+
+  if (!assignedTo) {
+    assignedTo = await getLeastLoadedUser(role, {
       proofreaderType: options?.proofreaderType,
-    }));
+    });
+  }
 
   const { data, error } = await supabaseAdmin
     .from("assignments")
