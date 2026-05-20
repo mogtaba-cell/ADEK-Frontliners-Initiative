@@ -13,6 +13,7 @@ export const maxDuration = 300;
 export async function GET(req: Request) {
   try {
     await requireUser(["admin"]);
+
     const url = new URL(req.url);
     const batchId = url.searchParams.get("batchId");
 
@@ -27,10 +28,12 @@ export async function GET(req: Request) {
         "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
       },
     });
-  } catch (e: any) {
+  } catch (error: any) {
+    console.error("Import progress GET failed:", error);
+
     return NextResponse.json(
-      { error: e.message },
-      { status: e.message === "FORBIDDEN" ? 403 : 500 }
+      { error: error.message ?? "Failed to read import progress." },
+      { status: error.message === "FORBIDDEN" ? 403 : 500 }
     );
   }
 }
@@ -48,9 +51,6 @@ export async function POST(req: Request) {
     const buffer = Buffer.from(await file.arrayBuffer());
     const batchId = await createImportBatch(file.name, user.id);
 
-    // Use Next's after() instead of a floating Promise. This is more reliable
-    // than starting background work after returning the response, and the UI can
-    // keep polling /api/import?batchId=... for progress.
     after(async () => {
       try {
         await processImportWorkbook(batchId, buffer, file.name, user.id);
@@ -67,10 +67,12 @@ export async function POST(req: Request) {
         },
       }
     );
-  } catch (e: any) {
+  } catch (error: any) {
+    console.error("Import POST failed:", error);
+
     return NextResponse.json(
-      { error: e.message },
-      { status: e.message === "FORBIDDEN" ? 403 : 500 }
+      { error: error.message ?? "Import failed to start." },
+      { status: error.message === "FORBIDDEN" ? 403 : 500 }
     );
   }
 }
