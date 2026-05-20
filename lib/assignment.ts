@@ -61,6 +61,28 @@ function chunkArray<T>(items: T[], size: number) {
   return chunks;
 }
 
+const SUPABASE_PAGE_SIZE = 1000;
+
+async function fetchAllRows<T>(
+  buildQuery: (from: number, to: number) => any
+): Promise<T[]> {
+  const rows: T[] = [];
+
+  for (let from = 0; ; from += SUPABASE_PAGE_SIZE) {
+    const to = from + SUPABASE_PAGE_SIZE - 1;
+    const { data, error } = await buildQuery(from, to);
+
+    if (error) throw error;
+
+    const page = (data ?? []) as T[];
+    rows.push(...page);
+
+    if (page.length < SUPABASE_PAGE_SIZE) break;
+  }
+
+  return rows;
+}
+
 function schoolKeyFromSubmission(submission: {
   institution_ref_number?: string | null;
   institution_name?: string | null;
@@ -142,29 +164,32 @@ async function getLeastLoadedUser(
     );
   }
 
-  let query = supabaseAdmin
-    .from("assignments")
-    .select("assigned_to")
-    .in(
-      "assigned_to",
-      users.map((user) => user.id)
-    )
-    .in("status", workloadAssignmentStatuses);
+  const userIds = users.map((user) => user.id);
 
-  if (options?.phase) query = query.eq("phase", options.phase);
+  const assignments = await fetchAllRows<{
+    assigned_to: string | null;
+    submission_id: string | null;
+  }>((from, to) => {
+    let query = supabaseAdmin
+      .from("assignments")
+      .select("assigned_to,submission_id")
+      .in("assigned_to", userIds)
+      .in("status", workloadAssignmentStatuses);
 
-  const { data: assignments, error } = await query;
-  if (error) throw error;
+    if (options?.phase) query = query.eq("phase", options.phase);
 
-  const workload = new Map<string, number>();
-  for (const user of users) workload.set(user.id, 0);
+    return query.range(from, to);
+  });
 
-  for (const row of assignments ?? []) {
-    if (!row.assigned_to) continue;
-    workload.set(row.assigned_to, (workload.get(row.assigned_to) ?? 0) + 1);
+  const workload = new Map<string, Set<string>>();
+  for (const user of users) workload.set(user.id, new Set());
+
+  for (const row of assignments) {
+    if (!row.assigned_to || !row.submission_id) continue;
+    workload.get(row.assigned_to)?.add(row.submission_id);
   }
 
-  return Array.from(workload.entries()).sort((a, b) => a[1] - b[1])[0][0];
+  return Array.from(workload.entries()).sort((a, b) => a[1].size - b[1].size)[0][0];
 }
 
 async function getCoordinatorForSchool(submissionId: string) {
@@ -185,8 +210,8 @@ async function getCoordinatorForSchool(submissionId: string) {
 
   const activeCoordinatorIds = new Set(coordinators.map((coordinator) => coordinator.id));
 
-  const { data: existingSchoolAssignments, error: existingError } =
-    await supabaseAdmin
+  const existingSchoolAssignments = await fetchAllRows<any>((from, to) =>
+    supabaseAdmin
       .from("assignments")
       .select(
         `
@@ -200,11 +225,11 @@ async function getCoordinatorForSchool(submissionId: string) {
       )
       .eq("phase", "coordinator_check")
       .in("status", workloadAssignmentStatuses)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .range(from, to)
+  );
 
-  if (existingError) throw existingError;
-
-  for (const assignment of existingSchoolAssignments ?? []) {
+  for (const assignment of existingSchoolAssignments) {
     const assignedSchoolKey = schoolKeyFromSubmission((assignment as any).submissions ?? {});
 
     if (
@@ -351,14 +376,15 @@ async function hasActivePhaseAssignment(submissionId: string, phase: WorkflowPha
 }
 
 export async function countUnassignedAdekSubmissions() {
-  const { data, error } = await supabaseAdmin
-    .from("submissions")
-    .select("id")
-    .eq("registration_status", "Submitted");
+  const submittedSubmissions = await fetchAllRows<{ id: string }>((from, to) =>
+    supabaseAdmin
+      .from("submissions")
+      .select("id")
+      .eq("registration_status", "Submitted")
+      .range(from, to)
+  );
 
-  if (error) throw error;
-
-  const submissionIds = (data ?? []).map((row) => row.id).filter(Boolean);
+  const submissionIds = submittedSubmissions.map((row) => row.id).filter(Boolean);
   if (!submissionIds.length) return 0;
 
   const assignedIds = new Set<string>();
@@ -387,36 +413,77 @@ export async function getEvaluatorAssignmentWorkloads() {
   if (evaluatorsError) throw evaluatorsError;
 
   const evaluatorIds = (evaluators ?? []).map((evaluator) => evaluator.id);
-  const workload = new Map<string, { total: number; remaining: number; completed: number }>();
-  for (const id of evaluatorIds) workload.set(id, { total: 0, remaining: 0, completed: 0 });
+
+  type EvaluatorWorkloadSets = {
+    total: Set<string>;
+    remaining: Set<string>;
+    sentForCorrection: Set<string>;
+    completed: Set<string>;
+  };
+
+  const workload = new Map<string, EvaluatorWorkloadSets>();
+
+  for (const id of evaluatorIds) {
+    workload.set(id, {
+      total: new Set(),
+      remaining: new Set(),
+      sentForCorrection: new Set(),
+      completed: new Set(),
+    });
+  }
 
   if (evaluatorIds.length) {
-    const { data: assignments, error } = await supabaseAdmin
-      .from("assignments")
-      .select("assigned_to,status")
-      .eq("phase", "adek_evaluation")
-      .in("assigned_to", evaluatorIds)
-      .in("status", workloadAssignmentStatuses);
+    const assignments = await fetchAllRows<{
+      assigned_to: string | null;
+      submission_id: string | null;
+      status: string | null;
+      completed_at: string | null;
+    }>((from, to) =>
+      supabaseAdmin
+        .from("assignments")
+        .select("assigned_to,submission_id,status,completed_at")
+        .eq("phase", "adek_evaluation")
+        .in("assigned_to", evaluatorIds)
+        .range(from, to)
+    );
 
-    if (error) throw error;
+    for (const assignment of assignments) {
+      if (!assignment.assigned_to || !assignment.submission_id) continue;
 
-    for (const assignment of assignments ?? []) {
       const row = workload.get(assignment.assigned_to);
       if (!row) continue;
-      row.total += 1;
-      if (assignment.status === "completed") row.completed += 1;
-      if (["assigned", "in_progress", "returned_for_correction", "sent_for_review"].includes(assignment.status)) {
-        row.remaining += 1;
+
+      const status = String(assignment.status ?? "");
+
+      if (workloadAssignmentStatuses.includes(status)) {
+        row.total.add(assignment.submission_id);
+      }
+
+      if (["assigned", "in_progress"].includes(status)) {
+        row.remaining.add(assignment.submission_id);
+      }
+
+      if (status === "returned_for_correction") {
+        row.sentForCorrection.add(assignment.submission_id);
+      }
+
+      if (status === "completed" && assignment.completed_at) {
+        row.completed.add(assignment.submission_id);
       }
     }
   }
 
-  return (evaluators ?? []).map((evaluator) => ({
-    ...evaluator,
-    assigned_total: workload.get(evaluator.id)?.total ?? 0,
-    remaining: workload.get(evaluator.id)?.remaining ?? 0,
-    completed: workload.get(evaluator.id)?.completed ?? 0,
-  }));
+  return (evaluators ?? []).map((evaluator) => {
+    const stats = workload.get(evaluator.id);
+
+    return {
+      ...evaluator,
+      assigned_total: stats?.total.size ?? 0,
+      remaining: stats?.remaining.size ?? 0,
+      sent_for_correction: stats?.sentForCorrection.size ?? 0,
+      completed: stats?.completed.size ?? 0,
+    };
+  });
 }
 
 export async function assignAdekToEvaluatorQuantities(
@@ -447,16 +514,18 @@ export async function assignAdekToEvaluatorQuantities(
 
   const totalRequested = cleanedTargets.reduce((sum, target) => sum + target.quantity, 0);
 
-  const { data: submissions, error: submissionsError } = await supabaseAdmin
-    .from("submissions")
-    .select("id,reference_id,created_at")
-    .eq("registration_status", "Submitted")
-    .order("created_at", { ascending: true })
-    .order("reference_id", { ascending: true });
+  const submissions = await fetchAllRows<{ id: string; reference_id: string | null; created_at: string | null }>(
+    (from, to) =>
+      supabaseAdmin
+        .from("submissions")
+        .select("id,reference_id,created_at")
+        .eq("registration_status", "Submitted")
+        .order("created_at", { ascending: true })
+        .order("reference_id", { ascending: true })
+        .range(from, to)
+  );
 
-  if (submissionsError) throw submissionsError;
-
-  const submissionIds = (submissions ?? []).map((submission) => submission.id).filter(Boolean);
+  const submissionIds = submissions.map((submission) => submission.id).filter(Boolean);
   const alreadyAssigned = new Set<string>();
 
   for (const chunk of chunkArray(submissionIds, 500)) {
@@ -471,7 +540,7 @@ export async function assignAdekToEvaluatorQuantities(
     for (const row of data ?? []) alreadyAssigned.add(row.submission_id);
   }
 
-  const availableSubmissions = (submissions ?? []).filter((submission) => !alreadyAssigned.has(submission.id));
+  const availableSubmissions = submissions.filter((submission) => !alreadyAssigned.has(submission.id));
 
   if (totalRequested > availableSubmissions.length) {
     throw new Error(

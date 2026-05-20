@@ -85,6 +85,28 @@ function mapToRows(map: Map<string, number>): ChartRow[] {
     .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
 }
 
+const SUPABASE_PAGE_SIZE = 1000;
+
+async function fetchAllRows<T>(
+  buildQuery: (from: number, to: number) => any
+): Promise<T[]> {
+  const rows: T[] = [];
+
+  for (let from = 0; ; from += SUPABASE_PAGE_SIZE) {
+    const to = from + SUPABASE_PAGE_SIZE - 1;
+    const { data, error } = await buildQuery(from, to);
+
+    if (error) throw error;
+
+    const page = (data ?? []) as T[];
+    rows.push(...page);
+
+    if (page.length < SUPABASE_PAGE_SIZE) break;
+  }
+
+  return rows;
+}
+
 function BarChart({ title, rows, emptyText = "No data available." }: { title: string; rows: ChartRow[]; emptyText?: string }) {
   const max = Math.max(...rows.map((row) => row.value), 0);
   return (
@@ -136,10 +158,12 @@ function NationalityPie({ uae, nonUae }: { uae: number; nonUae: number }) {
 }
 
 async function getFilterOptions() {
-  const { data } = await supabaseAdmin
-    .from("submissions")
-    .select("art_pathway_name_en,art_sub_pathway_name_en,institution_type,school_region,registration_status,workflow_status")
-    .limit(10000);
+  const data = await fetchAllRows<any>((from, to) =>
+    supabaseAdmin
+      .from("submissions")
+      .select("art_pathway_name_en,art_sub_pathway_name_en,institution_type,school_region,registration_status,workflow_status")
+      .range(from, to)
+  );
 
   const grouped: Record<string, Set<string>> = {
     pathway: new Set(),
@@ -150,7 +174,7 @@ async function getFilterOptions() {
     workflow_status: new Set(),
   };
 
-  for (const row of data ?? []) {
+  for (const row of data) {
     if (row.art_pathway_name_en) grouped.pathway.add(row.art_pathway_name_en);
     if (row.art_sub_pathway_name_en) grouped.subpathway.add(row.art_sub_pathway_name_en);
     if (row.institution_type) grouped.school_type.add(row.institution_type);
@@ -165,54 +189,94 @@ async function getFilterOptions() {
 }
 
 async function getLiveUserProgress(): Promise<UserProgressRow[]> {
-  const [
-    { data: users, error: usersError },
-    { data: assignments, error: assignmentsError },
-  ] = await Promise.all([
+  const users = await fetchAllRows<{
+    id: string;
+    full_name: string | null;
+    role: string | null;
+    is_active: boolean | null;
+  }>((from, to) =>
     supabaseAdmin
       .from("profiles")
       .select("id,full_name,role,is_active")
       .not("role", "in", "(admin,adek_hq)")
       .eq("is_active", true)
       .order("role", { ascending: true })
-      .order("full_name", { ascending: true }),
+      .order("full_name", { ascending: true })
+      .range(from, to)
+  ).catch((error: any) => {
+    console.error("Live user progress users query failed:", error.message);
+    return [];
+  });
+
+  const assignments = await fetchAllRows<{
+    assigned_to: string | null;
+    submission_id: string | null;
+    status: string | null;
+    completed_at: string | null;
+  }>((from, to) =>
     supabaseAdmin
       .from("assignments")
-      .select("assigned_to,status,completed_at")
-      .in("status", ["assigned", "in_progress", "returned_for_correction", "sent_for_review", "completed"]),
-  ]);
-
-  if (usersError) {
-    console.error("Live user progress users query failed:", usersError.message);
+      .select("assigned_to,submission_id,status,completed_at")
+      .in("status", [
+        "assigned",
+        "in_progress",
+        "returned_for_correction",
+        "sent_for_review",
+        "completed",
+      ])
+      .range(from, to)
+  ).catch((error: any) => {
+    console.error("Live user progress assignments query failed:", error.message);
     return [];
-  }
-  if (assignmentsError) {
-    console.error("Live user progress assignments query failed:", assignmentsError.message);
-    return [];
+  });
+
+  const progressMap = new Map<
+    string,
+    { assigned: Set<string>; completed: Set<string>; remaining: Set<string> }
+  >();
+
+  for (const user of users) {
+    progressMap.set(user.id, {
+      assigned: new Set(),
+      completed: new Set(),
+      remaining: new Set(),
+    });
   }
 
-  const progressMap = new Map<string, { assigned: number; completed: number; remaining: number }>();
-  for (const user of users ?? []) progressMap.set(user.id, { assigned: 0, completed: 0, remaining: 0 });
+  for (const assignment of assignments) {
+    if (!assignment.assigned_to || !assignment.submission_id) continue;
 
-  for (const assignment of assignments ?? []) {
-    if (!assignment.assigned_to) continue;
     const current = progressMap.get(assignment.assigned_to);
     if (!current) continue;
-    current.assigned += 1;
-    if (assignment.status === "completed" && assignment.completed_at) current.completed += 1;
-    if (["assigned", "in_progress", "returned_for_correction", "sent_for_review"].includes(assignment.status)) current.remaining += 1;
+
+    const status = String(assignment.status ?? "");
+
+    current.assigned.add(assignment.submission_id);
+
+    if (status === "completed" && assignment.completed_at) {
+      current.completed.add(assignment.submission_id);
+    }
+
+    if (["assigned", "in_progress", "returned_for_correction", "sent_for_review"].includes(status)) {
+      current.remaining.add(assignment.submission_id);
+    }
   }
 
-  return (users ?? [])
+  return users
     .map((user: any) => {
-      const progress = progressMap.get(user.id) ?? { assigned: 0, completed: 0, remaining: 0 };
+      const progress = progressMap.get(user.id) ?? {
+        assigned: new Set<string>(),
+        completed: new Set<string>(),
+        remaining: new Set<string>(),
+      };
+
       return {
         full_name: user.full_name ?? user.id,
         role: user.role,
-        assigned: progress.assigned,
-        completed: progress.completed,
-        remaining: progress.remaining,
-        completion_rate: pct(progress.completed, progress.assigned),
+        assigned: progress.assigned.size,
+        completed: progress.completed.size,
+        remaining: progress.remaining.size,
+        completion_rate: pct(progress.completed.size, progress.assigned.size),
       };
     })
     .sort((a, b) => b.assigned - a.assigned || b.completed - a.completed || a.full_name.localeCompare(b.full_name));
@@ -239,16 +303,17 @@ function submissionMatchesFilters(row: any, filters: AnalyticsFilters) {
 }
 
 async function getFilteredAnalytics(filters: AnalyticsFilters) {
-  const { data: allSubmissions, error } = await supabaseAdmin
-    .from("submissions")
-    .select("id,art_pathway_name_en,art_sub_pathway_name_en,institution_type,school_region,institution_ref_number,institution_name,registration_status,workflow_status,evaluation_decision,management_decision,reviewer_decision")
-    .limit(20000);
-
-  if (error) {
+  const allSubmissions = await fetchAllRows<any>((from, to) =>
+    supabaseAdmin
+      .from("submissions")
+      .select("id,art_pathway_name_en,art_sub_pathway_name_en,institution_type,school_region,institution_ref_number,institution_name,registration_status,workflow_status,evaluation_decision,management_decision,reviewer_decision")
+      .range(from, to)
+  ).catch((error: any) => {
     console.error("Analytics submissions query failed:", error.message);
-  }
+    return [];
+  });
 
-  const submissions = (allSubmissions ?? []).filter((row) => submissionMatchesFilters(row, filters));
+  const submissions = allSubmissions.filter((row) => submissionMatchesFilters(row, filters));
   const submissionIds = submissions.map((row) => row.id);
   const byPathway = new Map<string, number>();
   const bySubpathway = new Map<string, number>();
@@ -275,12 +340,18 @@ async function getFilteredAnalytics(filters: AnalyticsFilters) {
   for (let i = 0; i < submissionIds.length; i += 500) {
     const chunk = submissionIds.slice(i, i + 500);
     if (!chunk.length) continue;
-    const { data, error: studentError } = await supabaseAdmin
-      .from("students")
-      .select("student_key,gender,nationality,grade")
-      .in("submission_id", chunk);
-    if (studentError) console.error("Analytics students query failed:", studentError.message);
-    students.push(...(data ?? []));
+    const data = await fetchAllRows<any>((from, to) =>
+      supabaseAdmin
+        .from("students")
+        .select("student_key,gender,nationality,grade")
+        .in("submission_id", chunk)
+        .range(from, to)
+    ).catch((error: any) => {
+      console.error("Analytics students query failed:", error.message);
+      return [];
+    });
+
+    students.push(...data);
   }
 
   const seenStudents = new Set<string>();
