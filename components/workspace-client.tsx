@@ -41,6 +41,8 @@ const correctionSourceLabels: Record<string, string> = {
   adek_evaluation: "ADEK Evaluation",
   proofreading: "General Proofreading",
   literary_proofreading: "Literary Proofreading",
+  management_review: "Management Review",
+  final_review: "Final Review",
   coordinator_check: "Coordinator Correction",
 };
 
@@ -258,6 +260,7 @@ function getOriginalImportedFields(submission: any) {
   };
 }
 
+
 function getReviewerEditableFields(
   submission: any,
   derived: ReturnType<typeof getDerivedFields>
@@ -276,28 +279,13 @@ function getReviewerEditableFields(
     submission?.literary_updated_content ?? ""
   ).trim();
 
-  if (!literaryUpdatedContent) {
-    return latestFields;
-  }
+  if (!literaryUpdatedContent) return latestFields;
 
   if (submission?.literary_language === "arabic") {
-    return {
-      ...latestFields,
-      arabicDescription: literaryUpdatedContent,
-    };
+    return { ...latestFields, arabicDescription: literaryUpdatedContent };
   }
 
-  if (submission?.literary_language === "english_or_others") {
-    return {
-      ...latestFields,
-      englishDescription: literaryUpdatedContent,
-    };
-  }
-
-  return {
-    ...latestFields,
-    englishDescription: literaryUpdatedContent,
-  };
+  return { ...latestFields, englishDescription: literaryUpdatedContent };
 }
 
 function DetailField({ label, value }: { label: string; value: unknown }) {
@@ -423,56 +411,41 @@ function ReviewerOriginalUpdatedComparison({
   );
 }
 
+
 function EvaluatorCommentNotice({ submission }: { submission: any }) {
   const comment = String(submission?.evaluator_comment ?? "").trim();
-
   if (!comment) return null;
 
   return (
     <div
       className="card"
-      style={{
-        borderColor: "#d8b45f",
-        background: "#fff9ea",
-      }}
+      style={{ borderColor: "#d8b45f", background: "#fff9ea" }}
     >
       <h3 style={{ marginTop: 0 }}>Evaluator Comment</h3>
-
       <p className="muted small" style={{ marginTop: 0 }}>
         This comment was added by the evaluator and should be considered while
         reviewing or correcting this submission.
       </p>
-
-      <p dir="auto" style={{ whiteSpace: "pre-wrap" }}>
-        {comment}
-      </p>
+      <p dir="auto" style={{ whiteSpace: "pre-wrap" }}>{comment}</p>
     </div>
   );
 }
 
 function LiteraryProofreaderCommentNotice({ submission }: { submission: any }) {
   const comment = String(submission?.literary_proofreader_comment ?? "").trim();
-
   if (!comment) return null;
 
   return (
     <div
       className="card"
-      style={{
-        borderColor: "#d8b45f",
-        background: "#fff9ea",
-      }}
+      style={{ borderColor: "#d8b45f", background: "#fff9ea" }}
     >
       <h3 style={{ marginTop: 0 }}>Literary Proofreader Comment</h3>
-
       <p className="muted small" style={{ marginTop: 0 }}>
         This comment was added by the literary proofreader and should be
         considered while reviewing or correcting this submission.
       </p>
-
-      <p dir="auto" style={{ whiteSpace: "pre-wrap" }}>
-        {comment}
-      </p>
+      <p dir="auto" style={{ whiteSpace: "pre-wrap" }}>{comment}</p>
     </div>
   );
 }
@@ -751,6 +724,7 @@ export function WorkspaceClient({
     setCulturalAuthenticity("yes");
     setArtisticExcellence("yes");
     setEthicalAppropriateness("yes");
+
     setArtisticRating(selectedSubmission.artistic_rating ?? "good");
 
     setManagementArtisticRating(
@@ -1249,28 +1223,28 @@ export function WorkspaceClient({
                           <option value="excellent">ممتاز / Excellent</option>
                         </select>
                       </label>
+
+                      <label style={{ display: "block", marginTop: 16 }}>
+                        <span className="small">
+                          <strong>Evaluator Comment</strong>
+                          <br />
+                          ملاحظات المحكم
+                        </span>
+
+                        <textarea
+                          className="input"
+                          name="evaluator_comment"
+                          rows={5}
+                          dir="auto"
+                          placeholder="Add any notes or comments about this evaluation..."
+                          defaultValue={displayText(
+                            selectedSubmission.evaluator_comment,
+                            ""
+                          )}
+                        />
+                      </label>
                     </>
                   )}
-
-                  <label style={{ display: "block", marginTop: 16 }}>
-                    <span className="small">
-                      <strong>Evaluator Comment</strong>
-                      <br />
-                      ملاحظات المحكم
-                    </span>
-
-                    <textarea
-                      className="input"
-                      name="evaluator_comment"
-                      rows={5}
-                      dir="auto"
-                      placeholder="Add any notes or comments about this evaluation..."
-                      defaultValue={displayText(
-                        selectedSubmission.evaluator_comment,
-                        ""
-                      )}
-                    />
-                  </label>
                 </>
               )}
 

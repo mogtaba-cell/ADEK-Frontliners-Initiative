@@ -3,12 +3,6 @@ import * as XLSX from "xlsx";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { audit } from "@/lib/audit";
 
-const EXISTING_LOOKUP_CHUNK_SIZE = 100;
-const IMPORT_CHUNK_SIZE = 100;
-const STUDENT_CHUNK_SIZE = 500;
-const SCHOOL_CHUNK_SIZE = 500;
-const ERROR_CHUNK_SIZE = 500;
-
 const mapStatus = (s: unknown) => {
   const v = String(s ?? "").trim().toLowerCase();
 
@@ -126,14 +120,7 @@ function normalizeGradeList(value: unknown) {
 }
 
 async function updateProgress(batchId: string, updates: Record<string, any>) {
-  const { error } = await supabaseAdmin
-    .from("import_batches")
-    .update(updates)
-    .eq("id", batchId);
-
-  if (error) {
-    console.error("Import progress update failed:", error.message);
-  }
+  await supabaseAdmin.from("import_batches").update(updates).eq("id", batchId);
 }
 
 export async function createImportBatch(fileName: string, actorId: string) {
@@ -327,8 +314,8 @@ export async function processImportWorkbook(
   let updated = 0;
   let skipped = 0;
   let processed = 0;
-
   const errors: any[] = [];
+
   try {
     await updateProgress(batchId, {
       status: "processing",
@@ -341,21 +328,29 @@ export async function processImportWorkbook(
       cellDates: true,
     });
 
-    const allRows: {
-      row: any;
-      rowNumber: number;
-      sheetName: string;
-      reference_id: string;
-    }[] = [];
-
-    for (const sheetName of workbook.SheetNames) {
+    const sheetRows = workbook.SheetNames.map((sheetName) => {
       const rows = XLSX.utils.sheet_to_json<any>(workbook.Sheets[sheetName], {
         defval: null,
         raw: true,
       });
 
-      for (let idx = 0; idx < rows.length; idx++) {
-        const row = rows[idx];
+      return {
+        sheetName,
+        rows,
+      };
+    });
+
+    const totalRows = sheetRows.reduce((sum, sheet) => sum + sheet.rows.length, 0);
+
+    await updateProgress(batchId, {
+      rows_total: totalRows,
+      rows_processed: 0,
+      current_step: "Validating rows",
+    });
+
+    for (const sheet of sheetRows) {
+      for (let idx = 0; idx < sheet.rows.length; idx++) {
+        const row = sheet.rows[idx];
 
         const reference_id = val(row, [
           "referenceId",
@@ -366,219 +361,100 @@ export async function processImportWorkbook(
 
         if (!reference_id) {
           skipped++;
+          processed++;
 
           errors.push({
             import_batch_id: batchId,
             row_number: idx + 2,
             reference_id: null,
             error_type: "missing_reference_id",
-            error_message: `Missing referenceId in sheet ${sheetName}`,
+            error_message: "Missing referenceId",
+          });
+
+          await updateProgress(batchId, {
+            rows_processed: processed,
+            rows_inserted: inserted,
+            rows_updated: updated,
+            rows_skipped: skipped,
           });
 
           continue;
         }
 
-        allRows.push({
-          row,
-          rowNumber: idx + 2,
-          sheetName,
-          reference_id,
+        await updateProgress(batchId, {
+          current_step: `Processing ${reference_id} (${processed + 1} of ${totalRows})`,
         });
-      }
-    }
 
-    const totalRows = allRows.length + skipped;
-
-    await updateProgress(batchId, {
-      rows_total: totalRows,
-      rows_processed: 0,
-      rows_inserted: 0,
-      rows_updated: 0,
-      rows_skipped: skipped,
-      current_step: "Preparing import rows",
-    });
-
-    const uniqueRowsByReferenceId = new Map<string, (typeof allRows)[number]>();
-
-    for (const item of allRows) {
-      if (uniqueRowsByReferenceId.has(item.reference_id)) {
-        skipped++;
-        errors.push({
-          import_batch_id: batchId,
-          row_number: item.rowNumber,
-          reference_id: item.reference_id,
-          error_type: "duplicate_reference_id_in_file",
-          error_message:
-            "Duplicate referenceId in uploaded file. The last row for this referenceId was imported.",
-        });
-      }
-
-      uniqueRowsByReferenceId.set(item.reference_id, item);
-    }
-
-    const uniqueRows = Array.from(uniqueRowsByReferenceId.values());
-    const referenceIds = uniqueRows.map((item) => item.reference_id);
-
-    await updateProgress(batchId, {
-      rows_skipped: skipped,
-      current_step: `Checking existing submissions 0 of ${referenceIds.length}`,
-    });
-
-    const existingByReferenceId = new Map<
-      string,
-      { id: string; workflow_status: string | null }
-    >();
-
-    let checkedReferenceIds = 0;
-
-    for (const referenceChunk of chunkArray(
-      referenceIds,
-      EXISTING_LOOKUP_CHUNK_SIZE
-    )) {
-      const { data, error } = await supabaseAdmin
-        .from("submissions")
-        .select("id,reference_id,workflow_status")
-        .in("reference_id", referenceChunk);
-
-      if (error) {
-        throw new Error(
-          `Failed while checking existing submissions: ${error.message}`
-        );
-      }
-
-      for (const row of data ?? []) {
-        existingByReferenceId.set(row.reference_id, {
-          id: row.id,
-          workflow_status: row.workflow_status,
-        });
-      }
-
-      checkedReferenceIds += referenceChunk.length;
-
-      await updateProgress(batchId, {
-        current_step: `Checking existing submissions ${checkedReferenceIds} of ${referenceIds.length}`,
-      });
-    }
-
-    await updateProgress(batchId, {
-      rows_skipped: skipped,
-      current_step: `Importing ${uniqueRows.length} unique submissions`,
-    });
-
-    for (const rowChunk of chunkArray(uniqueRows, IMPORT_CHUNK_SIZE)) {
-      const payloads = rowChunk.map((item) => {
-        const existing = existingByReferenceId.get(item.reference_id);
-
-        return buildSubmissionPayload(
-          item.row,
-          batchId,
-          existing?.workflow_status ?? null
-        );
-      });
-
-      const { data: upsertedSubmissions, error: upsertError } =
-        await supabaseAdmin
+        const existing = await supabaseAdmin
           .from("submissions")
-          .upsert(payloads, { onConflict: "reference_id" })
-          .select("id,reference_id,registration_status");
+          .select("id,reference_id,workflow_status")
+          .eq("reference_id", reference_id)
+          .maybeSingle();
 
-      if (upsertError) {
-        throw new Error(`Failed while importing submissions: ${upsertError.message}`);
-      }
+        if (existing.error) throw existing.error;
 
-      const submissionIdByReferenceId = new Map<string, string>();
+        const payload = buildSubmissionPayload(
+          row,
+          batchId,
+          existing.data?.workflow_status ?? null
+        );
 
-      for (const submission of upsertedSubmissions ?? []) {
-        submissionIdByReferenceId.set(submission.reference_id, submission.id);
+        const up = await supabaseAdmin
+          .from("submissions")
+          .upsert(payload, { onConflict: "reference_id" })
+          .select("id")
+          .single();
 
-        if (existingByReferenceId.has(submission.reference_id)) {
+        if (up.error) {
+          skipped++;
+          processed++;
+
+          errors.push({
+            import_batch_id: batchId,
+            row_number: idx + 2,
+            reference_id,
+            error_type: "upsert_failed",
+            error_message: up.error.message,
+          });
+
+          await updateProgress(batchId, {
+            rows_processed: processed,
+            rows_inserted: inserted,
+            rows_updated: updated,
+            rows_skipped: skipped,
+          });
+
+          continue;
+        }
+
+        if (existing.data) {
           updated++;
         } else {
           inserted++;
         }
 
-      }
+        await upsertSchool(payload);
+        await upsertStudents(up.data.id, payload);
 
-      await bulkUpsertSchools(payloads);
+        processed++;
 
-      const submissionIds = Array.from(submissionIdByReferenceId.values());
-
-      if (submissionIds.length > 0) {
-        const { error: deleteStudentsError } = await supabaseAdmin
-          .from("students")
-          .delete()
-          .in("submission_id", submissionIds);
-
-        if (deleteStudentsError) {
-          throw new Error(
-            `Failed while clearing existing students: ${deleteStudentsError.message}`
-          );
-        }
-      }
-
-      const studentRows: any[] = [];
-
-      for (const payload of payloads) {
-        const submissionId = submissionIdByReferenceId.get(String(payload.reference_id));
-
-        if (!submissionId) continue;
-
-        studentRows.push(...buildStudentRows(submissionId, payload));
-      }
-
-      for (const studentChunk of chunkArray(studentRows, STUDENT_CHUNK_SIZE)) {
-        const { error: studentInsertError } = await supabaseAdmin
-          .from("students")
-          .insert(studentChunk);
-
-        if (studentInsertError) {
-          throw new Error(
-            `Failed while importing students: ${studentInsertError.message}`
-          );
-        }
-      }
-
-      processed += rowChunk.length;
-
-      await updateProgress(batchId, {
-        rows_processed: Math.min(processed + skipped, totalRows),
-        rows_inserted: inserted,
-        rows_updated: updated,
-        rows_skipped: skipped,
-        current_step: `Imported ${Math.min(
-          processed + skipped,
-          totalRows
-        )} of ${totalRows} rows`,
-      });
-    }
-
-    await updateProgress(batchId, {
-      current_step:
-        "Import completed. ADEK evaluator assignment must be started manually from Admin Dashboard.",
-    });
-
-    if (errors.length > 0) {
-      for (const errorChunk of chunkArray(errors, ERROR_CHUNK_SIZE)) {
-        const { error } = await supabaseAdmin
-          .from("import_errors")
-          .insert(errorChunk);
-
-        if (error) {
-          throw new Error(`Failed while saving import errors: ${error.message}`);
-        }
+        await updateProgress(batchId, {
+          rows_processed: processed,
+          rows_inserted: inserted,
+          rows_updated: updated,
+          rows_skipped: skipped,
+        });
       }
     }
 
-    await updateProgress(batchId, {
-      current_step: "Refreshing analytics dashboard",
-    });
-
-    await refreshAnalyticsAfterImport(batchId);
+    if (errors.length) {
+      await supabaseAdmin.from("import_errors").insert(errors);
+    }
 
     await updateProgress(batchId, {
       status: "completed",
       current_step: "Import completed",
-      rows_processed: totalRows,
+      rows_processed: processed,
       rows_inserted: inserted,
       rows_updated: updated,
       rows_skipped: skipped,
@@ -619,109 +495,71 @@ export async function processImportWorkbook(
   }
 }
 
-async function refreshAnalyticsAfterImport(batchId: string) {
-  const { error } = await supabaseAdmin.rpc("refresh_analytics_materialized_views");
+async function upsertSchool(p: any) {
+  if (!p.institution_ref_number && !p.institution_name) return;
 
-  if (!error) return;
-
-  console.error("Analytics refresh after import failed:", error.message);
-
-  await supabaseAdmin.from("import_errors").insert({
-    import_batch_id: batchId,
-    row_number: null,
-    reference_id: null,
-    error_type: "analytics_refresh_failed",
-    error_message: error.message,
-  });
-}
-
-function chunkArray<T>(items: T[], size: number) {
-  const chunks: T[][] = [];
-
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
-  }
-
-  return chunks;
-}
-
-async function bulkUpsertSchools(payloads: any[]) {
-  const schoolsByKey = new Map<string, any>();
-
-  for (const payload of payloads) {
-    const institutionRef = payload.institution_ref_number || payload.institution_name;
-
-    if (!institutionRef) continue;
-
-    schoolsByKey.set(institutionRef, {
-      institution_ref_number: institutionRef,
-      institution_name: payload.institution_name,
-      school_region: payload.school_region,
-      institution_type: payload.institution_type,
+  await supabaseAdmin.from("schools").upsert(
+    {
+      institution_ref_number: p.institution_ref_number ?? p.institution_name,
+      institution_name: p.institution_name,
+      school_region: p.school_region,
+      institution_type: p.institution_type,
       updated_at: new Date().toISOString(),
-    });
-  }
-
-  for (const schoolChunk of chunkArray(
-    Array.from(schoolsByKey.values()),
-    SCHOOL_CHUNK_SIZE
-  )) {
-    const { error } = await supabaseAdmin.from("schools").upsert(schoolChunk, {
+    },
+    {
       onConflict: "institution_ref_number",
-    });
-
-    if (error) {
-      throw new Error(`Failed while importing schools: ${error.message}`);
     }
-  }
+  );
 }
 
-function buildStudentRows(submissionId: string, payload: any) {
-  const esis = String(payload.participating_students_esis_numbers ?? "")
+async function upsertStudents(submissionId: string, p: any) {
+  const esis = String(p.participating_students_esis_numbers ?? "")
     .split(";")
     .map((x) => x.trim())
     .filter(Boolean);
 
-  const names = String(payload.participating_students_names ?? "")
+  const names = String(p.participating_students_names ?? "")
     .split(";")
     .map((x) => x.trim());
 
-  const grades = String(payload.participating_students_grades ?? "")
+  const grades = String(p.participating_students_grades ?? "")
     .split(";")
     .map((x) => normalizeGrade(x))
     .filter(Boolean);
 
-  const genders = String(payload.participating_students_genders ?? "")
+  const genders = String(p.participating_students_genders ?? "")
     .split(";")
     .map((x) => x.trim());
 
-  const nationalities = String(payload.participating_students_nationalities ?? "")
+  const nationalities = String(p.participating_students_nationalities ?? "")
     .split(";")
     .map((x) => x.trim());
 
   const totalStudents = Math.max(esis.length, names.length, grades.length);
-  const rows = [];
 
   for (let i = 0; i < totalStudents; i++) {
     const key =
       esis[i] ||
-      `${names[i] ?? "unknown"}-${
-        payload.institution_ref_number ?? payload.institution_name ?? "unknown"
-      }-${grades[i] ?? ""}`;
+      `${names[i] ?? "unknown"}-${p.institution_ref_number ?? p.institution_name}-${
+        grades[i] ?? ""
+      }`;
 
-    rows.push({
-      student_key: key,
-      esis_number: esis[i] || null,
-      full_name: names[i] || null,
-      grade: grades[i] || null,
-      gender: genders[i] || null,
-      nationality: nationalities[i] || null,
-      institution_ref_number: payload.institution_ref_number,
-      submission_id: submissionId,
-    });
+    await supabaseAdmin.from("students").upsert(
+      {
+        student_key: key,
+        esis_number: esis[i] || null,
+        full_name: names[i] || null,
+        grade: grades[i] || null,
+        gender: genders[i] || null,
+        nationality: nationalities[i] || null,
+        institution_ref_number: p.institution_ref_number,
+        submission_id: submissionId,
+      },
+      {
+        onConflict: "student_key,submission_id",
+      }
+    );
   }
-
-  return rows;
 }
 
 export async function importWorkbook(

@@ -1,10 +1,10 @@
-import { redirect } from "next/navigation";
-import { after } from "next/server";
+import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import {
+  assignAdekToEvaluatorQuantities,
+  autoAssignPending,
   createAssignmentBatch,
   processAutoAssignPending,
-  processAutoAssignPendingToEvaluators,
 } from "@/lib/assignment";
 import type { WorkflowPhase } from "@/lib/types";
 import { audit } from "@/lib/audit";
@@ -13,117 +13,122 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const REPAIR_PHASES: WorkflowPhase[] = [
+const repairPhases: WorkflowPhase[] = [
   "coordinator_check",
   "proofreading",
   "literary_proofreading",
   "final_review",
 ];
 
-function parsePositiveNumber(value: FormDataEntryValue | null, fallback: number) {
-  const parsed = Number(value ?? fallback);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+function redirectBack(req: Request, params: Record<string, string>) {
+  const url = new URL("/admin", req.url);
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+  return NextResponse.redirect(url, { status: 303 });
+}
+
+async function readPayload(req: Request) {
+  const contentType = req.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    return { payload: await req.json(), wantsJson: true };
+  }
+
+  const form = await req.formData();
+  const quantities: Record<string, number> = {};
+
+  for (const [key, value] of form.entries()) {
+    if (!key.startsWith("quantity_")) continue;
+    const evaluatorId = key.replace("quantity_", "");
+    const quantity = Math.max(0, Math.floor(Number(value) || 0));
+    if (quantity > 0) quantities[evaluatorId] = quantity;
+  }
+
+  return {
+    payload: {
+      phase: String(form.get("phase") ?? ""),
+      limit: Number(form.get("limit") ?? 5000),
+      quantities,
+    },
+    wantsJson: false,
+  };
 }
 
 export async function POST(req: Request) {
-  const user = await requireUser(["admin"]);
-  const form = await req.formData();
+  try {
+    const user = await requireUser(["admin"]);
+    const { payload, wantsJson } = await readPayload(req);
+    const phase = String(payload.phase ?? "");
+    const limit = Number.isFinite(Number(payload.limit)) ? Number(payload.limit) : 5000;
 
-  const phase = String(form.get("phase") ?? "") as
-    | WorkflowPhase
-    | "repair_missing";
+    if (!phase) throw new Error("Missing assignment phase.");
 
-  const limit = parsePositiveNumber(form.get("limit"), 5000);
+    if (phase === "adek_evaluation") {
+      const quantities = payload.quantities ?? {};
+      const targets = Object.entries(quantities).map(([evaluatorId, quantity]) => ({
+        evaluatorId,
+        quantity: Number(quantity),
+      }));
 
-  const evaluatorIds = form
-    .getAll("evaluator_ids")
-    .map((value) => String(value))
-    .filter(Boolean);
-
-  if (phase === "adek_evaluation") {
-    if (!evaluatorIds.length) {
-      redirect("/admin?error=select_evaluators");
-    }
-
-    const batchId = await createAssignmentBatch("adek_evaluation", user.id);
-
-    await audit({
-      actorId: user.id,
-      action: "manual_evaluator_assignment_started",
-      entityType: "assignment_batch",
-      entityId: batchId,
-      after: {
-        phase: "adek_evaluation",
-        evaluatorIds,
-        limit,
-      },
-    });
-
-    after(async () => {
-      try {
-        await processAutoAssignPendingToEvaluators(
-          batchId,
-          evaluatorIds,
-          limit,
-          user.id
-        );
-      } catch (error) {
-        console.error("Manual evaluator assignment failed:", error);
-      }
-    });
-
-    redirect(`/admin?assignment_batch=${batchId}`);
-  }
-
-  if (phase === "repair_missing") {
-    const createdBatches: {
-      phase: WorkflowPhase;
-      batchId: string;
-    }[] = [];
-
-    for (const repairPhase of REPAIR_PHASES) {
-      const batchId = await createAssignmentBatch(repairPhase, user.id);
+      const result = await assignAdekToEvaluatorQuantities(targets, user.id);
 
       await audit({
         actorId: user.id,
-        action: "repair_missing_assignment_started",
-        entityType: "assignment_batch",
-        entityId: batchId,
-        after: {
-          phase: repairPhase,
-          limit,
-        },
+        action: "manual_evaluator_quantity_assignment",
+        entityType: "assignments",
+        entityId: "adek_evaluation",
+        after: result,
       });
 
-      createdBatches.push({
-        phase: repairPhase,
-        batchId,
+      if (wantsJson) return NextResponse.json({ ok: true, mode: "adek_evaluation", result });
+
+      return redirectBack(req, {
+        maintenance: `assigned_${result.assigned}_adek_tasks`,
       });
     }
 
-    after(async () => {
-      for (const batch of createdBatches) {
-        try {
-          await processAutoAssignPending(
-            batch.batchId,
-            batch.phase,
-            limit,
-            user.id
-          );
-        } catch (error) {
-          console.error(`Repair failed for ${batch.phase}:`, error);
-        }
+    if (phase === "repair_missing") {
+      const results = [];
+
+      for (const repairPhase of repairPhases) {
+        const batchId = await createAssignmentBatch(repairPhase, user.id);
+
+        await audit({
+          actorId: user.id,
+          action: "repair_missing_assignment_started",
+          entityType: "assignment_batch",
+          entityId: batchId,
+          after: { phase: repairPhase, limit },
+        });
+
+        await processAutoAssignPending(batchId, repairPhase, limit, user.id);
+        results.push({ phase: repairPhase, batchId });
       }
-    });
 
-    const firstBatchId = createdBatches[0]?.batchId;
+      if (wantsJson) return NextResponse.json({ ok: true, mode: "repair_missing", results });
 
-    redirect(
-      firstBatchId
-        ? `/admin?repair=started&assignment_batch=${firstBatchId}`
-        : "/admin?repair=started"
-    );
+      return redirectBack(req, { maintenance: "repair_completed" });
+    }
+
+    if (phase === "management_review") {
+      throw new Error("Management review assignments are created by workflow decisions, not manual repair.");
+    }
+
+    const result = await autoAssignPending(phase as WorkflowPhase, limit, user.id);
+
+    if (wantsJson) return NextResponse.json({ ok: true, phase, result });
+
+    return redirectBack(req, { maintenance: "assigned", phase });
+  } catch (error: any) {
+    console.error("Auto assignment failed:", error);
+
+    const contentType = req.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      return NextResponse.json(
+        { ok: false, error: error.message ?? "Auto assignment failed." },
+        { status: error.message === "FORBIDDEN" || error.message === "UNAUTHENTICATED" ? 403 : 500 }
+      );
+    }
+
+    return redirectBack(req, { maintenance_error: error.message ?? "Auto assignment failed." });
   }
-
-  redirect("/admin?error=invalid_assignment_phase");
 }

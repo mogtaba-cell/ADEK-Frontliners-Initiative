@@ -5,22 +5,28 @@ import { usePathname } from "next/navigation";
 
 type KpiData = {
   totalSubmissions: number;
-  totalEvaluated: number;
+  completedAdekEvaluations: number;
   totalSelected: number;
-  totalSentForCorrection: number;
-  totalProofread: number;
-  totalLiteraryProofread: number;
-  totalReady: number;
+  needsManagementReview: number;
+  totalDisqualified: number;
+  activeCoordinatorCorrections: number;
+  generalProofread: number;
+  literaryProofread: number;
+  finalReady: number;
+  totalClosed: number;
 };
 
 const emptyKpis: KpiData = {
   totalSubmissions: 0,
-  totalEvaluated: 0,
+  completedAdekEvaluations: 0,
   totalSelected: 0,
-  totalSentForCorrection: 0,
-  totalProofread: 0,
-  totalLiteraryProofread: 0,
-  totalReady: 0,
+  needsManagementReview: 0,
+  totalDisqualified: 0,
+  activeCoordinatorCorrections: 0,
+  generalProofread: 0,
+  literaryProofread: 0,
+  finalReady: 0,
+  totalClosed: 0,
 };
 
 function numberFrom(value: unknown) {
@@ -30,31 +36,17 @@ function numberFrom(value: unknown) {
 
 function normalizeKpis(payload: any): KpiData {
   const data = payload?.data ?? payload ?? {};
-
   return {
-    totalSubmissions: numberFrom(
-      data.totalSubmissions ?? data.total_submissions ?? data.submissions
-    ),
-    totalEvaluated: numberFrom(
-      data.totalEvaluated ?? data.total_evaluated ?? data.evaluated
-    ),
-    totalSelected: numberFrom(
-      data.totalSelected ?? data.total_selected ?? data.selected
-    ),
-    totalSentForCorrection: numberFrom(
-      data.totalSentForCorrection ??
-        data.total_sent_for_correction ??
-        data.sent_for_correction
-    ),
-    totalProofread: numberFrom(
-      data.totalProofread ?? data.total_proofread ?? data.proofread
-    ),
-    totalLiteraryProofread: numberFrom(
-      data.totalLiteraryProofread ??
-        data.total_literary_proofread ??
-        data.literary_proofread
-    ),
-    totalReady: numberFrom(data.totalReady ?? data.total_ready ?? data.ready),
+    totalSubmissions: numberFrom(data.totalSubmissions),
+    completedAdekEvaluations: numberFrom(data.completedAdekEvaluations),
+    totalSelected: numberFrom(data.totalSelected),
+    needsManagementReview: numberFrom(data.needsManagementReview),
+    totalDisqualified: numberFrom(data.totalDisqualified),
+    activeCoordinatorCorrections: numberFrom(data.activeCoordinatorCorrections),
+    generalProofread: numberFrom(data.generalProofread),
+    literaryProofread: numberFrom(data.literaryProofread),
+    finalReady: numberFrom(data.finalReady),
+    totalClosed: numberFrom(data.totalClosed),
   };
 }
 
@@ -65,56 +57,39 @@ export function KpiHeader() {
 
   useEffect(() => {
     let cancelled = false;
-
     async function loadKpis() {
       try {
-        const response = await fetch(`/api/kpis?t=${Date.now()}`, {
-          cache: "no-store",
-        });
-
+        const response = await fetch(`/api/kpis?t=${Date.now()}`, { cache: "no-store" });
         const payload = await response.json();
-
-        if (!cancelled) {
-          setKpis(normalizeKpis(payload));
-        }
+        if (!cancelled) setKpis(normalizeKpis(payload));
       } catch (error) {
         console.error("KPI header failed to load:", error);
-
-        if (!cancelled) {
-          setKpis(emptyKpis);
-        }
+        if (!cancelled) setKpis(emptyKpis);
       } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
+        if (!cancelled) setIsLoading(false);
       }
     }
-
     loadKpis();
-
-    const interval = window.setInterval(loadKpis, 10000);
-
-    function onFocus() {
-      loadKpis();
-    }
-
-    window.addEventListener("focus", onFocus);
-
+    const interval = window.setInterval(loadKpis, 30000);
+    window.addEventListener("focus", loadKpis);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
-      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("focus", loadKpis);
     };
   }, [pathname]);
 
   const cards = [
     { label: "Total Submissions", value: kpis.totalSubmissions },
-    { label: "Total Evaluated", value: kpis.totalEvaluated },
-    { label: "Total Selected", value: kpis.totalSelected },
-    { label: "Sent to Correction", value: kpis.totalSentForCorrection },
-    { label: "Proofread", value: kpis.totalProofread },
-    { label: "Lit Proofread", value: kpis.totalLiteraryProofread },
-    { label: "Total Ready", value: kpis.totalReady },
+    { label: "ADEK Evaluated", value: kpis.completedAdekEvaluations },
+    { label: "Selected", value: kpis.totalSelected },
+    { label: "Needs Mgmt", value: kpis.needsManagementReview },
+    { label: "Disqualified", value: kpis.totalDisqualified },
+    { label: "Corrections", value: kpis.activeCoordinatorCorrections },
+    { label: "General Proofread", value: kpis.generalProofread },
+    { label: "Literary Proofread", value: kpis.literaryProofread },
+    { label: "Final Ready", value: kpis.finalReady },
+    { label: "Closed", value: kpis.totalClosed },
   ];
 
   return (

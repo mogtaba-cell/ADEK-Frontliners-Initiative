@@ -62,7 +62,7 @@ export function statusClassName(status: string | null | undefined) {
     return "pill pill-success";
   }
 
-  if (["needs_management_review", "returned_for_correction"].includes(value)) {
+  if (["needs_management_review", "returned_for_correction", "sent_for_review"].includes(value)) {
     return "pill pill-warning";
   }
 

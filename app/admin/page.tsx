@@ -1,12 +1,48 @@
 import { requireUser } from "@/lib/auth";
 import { Nav } from "@/components/nav";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import {
+  countUnassignedAdekSubmissions,
+  getEvaluatorAssignmentWorkloads,
+} from "@/lib/assignment";
 
 export const dynamic = "force-dynamic";
 
-export default async function AdminPage() {
-  const user = await requireUser(["admin"]);
+type SearchParams = Record<string, string | string[] | undefined>;
 
+function firstParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+async function countSubmissions(filters?: (query: any) => any) {
+  let query = supabaseAdmin.from("submissions").select("id", {
+    count: "exact",
+    head: true,
+  });
+  if (filters) query = filters(query);
+  const { count, error } = await query;
+  if (error) {
+    console.error("Admin submission count failed:", error.message);
+    return 0;
+  }
+  return count ?? 0;
+}
+
+async function countAssignments(filters: (query: any) => any) {
+  let query = supabaseAdmin.from("assignments").select("submission_id", {
+    count: "exact",
+    head: true,
+  });
+  query = filters(query);
+  const { count, error } = await query;
+  if (error) {
+    console.error("Admin assignment count failed:", error.message);
+    return 0;
+  }
+  return count ?? 0;
+}
+
+async function getDashboardCounts() {
   const [
     totalSubmissions,
     completedAdekEvaluations,
@@ -16,78 +52,95 @@ export default async function AdminPage() {
     activeManagementReview,
     completedGeneralProofreading,
     completedLiteraryProofreading,
-    completedFinalReviewReady,
+    completedFinalReady,
     lastExport,
-    evaluators,
+    activeAssignments,
   ] = await Promise.all([
-    supabaseAdmin
-      .from("submissions")
-      .select("id", { count: "exact", head: true }),
-
-    supabaseAdmin
-      .from("assignments")
-      .select("submission_id", { count: "exact", head: true })
-      .eq("phase", "adek_evaluation")
-      .eq("status", "completed")
-      .not("completed_at", "is", null),
-
-    supabaseAdmin
-      .from("submissions")
-      .select("id", { count: "exact", head: true })
-      .eq("evaluation_decision", "approved"),
-
-    supabaseAdmin
-      .from("submissions")
-      .select("id", { count: "exact", head: true })
-      .or(
+    countSubmissions(),
+    countAssignments((query) =>
+      query
+        .eq("phase", "adek_evaluation")
+        .eq("status", "completed")
+        .not("completed_at", "is", null)
+    ),
+    countSubmissions((query) =>
+      query
+        .eq("evaluation_decision", "approved")
+        .neq("workflow_status", "disqualified")
+    ),
+    countSubmissions((query) =>
+      query.or(
         "workflow_status.eq.disqualified,evaluation_decision.eq.disqualified,management_decision.eq.disqualified"
-      ),
-
-    supabaseAdmin
-      .from("assignments")
-      .select("submission_id", { count: "exact", head: true })
-      .eq("phase", "coordinator_check")
-      .in("status", ["assigned", "in_progress"]),
-
-    supabaseAdmin
-      .from("assignments")
-      .select("submission_id", { count: "exact", head: true })
-      .eq("phase", "management_review")
-      .in("status", ["assigned", "in_progress"]),
-
-    supabaseAdmin
-      .from("assignments")
-      .select("submission_id", { count: "exact", head: true })
-      .eq("phase", "proofreading")
-      .eq("status", "completed")
-      .not("completed_at", "is", null),
-
-    supabaseAdmin
-      .from("assignments")
-      .select("submission_id", { count: "exact", head: true })
-      .eq("phase", "literary_proofreading")
-      .eq("status", "completed")
-      .not("completed_at", "is", null),
-
-    supabaseAdmin
-      .from("assignments")
-      .select("submission_id", { count: "exact", head: true })
-      .eq("phase", "final_review")
-      .eq("status", "completed")
-      .not("completed_at", "is", null),
-
+      )
+    ),
+    countAssignments((query) =>
+      query.eq("phase", "coordinator_check").in("status", ["assigned", "in_progress"])
+    ),
+    countAssignments((query) =>
+      query.eq("phase", "management_review").in("status", ["assigned", "in_progress"])
+    ),
+    countAssignments((query) =>
+      query
+        .eq("phase", "proofreading")
+        .eq("status", "completed")
+        .not("completed_at", "is", null)
+    ),
+    countAssignments((query) =>
+      query
+        .eq("phase", "literary_proofreading")
+        .eq("status", "completed")
+        .not("completed_at", "is", null)
+    ),
+    countAssignments((query) =>
+      query
+        .eq("phase", "final_review")
+        .eq("status", "completed")
+        .not("completed_at", "is", null)
+    ),
     supabaseAdmin
       .from("export_batches")
       .select("*")
       .order("created_at", { ascending: false })
       .limit(1),
+    countAssignments((query) =>
+      query.in("status", [
+        "assigned",
+        "in_progress",
+        "returned_for_correction",
+        "sent_for_review",
+      ])
+    ),
+  ]);
 
-    supabaseAdmin
-      .from("profiles")
-      .select("id,full_name,email")
-      .eq("role", "evaluator")
-      .eq("is_active", true)
-      .order("full_name", { ascending: true }),
+  return {
+    totalSubmissions,
+    completedAdekEvaluations,
+    totalSelected,
+    totalDisqualified,
+    activeCoordinatorCorrections,
+    activeManagementReview,
+    completedGeneralProofreading,
+    completedLiteraryProofreading,
+    completedFinalReady,
+    lastExport,
+    activeAssignments,
+  };
+}
+
+export default async function AdminPage({
+  searchParams,
+}: {
+  searchParams?: Promise<SearchParams>;
+}) {
+  const user = await requireUser(["admin"]);
+  const params = (await searchParams) ?? {};
+  const maintenance = firstParam(params.maintenance);
+  const maintenanceError = firstParam(params.maintenance_error);
+
+  const [dashboard, unassignedAdekCount, evaluators] = await Promise.all([
+    getDashboardCounts(),
+    countUnassignedAdekSubmissions(),
+    getEvaluatorAssignmentWorkloads(),
   ]);
 
   return (
@@ -96,161 +149,157 @@ export default async function AdminPage() {
 
       <h1>Admin Dashboard</h1>
 
+      {maintenance && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <p className="pill">Workflow maintenance completed: {maintenance}</p>
+        </div>
+      )}
+
+      {maintenanceError && (
+        <div
+          className="card"
+          style={{ marginBottom: 16, background: "#fff1f1", border: "1px solid #d88" }}
+        >
+          <strong>Error:</strong> <span className="muted">{maintenanceError}</span>
+        </div>
+      )}
+
       <div className="grid grid-3">
         <div className="card">
           <h2>Total Submissions</h2>
-          <p className="stat-number">{totalSubmissions.count ?? 0}</p>
+          <p className="stat-number">{dashboard.totalSubmissions}</p>
         </div>
 
         <div className="card">
-          <h2>Completed ADEK Evaluations</h2>
-          <p className="stat-number">{completedAdekEvaluations.count ?? 0}</p>
+          <h2>Active Assignments</h2>
+          <p className="stat-number">{dashboard.activeAssignments}</p>
         </div>
 
         <div className="card">
           <h2>Last Export</h2>
-          <p>{lastExport.data?.[0]?.status ?? "No exports yet"}</p>
+          <p>{dashboard.lastExport.data?.[0]?.status ?? "No exports yet"}</p>
         </div>
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
         <h2>Workflow Overview</h2>
-
         <p className="muted">
-          These live counts come from the current assignment state, so they stay
-          accurate after reassignment and repair actions.
+          These counts are based on assignment records and final decisions, not only workflow labels.
         </p>
 
-        <div className="grid grid-3">
+        <div className="grid grid-4">
           <div>
             <strong>Total Submissions</strong>
-            <p className="stat-number">{totalSubmissions.count ?? 0}</p>
+            <p className="stat-number">{dashboard.totalSubmissions}</p>
           </div>
 
           <div>
             <strong>Completed ADEK evaluations</strong>
-            <p className="stat-number">{completedAdekEvaluations.count ?? 0}</p>
+            <p className="stat-number">{dashboard.completedAdekEvaluations}</p>
           </div>
 
           <div>
             <strong>Total Selected</strong>
-            <p className="stat-number">{totalSelected.count ?? 0}</p>
+            <p className="stat-number">{dashboard.totalSelected}</p>
           </div>
 
           <div>
             <strong>Total Disqualified</strong>
-            <p className="stat-number">{totalDisqualified.count ?? 0}</p>
+            <p className="stat-number">{dashboard.totalDisqualified}</p>
           </div>
 
           <div>
             <strong>Active coordinator corrections</strong>
-            <p className="stat-number">{activeCoordinatorCorrections.count ?? 0}</p>
+            <p className="stat-number">{dashboard.activeCoordinatorCorrections}</p>
           </div>
 
           <div>
             <strong>Active management review</strong>
-            <p className="stat-number">{activeManagementReview.count ?? 0}</p>
+            <p className="stat-number">{dashboard.activeManagementReview}</p>
           </div>
 
           <div>
             <strong>Completed general proofreading</strong>
-            <p className="stat-number">{completedGeneralProofreading.count ?? 0}</p>
+            <p className="stat-number">{dashboard.completedGeneralProofreading}</p>
           </div>
 
           <div>
             <strong>Completed literary proofreading</strong>
-            <p className="stat-number">{completedLiteraryProofreading.count ?? 0}</p>
+            <p className="stat-number">{dashboard.completedLiteraryProofreading}</p>
           </div>
 
           <div>
             <strong>Completed final review / ready</strong>
-            <p className="stat-number">{completedFinalReviewReady.count ?? 0}</p>
+            <p className="stat-number">{dashboard.completedFinalReady}</p>
           </div>
         </div>
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
         <h2>Workflow Maintenance</h2>
-
         <p className="muted">
-          Import only adds submissions. Select evaluators here to assign new
-          imported submissions. Repair Missing Assignments does not assign ADEK
-          evaluator or management tasks.
+          Imported submissions are not assigned automatically. Enter the exact number of new unassigned artworks each evaluator should receive.
         </p>
 
         <div className="grid grid-2">
           <div className="card" style={{ boxShadow: "none" }}>
             <h3>Assign Imported Submissions to ADEK Evaluators</h3>
-
             <p className="muted">
-              Select the evaluators who should receive imported submissions.
-              Work will be distributed evenly only between the selected
-              evaluators.
+              Unassigned artworks waiting for ADEK evaluation: <strong>{unassignedAdekCount}</strong>
             </p>
 
             <form action="/api/assignments/auto" method="post">
               <input type="hidden" name="phase" value="adek_evaluation" />
-              <input type="hidden" name="limit" value="5000" />
 
-              <div
-                className="card"
-                style={{
-                  boxShadow: "none",
-                  marginTop: 12,
-                  maxHeight: 320,
-                  overflowY: "auto",
-                }}
-              >
-                <strong>Select Evaluators</strong>
-
-                <div className="grid grid-2" style={{ marginTop: 12 }}>
-                  {(evaluators.data ?? []).map((evaluator) => (
-                    <label
-                      key={evaluator.id}
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        alignItems: "flex-start",
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        name="evaluator_ids"
-                        value={evaluator.id}
-                      />
-
-                      <span>
-                        <strong>{evaluator.full_name}</strong>
-                        <br />
-                        <span className="muted small">{evaluator.email}</span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-
-                {(evaluators.data ?? []).length === 0 && (
-                  <p className="muted">No active evaluators found.</p>
-                )}
+              <div className="table-wrap" style={{ marginTop: 12 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Evaluator</th>
+                      <th>Current assigned total</th>
+                      <th>Current remaining</th>
+                      <th>New artworks to assign</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {evaluators.map((evaluator) => (
+                      <tr key={evaluator.id}>
+                        <td>
+                          <strong>{evaluator.full_name}</strong>
+                          <div className="muted small">{evaluator.email}</div>
+                        </td>
+                        <td>{evaluator.assigned_total}</td>
+                        <td>{evaluator.remaining}</td>
+                        <td>
+                          <input
+                            className="input compact-input"
+                            type="number"
+                            min="0"
+                            max={unassignedAdekCount}
+                            name={`quantity_${evaluator.id}`}
+                            defaultValue="0"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
 
               <button className="btn" type="submit" style={{ marginTop: 12 }}>
-                Assign Imported Submissions
+                Assign Exact Quantities
               </button>
             </form>
           </div>
 
           <div className="card" style={{ boxShadow: "none" }}>
             <h3>Repair Missing Assignments</h3>
-
             <p className="muted">
-              Repairs missing tasks for Coordinators, General Proofreaders,
-              Literary Proofreaders, and Reviewers only.
+              Repairs Coordinator, Proofreader, Literary Proofreader, and Reviewer queues only. It does not assign evaluator tasks.
             </p>
 
             <form action="/api/assignments/auto" method="post">
               <input type="hidden" name="phase" value="repair_missing" />
-              <input type="hidden" name="limit" value="5000" />
-
               <button className="btn secondary" type="submit">
                 Repair Missing Assignments
               </button>
@@ -261,19 +310,11 @@ export default async function AdminPage() {
 
       <div className="card" style={{ marginTop: 16 }}>
         <h2>User Import Template</h2>
-
         <p className="muted">
-          Download the users import template with all supported user types,
-          including ADEK Evaluator, Coordinator, General Proofreader, Literary
-          Proofreader, Management, Reviewer, ADEK HQ, and Admin.
+          Download the users import template with all supported user types.
         </p>
-
         <div className="actions" style={{ marginTop: 12 }}>
-          <a
-            className="btn secondary"
-            href="/templates/users_import_template.csv"
-            download
-          >
+          <a className="btn secondary" href="/templates/users_import_template.csv" download>
             Download Users Import Template
           </a>
         </div>

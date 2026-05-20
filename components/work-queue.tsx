@@ -44,6 +44,8 @@ const correctionSourceLabels: Record<string, string> = {
   adek_evaluation: "ADEK Evaluation",
   proofreading: "General Proofreading",
   literary_proofreading: "Literary Proofreading",
+  management_review: "Management Review",
+  final_review: "Final Review",
 };
 
 function safeFirstParam(
@@ -98,16 +100,13 @@ function defaultViewForPhase(phase: WorkflowPhase) {
 
 function applySubmissionWorkflowGate(
   query: any,
-  phase: WorkflowPhase,
-  view: string
+  _phase: WorkflowPhase,
+  _view: string
 ) {
-  // Workspaces must be driven by assignment ownership/phase/status, not by
-  // submissions.workflow_status. Workflow status can lag after manual repairs,
-  // reassignment, or correction returns, while assignments are the source of
-  // truth for what each user should see.
+  // Workspaces intentionally do not hide valid assignments based on submission.workflow_status.
+  // The assignment row is the source of truth for ownership and user-visible tasks.
   return query;
 }
-
 
 function applyDecisionGate(query: any, phase: WorkflowPhase, view: string) {
   if (view === "approved") return query.eq("decision", "approved");
@@ -125,12 +124,9 @@ function applySourceGate(query: any, correctionSourcePhase?: string) {
   return query.eq("correction_source_phase", correctionSourcePhase);
 }
 
-function applyCoordinatorCorrectionSafetyGate(query: any, phase: WorkflowPhase) {
-  // Do not filter coordinator tasks by submission workflow status. Active
-  // coordinator_check assignments are the source of truth for correction work.
+function applyCoordinatorCorrectionSafetyGate(query: any, _phase: WorkflowPhase) {
   return query;
 }
-
 
 function applyProofreaderTypeGate(
   query: any,
@@ -170,16 +166,6 @@ function buildAssignmentCountQuery({
     .eq("assigned_to", userId)
     .eq("phase", phase)
     .in("status", statuses);
-
-  if (
-    statuses.includes("completed") &&
-    (view === "completed" ||
-      view === "approved" ||
-      view === "disqualified" ||
-      (view === "needs_review" && phase !== "management_review"))
-  ) {
-    query = query.not("completed_at", "is", null);
-  }
 
   query = applySubmissionWorkflowGate(query, phase, view);
   query = applyDecisionGate(query, phase, view);
@@ -555,16 +541,6 @@ export async function WorkQueuePage({
     .in("status", statuses)
     .order("created_at", { ascending: true })
     .limit(250);
-
-  if (
-    statuses.includes("completed") &&
-    (view === "completed" ||
-      view === "approved" ||
-      view === "disqualified" ||
-      (view === "needs_review" && phase !== "management_review"))
-  ) {
-    query = query.not("completed_at", "is", null);
-  }
 
   query = applySubmissionWorkflowGate(query, phase, view);
   query = applyDecisionGate(query, phase, view);

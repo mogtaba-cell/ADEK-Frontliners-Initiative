@@ -40,6 +40,8 @@ export type AssignmentStatus =
   | "assigned"
   | "in_progress"
   | "completed"
+  | "returned_for_correction"
+  | "sent_for_review"
   | "reassigned"
   | "cancelled";
 

@@ -6,11 +6,16 @@ import {
   assignProofreadingAfterApproval,
   autoAssignOne,
   maybeAssignReviewerAfterProofreading,
+  reactivateAssignmentForReturn,
 } from "@/lib/assignment";
 import type { WorkflowPhase } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function nowIso() {
+  return new Date().toISOString();
+}
 
 function yesNo(value: FormDataEntryValue | null) {
   return String(value ?? "").toLowerCase() === "yes";
@@ -81,7 +86,7 @@ function editableContentFromForm(form: FormData) {
     influence_idea_source: textValue(form, "influence_idea_source"),
     most_enjoyable_part: textValue(form, "most_enjoyable_part"),
     focused_elements: textValue(form, "focused_elements"),
-    updated_at: new Date().toISOString(),
+    updated_at: nowIso(),
   };
 }
 
@@ -101,7 +106,7 @@ async function markAssignmentCompleted(
   assignmentId: string,
   values: Record<string, any> = {}
 ) {
-  const completedAt = new Date().toISOString();
+  const completedAt = values.completed_at ?? nowIso();
 
   await safeUpdate(
     "assignments",
@@ -124,6 +129,7 @@ async function getCompletedGeneralProofreaderId(submissionId: string) {
     .eq("phase", "proofreading")
     .eq("proofreader_type", "general")
     .eq("status", "completed")
+    .not("completed_at", "is", null)
     .order("completed_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -159,13 +165,16 @@ async function sendToCoordinatorForCorrection({
   correctionReason: string;
   correctionNotes?: string | null;
 }) {
+  const timestamp = nowIso();
+
+  // The requesting user's task is not completed yet. It waits for the coordinator to return it.
   await safeUpdate(
     "assignments",
     {
       status: "returned_for_correction",
       decision: "needs_correction",
-      completed_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      completed_at: null,
+      updated_at: timestamp,
       correction_reason: correctionReason,
       correction_notes: correctionNotes ?? null,
     },
@@ -177,7 +186,7 @@ async function sendToCoordinatorForCorrection({
     "submissions",
     {
       workflow_status: "returned_for_correction",
-      updated_at: new Date().toISOString(),
+      updated_at: timestamp,
     },
     "id",
     submissionId
@@ -188,22 +197,8 @@ async function sendToCoordinatorForCorrection({
     returnToUserId: requesterId,
     correctionReason,
     correctionNotes: correctionNotes ?? null,
-    // These fields are written below for deployments where autoAssignOne
-    // does not yet support source phase. The explicit update keeps old code safe.
-  }).then(async (result) => {
-    if (!result.skipped) {
-      await safeUpdate(
-        "assignments",
-        {
-          correction_source_phase: sourcePhase,
-          correction_source_assignment_id: assignmentId,
-        },
-        "id",
-        result.id
-      );
-    }
-
-    return result;
+    correctionSourcePhase: sourcePhase,
+    correctionSourceAssignmentId: assignmentId,
   });
 }
 
@@ -217,12 +212,15 @@ async function returnCorrectedSubmission({
   actorId: string;
 }) {
   const coordinatorAssignment = await getAssignment(assignmentId);
-  const sourcePhase = coordinatorAssignment.correction_source_phase as
-    | WorkflowPhase
-    | null;
+  const sourcePhase = coordinatorAssignment.correction_source_phase as WorkflowPhase | null;
 
   if (!sourcePhase) {
     throw new Error("Missing correction source phase. Cannot return correction.");
+  }
+
+  const sourceAssignmentId = coordinatorAssignment.correction_source_assignment_id as string | null;
+  if (!sourceAssignmentId) {
+    throw new Error("Missing source assignment. Cannot return correction.");
   }
 
   const returnToUserId =
@@ -237,24 +235,22 @@ async function returnCorrectedSubmission({
     decision: "corrected",
   });
 
+  await reactivateAssignmentForReturn(sourceAssignmentId, actorId, {
+    assignedTo: returnToUserId,
+    requestedByUserId: actorId,
+    correctionReason: coordinatorAssignment.correction_reason ?? null,
+    correctionNotes: coordinatorAssignment.correction_notes ?? null,
+  });
+
   await safeUpdate(
     "submissions",
     {
       workflow_status: workflowStatusForReturnedSource(sourcePhase),
-      updated_at: new Date().toISOString(),
+      updated_at: nowIso(),
     },
     "id",
     submissionId
   );
-
-  return autoAssignOne(submissionId, sourcePhase, actorId, {
-    assignedTo: returnToUserId,
-    requestedByUserId: actorId,
-    returnToUserId,
-    correctionReason: coordinatorAssignment.correction_reason ?? null,
-    correctionNotes: coordinatorAssignment.correction_notes ?? null,
-    proofreaderType: coordinatorAssignment.proofreader_type ?? undefined,
-  });
 }
 
 async function disqualifyFromCoordinator({
@@ -266,9 +262,12 @@ async function disqualifyFromCoordinator({
   assignmentId: string;
   reason: "no_school_response" | "incomplete_faulty_after_correction";
 }) {
+  const completedAt = nowIso();
+
   await markAssignmentCompleted(assignmentId, {
     decision: "disqualified",
     correction_reason: reason,
+    completed_at: completedAt,
   });
 
   await safeUpdate(
@@ -277,11 +276,59 @@ async function disqualifyFromCoordinator({
       workflow_status: "disqualified",
       disqualification_reason: reason,
       coordinator_disqualification_reason: reason,
-      updated_at: new Date().toISOString(),
+      completed_at: completedAt,
+      updated_at: completedAt,
     },
     "id",
     submissionId
   );
+}
+
+async function sendLiteraryToManagementReview({
+  submissionId,
+  assignmentId,
+  actorId,
+  requesterId,
+  comment,
+}: {
+  submissionId: string;
+  assignmentId: string;
+  actorId: string;
+  requesterId: string;
+  comment?: string | null;
+}) {
+  const timestamp = nowIso();
+
+  await safeUpdate(
+    "assignments",
+    {
+      status: "sent_for_review",
+      decision: "needs_review",
+      completed_at: null,
+      correction_notes: comment ?? null,
+      updated_at: timestamp,
+    },
+    "id",
+    assignmentId
+  );
+
+  await safeUpdate(
+    "submissions",
+    {
+      workflow_status: "needs_management_review",
+      updated_at: timestamp,
+    },
+    "id",
+    submissionId
+  );
+
+  await autoAssignOne(submissionId, "management_review", actorId, {
+    requestedByUserId: requesterId,
+    returnToUserId: requesterId,
+    correctionNotes: comment ?? null,
+    correctionSourcePhase: "literary_proofreading",
+    correctionSourceAssignmentId: assignmentId,
+  });
 }
 
 export async function POST(req: Request) {
@@ -322,7 +369,7 @@ export async function POST(req: Request) {
           {
             evaluator_file_quality_clear: false,
             evaluator_comment: evaluatorComment,
-            updated_at: new Date().toISOString(),
+            updated_at: nowIso(),
           },
           "id",
           submissionId
@@ -343,6 +390,7 @@ export async function POST(req: Request) {
         const ethical = yesNo(form.get("ethical_public_appropriateness"));
         const decision = calculateAdekDecision(cultural, artistic, ethical);
         const artisticRating = textValue(form, "artistic_rating");
+        const completedAt = nowIso();
 
         await safeUpdate(
           "submissions",
@@ -360,7 +408,8 @@ export async function POST(req: Request) {
                 : decision === "needs_review"
                   ? "needs_management_review"
                   : "disqualified",
-            updated_at: new Date().toISOString(),
+            completed_at: decision === "disqualified" ? completedAt : null,
+            updated_at: completedAt,
           },
           "id",
           submissionId
@@ -368,17 +417,14 @@ export async function POST(req: Request) {
 
         await markAssignmentCompleted(assignmentId, {
           decision,
+          completed_at: completedAt,
         });
 
         if (decision === "approved") {
-          // Only approved submissions go to General/Literary proofreaders.
-          // If literary language is missing, assignment.ts now assigns General
-          // and skips Literary until Admin classifies the language.
           await assignProofreadingAfterApproval(submissionId, user.id);
         }
 
         if (decision === "needs_review") {
-          // Needs Review goes to Management only, not proofreaders.
           await autoAssignOne(submissionId, "management_review", user.id, {
             requestedByUserId: user.id,
           });
@@ -430,7 +476,7 @@ export async function POST(req: Request) {
           correctionNotes: null,
         });
       } else {
-        const completedAt = new Date().toISOString();
+        const completedAt = nowIso();
 
         await safeUpdate(
           "submissions",
@@ -445,7 +491,6 @@ export async function POST(req: Request) {
         await markAssignmentCompleted(assignmentId, {
           decision: "completed",
           completed_at: completedAt,
-          updated_at: completedAt,
         });
 
         const generalProofreaderId = assignment.assigned_to ?? user.id;
@@ -461,10 +506,7 @@ export async function POST(req: Request) {
       const literaryAction = String(form.get("literary_action") ?? "completed");
       const publicationSuitable = yesNo(form.get("literary_publication_suitable"));
       const literaryUpdatedContent = textValue(form, "literary_updated_content");
-      const literaryProofreaderComment = textValue(
-        form,
-        "literary_proofreader_comment"
-      );
+      const literaryProofreaderComment = textValue(form, "literary_proofreader_comment");
 
       await safeUpdate(
         "submissions",
@@ -472,36 +514,19 @@ export async function POST(req: Request) {
           literary_publication_suitable: publicationSuitable,
           literary_updated_content: literaryUpdatedContent,
           literary_proofreader_comment: literaryProofreaderComment,
-          updated_at: new Date().toISOString(),
+          updated_at: nowIso(),
         },
         "id",
         submissionId
       );
 
       if (literaryAction === "needs_review" || !publicationSuitable) {
-        await safeUpdate(
-          "assignments",
-          {
-            status: "sent_for_review",
-            decision: "needs_review",
-            completed_at: new Date().toISOString(),
-          },
-          "id",
-          assignmentId
-        );
-
-        await safeUpdate(
-          "submissions",
-          {
-            workflow_status: "needs_management_review",
-            updated_at: new Date().toISOString(),
-          },
-          "id",
-          submissionId
-        );
-
-        await autoAssignOne(submissionId, "management_review", user.id, {
-          requestedByUserId: assignment.assigned_to ?? user.id,
+        await sendLiteraryToManagementReview({
+          submissionId,
+          assignmentId,
+          actorId: user.id,
+          requesterId: assignment.assigned_to ?? user.id,
+          comment: literaryProofreaderComment,
         });
       } else if (literaryAction === "needs_correction") {
         await sendToCoordinatorForCorrection({
@@ -514,13 +539,12 @@ export async function POST(req: Request) {
           correctionNotes: literaryProofreaderComment ?? literaryUpdatedContent,
         });
       } else {
-        const completedAt = new Date().toISOString();
+        const completedAt = nowIso();
 
         await safeUpdate(
           "submissions",
           {
             literary_proofreading_completed_at: completedAt,
-            literary_proofreader_comment: literaryProofreaderComment,
             updated_at: completedAt,
           },
           "id",
@@ -530,7 +554,6 @@ export async function POST(req: Request) {
         await markAssignmentCompleted(assignmentId, {
           decision: "completed",
           completed_at: completedAt,
-          updated_at: completedAt,
         });
 
         const generalProofreaderId = await getCompletedGeneralProofreaderId(
@@ -553,10 +576,12 @@ export async function POST(req: Request) {
         form,
         "management_artistic_rating"
       );
+      const completedAt = nowIso();
 
       if (managementDecision === "disqualified") {
         await markAssignmentCompleted(assignmentId, {
           decision: "disqualified",
+          completed_at: completedAt,
         });
 
         await safeUpdate(
@@ -565,7 +590,8 @@ export async function POST(req: Request) {
             workflow_status: "disqualified",
             management_decision: "disqualified",
             management_artistic_rating: managementArtisticRating,
-            updated_at: new Date().toISOString(),
+            completed_at: completedAt,
+            updated_at: completedAt,
           },
           "id",
           submissionId
@@ -573,53 +599,46 @@ export async function POST(req: Request) {
       } else {
         await markAssignmentCompleted(assignmentId, {
           decision: "approved",
+          completed_at: completedAt,
         });
-
-        const { count: existingProofreadingCount } = await supabaseAdmin
-          .from("assignments")
-          .select("id", { count: "exact", head: true })
-          .eq("submission_id", submissionId)
-          .in("phase", ["proofreading", "literary_proofreading"]);
 
         await safeUpdate(
           "submissions",
           {
-            workflow_status:
-              existingProofreadingCount && existingProofreadingCount > 0
-                ? "selected_for_proofreading"
-                : "selected_for_proofreading",
+            workflow_status: "selected_for_proofreading",
             management_decision: "approved",
             management_artistic_rating: managementArtisticRating,
-            literary_management_approved_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
+            literary_management_approved_at: completedAt,
+            updated_at: completedAt,
           },
           "id",
           submissionId
         );
 
-        if (!existingProofreadingCount) {
-          await assignProofreadingAfterApproval(submissionId, user.id);
-        } else {
-          const generalProofreaderId = await getCompletedGeneralProofreaderId(
-            submissionId
-          );
+        if (assignment.correction_source_phase === "literary_proofreading") {
+          const sourceAssignmentId = assignment.correction_source_assignment_id;
+          const returnToUserId = assignment.return_to_user_id ?? assignment.requested_by_user_id;
 
-          if (generalProofreaderId) {
-            await maybeAssignReviewerAfterProofreading(
-              submissionId,
-              generalProofreaderId,
-              user.id
-            );
+          if (sourceAssignmentId && returnToUserId) {
+            await reactivateAssignmentForReturn(sourceAssignmentId, user.id, {
+              assignedTo: returnToUserId,
+              requestedByUserId: user.id,
+              correctionNotes: assignment.correction_notes ?? null,
+            });
           }
+        } else {
+          await assignProofreadingAfterApproval(submissionId, user.id);
         }
       }
     }
 
     if (phase === "final_review") {
       await updateEditableContent(submissionId, form);
+      const completedAt = nowIso();
 
       await markAssignmentCompleted(assignmentId, {
         decision: "completed",
+        completed_at: completedAt,
       });
 
       await safeUpdate(
@@ -627,8 +646,8 @@ export async function POST(req: Request) {
         {
           workflow_status: "completed",
           reviewer_decision: "completed",
-          completed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+          completed_at: completedAt,
+          updated_at: completedAt,
         },
         "id",
         submissionId
