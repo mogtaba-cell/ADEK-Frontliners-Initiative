@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 type ExportResponse = {
   ok: boolean;
   error?: string;
+  action?: string;
   batchId?: string;
   dateLabel?: string;
   folder?: {
@@ -80,13 +81,27 @@ export function AdminExportToDriveButton() {
   const [message, setMessage] = useState("");
   const [folderLink, setFolderLink] = useState<string | null>(null);
 
+  async function runStep(
+    label: string,
+    action: string,
+    formData?: FormData
+  ) {
+    setMessage(label);
+
+    try {
+      return await postExportStep(action, formData);
+    } catch (error: any) {
+      throw new Error(`${label} failed. ${error?.message ?? ""}`.trim());
+    }
+  }
+
   async function handleExport() {
     try {
       setIsExporting(true);
       setFolderLink(null);
       setMessage("Creating export folder...");
 
-      const start = await postExportStep("start");
+      const start = await runStep("Creating export folder", "start");
       const batchId = start.batchId;
       const folderId = start.folder?.id;
       const dateLabel = start.dateLabel;
@@ -97,26 +112,26 @@ export function AdminExportToDriveButton() {
 
       setFolderLink(start.folder?.webViewLink ?? null);
 
-      setMessage("Building and uploading Analytics Dashboard PDF...");
-      await postExportStep(
+      await runStep(
+        "Building and uploading Analytics Dashboard PDF",
         "analytics",
         buildStepForm({ batchId, folderId, dateLabel })
       );
 
-      setMessage("Building and uploading Activity Log workbook...");
-      await postExportStep(
+      await runStep(
+        "Building and uploading Activity Log workbook",
         "activity",
         buildStepForm({ batchId, folderId, dateLabel })
       );
 
-      setMessage("Building and uploading Submissions workbooks. This can take a minute...");
-      await postExportStep(
+      await runStep(
+        "Building and uploading Submissions workbooks",
         "submissions",
         buildStepForm({ batchId, folderId, dateLabel })
       );
 
-      setMessage("Writing export summary...");
-      await postExportStep(
+      await runStep(
+        "Writing export summary",
         "summary",
         buildStepForm({ batchId, folderId, dateLabel })
       );
