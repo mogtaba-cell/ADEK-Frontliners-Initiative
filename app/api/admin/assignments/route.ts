@@ -79,14 +79,16 @@ export async function POST(req: Request) {
     }
 
     if (phase === "repair_missing") {
-      const batchId = await createAssignmentBatch("coordinator_check", user.id);
-
       let eligible = 0;
       let assigned = 0;
       let skipped = 0;
       let errors = 0;
+      const batches: { phase: WorkflowPhase; batchId: string }[] = [];
 
       for (const repairPhase of repairPhases) {
+        const batchId = await createAssignmentBatch(repairPhase, user.id);
+        batches.push({ phase: repairPhase, batchId });
+
         await processAutoAssignPending(batchId, repairPhase, limit, user.id);
         const batch = await getAssignmentBatch(batchId);
 
@@ -97,9 +99,9 @@ export async function POST(req: Request) {
       }
 
       return NextResponse.json({
-        batchId,
         status: "completed",
         message: "Repair missing assignments completed.",
+        batches,
         eligible_count: eligible,
         assigned_count: assigned,
         skipped_count: skipped,

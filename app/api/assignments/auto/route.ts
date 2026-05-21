@@ -15,6 +15,7 @@ export const maxDuration = 300;
 
 const repairPhases: WorkflowPhase[] = [
   "coordinator_check",
+  "management_review",
   "proofreading",
   "literary_proofreading",
   "final_review",
@@ -109,8 +110,14 @@ export async function POST(req: Request) {
       return redirectBack(req, { maintenance: "repair_completed" });
     }
 
-    if (phase === "management_review") {
-      throw new Error("Management review assignments are created by workflow decisions, not manual repair.");
+    if (![
+      "coordinator_check",
+      "management_review",
+      "proofreading",
+      "literary_proofreading",
+      "final_review",
+    ].includes(phase)) {
+      throw new Error(`Unsupported repair phase: ${phase}.`);
     }
 
     const result = await autoAssignPending(phase as WorkflowPhase, limit, user.id);

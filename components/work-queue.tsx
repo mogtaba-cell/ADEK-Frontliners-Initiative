@@ -165,6 +165,36 @@ function safeFirstParam(
   return firstParam(value) || fallback;
 }
 
+function pathForWorkspaceRole(role: Role) {
+  if (role === "evaluator") return "/evaluator/work";
+  if (role === "management") return "/management/work";
+  return `/${role}`;
+}
+
+function buildReturnPath(
+  role: Role,
+  searchParams: Record<string, string | string[] | undefined>,
+) {
+  const params = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(searchParams)) {
+    if (key === "refresh") continue;
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item !== undefined && item !== "") params.append(key, item);
+      }
+      continue;
+    }
+
+    if (value !== undefined && value !== "") params.set(key, value);
+  }
+
+  const query = params.toString();
+  const path = pathForWorkspaceRole(role);
+  return query ? `${path}?${query}` : path;
+}
+
 function formatViewLabel(view: string) {
   if (view === "not_completed") return "not completed";
   if (view === "returned_for_correction") return "returned for correction";
@@ -937,7 +967,7 @@ export async function WorkQueuePage({
           phase={phase}
           role={role}
           assignments={enrichedAssignments}
-          currentPath={`/${role === "evaluator" ? "evaluator/work" : role}`}
+          currentPath={buildReturnPath(role, searchParams)}
           proofreaderType={user.proofreader_type ?? null}
         />
       )}

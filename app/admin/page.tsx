@@ -258,6 +258,8 @@ export default async function AdminPage({
                       <th>Evaluator</th>
                       <th>Current assigned total</th>
                       <th>Current remaining</th>
+                      <th>Sent for correction</th>
+                      <th>Completed</th>
                       <th>New artworks to assign</th>
                     </tr>
                   </thead>
@@ -270,6 +272,8 @@ export default async function AdminPage({
                         </td>
                         <td>{evaluator.assigned_total}</td>
                         <td>{evaluator.remaining}</td>
+                        <td>{evaluator.sent_for_correction}</td>
+                        <td>{evaluator.completed}</td>
                         <td>
                           <input
                             className="input compact-input"
@@ -295,15 +299,55 @@ export default async function AdminPage({
           <div className="card" style={{ boxShadow: "none" }}>
             <h3>Repair Missing Assignments</h3>
             <p className="muted">
-              Repairs Coordinator, Proofreader, Literary Proofreader, and Reviewer queues only. It does not assign evaluator tasks.
+              Repair non-evaluator queues only. These buttons do not create ADEK evaluator assignments.
             </p>
 
-            <form action="/api/assignments/auto" method="post">
-              <input type="hidden" name="phase" value="repair_missing" />
-              <button className="btn secondary" type="submit">
-                Repair Missing Assignments
-              </button>
-            </form>
+            <div className="grid" style={{ gap: 12, marginTop: 16 }}>
+              {[
+                {
+                  phase: "coordinator_check",
+                  title: "Coordinator corrections",
+                  description: "Assigns active returned-for-correction submissions to coordinators.",
+                },
+                {
+                  phase: "management_review",
+                  title: "Management review",
+                  description: "Assigns active needs-management-review submissions to management users.",
+                },
+                {
+                  phase: "proofreading",
+                  title: "General proofreading",
+                  description: "Assigns approved selected artworks to general proofreaders when missing.",
+                },
+                {
+                  phase: "literary_proofreading",
+                  title: "Literary proofreading",
+                  description: "Assigns approved literary artworks to the correct literary proofreader type when language is classified.",
+                },
+                {
+                  phase: "final_review",
+                  title: "Final review",
+                  description: "Assigns artworks to reviewers only after all required previous stages are completed.",
+                },
+              ].map((item) => (
+                <form
+                  action="/api/assignments/auto"
+                  method="post"
+                  key={item.phase}
+                  className="card"
+                  style={{ boxShadow: "none", padding: 14 }}
+                >
+                  <input type="hidden" name="phase" value={item.phase} />
+                  <strong>{item.title}</strong>
+                  <p className="muted small" style={{ marginTop: 6 }}>
+                    {item.description}
+                  </p>
+                  <button className="btn secondary" type="submit">
+                    Repair {item.title}
+                  </button>
+                </form>
+              ))}
+            </div>
           </div>
         </div>
       </div>
