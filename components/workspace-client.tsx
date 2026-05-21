@@ -486,7 +486,6 @@ function CorrectionSourceCard({
 
   const evaluatorComment = displayText(submission?.evaluator_comment, "");
   const literaryComment = displayText(submission?.literary_proofreader_comment, "");
-  const correctionNotes = displayText(assignment.correction_notes, "");
 
   return (
     <div className="card">
@@ -519,9 +518,6 @@ function CorrectionSourceCard({
             />
           )}
 
-        {correctionNotes && (
-          <DetailField label="Correction notes" value={correctionNotes} />
-        )}
 
         {assignment.coordinator_waiting_for_response && (
           <DetailField
