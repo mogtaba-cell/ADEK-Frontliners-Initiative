@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { Nav } from "@/components/nav";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { AdminExportToDriveButton } from "@/components/admin-export-to-drive-button";
 
 export const dynamic = "force-dynamic";
 
@@ -83,11 +84,9 @@ export default async function ExportPage({
           </p>
         )}
 
-        <form action="/api/admin/export/google-drive" method="post">
-          <button className="btn" type="submit" style={{ marginTop: 16 }}>
-            Export Current Data to Google Shared Drive
-          </button>
-        </form>
+        <div style={{ marginTop: 16 }}>
+          <AdminExportToDriveButton />
+        </div>
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>

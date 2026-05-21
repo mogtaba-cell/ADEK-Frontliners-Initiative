@@ -343,10 +343,10 @@ export async function buildSubmissionWorkbookBuffers() {
     rows: readyRows,
   });
 
-  const [allBuffer, readyBuffer] = await Promise.all([
-    allWorkbook.xlsx.writeBuffer(),
-    readyWorkbook.xlsx.writeBuffer(),
-  ]);
+  // Write the large workbook first, then the smaller ready workbook. Writing both
+  // at the same time can spike memory/CPU and increase serverless timeout risk.
+  const allBuffer = await allWorkbook.xlsx.writeBuffer();
+  const readyBuffer = await readyWorkbook.xlsx.writeBuffer();
 
   return {
     allSubmissionsBuffer: Buffer.from(allBuffer),

@@ -17,6 +17,12 @@ export const maxDuration = 60;
 
 const EXPORT_TIME_ZONE = "Asia/Dubai";
 
+type ExportFileInfo = {
+  id: string;
+  name: string;
+  webViewLink: string | null;
+};
+
 function getDubaiDateParts(date = new Date()) {
   const formatter = new Intl.DateTimeFormat("en-GB", {
     timeZone: EXPORT_TIME_ZONE,
@@ -47,16 +53,16 @@ function safeDateName(date = new Date()) {
   return `${yyyy}-${mm}-${dd} ${hh}-${min} UAE`;
 }
 
-function redirectBack(req: Request, params: Record<string, string>) {
-  const url = new URL("/admin/export", req.url);
+function json(data: any, status = 200) {
+  return NextResponse.json(data, { status });
+}
 
-  for (const [key, value] of Object.entries(params)) {
-    url.searchParams.set(key, value);
-  }
+function textValue(form: FormData, key: string) {
+  return String(form.get(key) ?? "").trim();
+}
 
-  return NextResponse.redirect(url, {
-    status: 303,
-  });
+function errorMessage(error: any) {
+  return error?.message ?? "Google Drive export failed.";
 }
 
 async function createExportBatch({
@@ -107,11 +113,7 @@ async function insertExportFile({
 }: {
   batchId: string;
   dataType: string;
-  file: {
-    id: string;
-    name: string;
-    webViewLink: string | null;
-  };
+  file: ExportFileInfo;
 }) {
   const { error } = await supabaseAdmin.from("export_files").insert({
     export_batch_id: batchId,
@@ -126,166 +128,288 @@ async function insertExportFile({
   }
 }
 
+async function getExportFiles(batchId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("export_files")
+    .select("data_type,file_name,google_file_id,google_file_url,created_at")
+    .eq("export_batch_id", batchId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new Error(`Could not read export files: ${error.message}`);
+  }
+
+  return data ?? [];
+}
+
+async function failBatch(batchId: string | null, message: string) {
+  if (!batchId) return;
+
+  await updateExportBatch({
+    batchId,
+    values: {
+      status: "failed",
+      error_message: message,
+      completed_at: new Date().toISOString(),
+    },
+  });
+}
+
+async function readBatchFolder(batchId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("export_batches")
+    .select("destination_folder_id")
+    .eq("id", batchId)
+    .single();
+
+  if (error) {
+    throw new Error(`Could not read export batch: ${error.message}`);
+  }
+
+  if (!data?.destination_folder_id) {
+    throw new Error("Export batch is missing destination folder.");
+  }
+
+  return data.destination_folder_id as string;
+}
+
+async function handleStart(user: any) {
+  const batchId = await createExportBatch({
+    requestedBy: user.id,
+    mode: "manual",
+  });
+
+  const now = new Date();
+  const dateLabel = safeDateName(now);
+  const exportFolder = await createDatedExportFolder({
+    folderName: dateLabel,
+  });
+
+  await updateExportBatch({
+    batchId,
+    values: {
+      destination_folder_id: exportFolder.id,
+    },
+  });
+
+  return json({
+    ok: true,
+    batchId,
+    dateLabel,
+    folder: exportFolder,
+  });
+}
+
+async function handleAnalytics(form: FormData) {
+  const batchId = textValue(form, "batch_id");
+  const folderId = textValue(form, "folder_id") || (await readBatchFolder(batchId));
+  const dateLabel = textValue(form, "date_label") || safeDateName();
+
+  if (!batchId) throw new Error("Missing export batch ID.");
+
+  const uploadedPdf = form.get("analytics_pdf");
+  let pdfBuffer: Buffer;
+
+  if (uploadedPdf instanceof File && uploadedPdf.size > 0) {
+    pdfBuffer = Buffer.from(await uploadedPdf.arrayBuffer());
+  } else {
+    // Fallback for direct/API usage. The browser export page normally sends the
+    // PDF it captured client-side, which avoids spending serverless runtime here.
+    pdfBuffer = await buildAnalyticsDashboardPdfBuffer();
+  }
+
+  const file = await uploadBufferToDrive({
+    folderId,
+    filename: `Analytics Dashboard - ${dateLabel}.pdf`,
+    mimeType: "application/pdf",
+    buffer: pdfBuffer,
+  });
+
+  await insertExportFile({
+    batchId,
+    dataType: "analytics_dashboard_pdf",
+    file,
+  });
+
+  return json({ ok: true, file });
+}
+
+async function handleActivity(form: FormData) {
+  const batchId = textValue(form, "batch_id");
+  const folderId = textValue(form, "folder_id") || (await readBatchFolder(batchId));
+  const dateLabel = textValue(form, "date_label") || safeDateName();
+
+  if (!batchId) throw new Error("Missing export batch ID.");
+
+  const activityLogBuffer = await buildActivityLogWorkbookBuffer();
+  const file = await uploadBufferToDrive({
+    folderId,
+    filename: `Activity Log - ${dateLabel}.xlsx`,
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: activityLogBuffer,
+  });
+
+  await insertExportFile({
+    batchId,
+    dataType: "activity_log",
+    file,
+  });
+
+  return json({ ok: true, file });
+}
+
+async function handleSubmissions(form: FormData) {
+  const batchId = textValue(form, "batch_id");
+  const folderId = textValue(form, "folder_id") || (await readBatchFolder(batchId));
+  const dateLabel = textValue(form, "date_label") || safeDateName();
+
+  if (!batchId) throw new Error("Missing export batch ID.");
+
+  const { allSubmissionsBuffer, readySubmissionsBuffer } =
+    await buildSubmissionWorkbookBuffers();
+
+  const allSubmissionsFile = await uploadBufferToDrive({
+    folderId,
+    filename: `All Submissions Full Data - ${dateLabel}.xlsx`,
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: allSubmissionsBuffer,
+  });
+
+  await insertExportFile({
+    batchId,
+    dataType: "all_submissions_full_data",
+    file: allSubmissionsFile,
+  });
+
+  const readySubmissionsFile = await uploadBufferToDrive({
+    folderId,
+    filename: `Ready Submissions - ${dateLabel}.xlsx`,
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: readySubmissionsBuffer,
+  });
+
+  await insertExportFile({
+    batchId,
+    dataType: "ready_submissions",
+    file: readySubmissionsFile,
+  });
+
+  return json({
+    ok: true,
+    files: [allSubmissionsFile, readySubmissionsFile],
+  });
+}
+
+async function handleSummary(form: FormData, user: any) {
+  const batchId = textValue(form, "batch_id");
+  const folderId = textValue(form, "folder_id") || (await readBatchFolder(batchId));
+  const dateLabel = textValue(form, "date_label") || safeDateName();
+
+  if (!batchId) throw new Error("Missing export batch ID.");
+
+  const files = await getExportFiles(batchId);
+  const now = new Date();
+  const summaryBuffer = Buffer.from(
+    JSON.stringify(
+      {
+        exported_at_utc: now.toISOString(),
+        exported_at_uae_label: dateLabel,
+        timezone: EXPORT_TIME_ZONE,
+        exported_by: {
+          id: user.id,
+          full_name: user.full_name,
+          email: user.email,
+          role: user.role,
+        },
+        parent_folder: "Data export",
+        folder_id: folderId,
+        files,
+      },
+      null,
+      2
+    )
+  );
+
+  const summaryFile = await uploadBufferToDrive({
+    folderId,
+    filename: `Export Summary - ${dateLabel}.json`,
+    mimeType: "application/json",
+    buffer: summaryBuffer,
+  });
+
+  await insertExportFile({
+    batchId,
+    dataType: "export_summary",
+    file: summaryFile,
+  });
+
+  await updateExportBatch({
+    batchId,
+    values: {
+      status: "completed",
+      completed_at: new Date().toISOString(),
+      error_message: null,
+    },
+  });
+
+  const finalFiles = await getExportFiles(batchId);
+
+  return json({
+    ok: true,
+    file: summaryFile,
+    files: finalFiles,
+  });
+}
+
+
+export async function GET(req: Request) {
+  return NextResponse.redirect(new URL("/admin/export", req.url), { status: 303 });
+}
+
 export async function POST(req: Request) {
+  const url = new URL(req.url);
+  const action = url.searchParams.get("action") ?? "start";
   let batchId: string | null = null;
 
   try {
     const user = await requireUser(["admin"]);
 
-    batchId = await createExportBatch({
-      requestedBy: user.id,
-      mode: "manual",
-    });
-
-    const now = new Date();
-    const folderName = safeDateName(now);
-    const dateLabel = folderName;
-
-    const exportFolder = await createDatedExportFolder({
-      folderName,
-    });
-
-    await updateExportBatch({
-      batchId,
-      values: {
-        destination_folder_id: exportFolder.id,
-      },
-    });
-
-    // Build exports in a controlled sequence to avoid opening several heavy
-    // Supabase export queries at the same time. The all/ready submission
-    // workbooks share the same fetched rows instead of querying submissions twice.
-    const analyticsPdfBuffer = await buildAnalyticsDashboardPdfBuffer();
-    const activityLogBuffer = await buildActivityLogWorkbookBuffer();
-    const { allSubmissionsBuffer, readySubmissionsBuffer } =
-      await buildSubmissionWorkbookBuffers();
-
-    const summaryBuffer = Buffer.from(
-      JSON.stringify(
-        {
-          exported_at_utc: now.toISOString(),
-          exported_at_uae_label: dateLabel,
-          timezone: EXPORT_TIME_ZONE,
-          exported_by: {
-            id: user.id,
-            full_name: user.full_name,
-            email: user.email,
-            role: user.role,
-          },
-          parent_folder: "Data export",
-          folder: exportFolder,
-          files: [
-            `Analytics Dashboard - ${dateLabel}.pdf`,
-            `Activity Log - ${dateLabel}.xlsx`,
-            `All Submissions Full Data - ${dateLabel}.xlsx`,
-            `Ready Submissions - ${dateLabel}.xlsx`,
-            `Export Summary - ${dateLabel}.json`,
-          ],
-        },
-        null,
-        2
-      )
-    );
-
-    const uploadedFiles = await Promise.all([
-      uploadBufferToDrive({
-        folderId: exportFolder.id,
-        filename: `Analytics Dashboard - ${dateLabel}.pdf`,
-        mimeType: "application/pdf",
-        buffer: analyticsPdfBuffer,
-      }),
-
-      uploadBufferToDrive({
-        folderId: exportFolder.id,
-        filename: `Activity Log - ${dateLabel}.xlsx`,
-        mimeType:
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        buffer: activityLogBuffer,
-      }),
-
-      uploadBufferToDrive({
-        folderId: exportFolder.id,
-        filename: `All Submissions Full Data - ${dateLabel}.xlsx`,
-        mimeType:
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        buffer: allSubmissionsBuffer,
-      }),
-
-      uploadBufferToDrive({
-        folderId: exportFolder.id,
-        filename: `Ready Submissions - ${dateLabel}.xlsx`,
-        mimeType:
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        buffer: readySubmissionsBuffer,
-      }),
-
-      uploadBufferToDrive({
-        folderId: exportFolder.id,
-        filename: `Export Summary - ${dateLabel}.json`,
-        mimeType: "application/json",
-        buffer: summaryBuffer,
-      }),
-    ]);
-
-    await Promise.all([
-      insertExportFile({
-        batchId,
-        dataType: "analytics_dashboard_pdf",
-        file: uploadedFiles[0],
-      }),
-
-      insertExportFile({
-        batchId,
-        dataType: "activity_log",
-        file: uploadedFiles[1],
-      }),
-
-      insertExportFile({
-        batchId,
-        dataType: "all_submissions_full_data",
-        file: uploadedFiles[2],
-      }),
-
-      insertExportFile({
-        batchId,
-        dataType: "ready_submissions",
-        file: uploadedFiles[3],
-      }),
-
-      insertExportFile({
-        batchId,
-        dataType: "export_summary",
-        file: uploadedFiles[4],
-      }),
-    ]);
-
-    await updateExportBatch({
-      batchId,
-      values: {
-        status: "completed",
-        completed_at: new Date().toISOString(),
-      },
-    });
-
-    return redirectBack(req, {
-      success: "1",
-    });
-  } catch (error: any) {
-    console.error("Google Drive export failed:", error);
-
-    if (batchId) {
-      await updateExportBatch({
-        batchId,
-        values: {
-          status: "failed",
-          error_message: error.message ?? "Google Drive export failed.",
-          completed_at: new Date().toISOString(),
-        },
-      });
+    if (action === "start") {
+      return await handleStart(user);
     }
 
-    return redirectBack(req, {
-      error: error.message ?? "Google Drive export failed.",
-    });
+    const form = await req.formData();
+    batchId = textValue(form, "batch_id") || null;
+
+    if (action === "analytics") return await handleAnalytics(form);
+    if (action === "activity") return await handleActivity(form);
+    if (action === "submissions") return await handleSubmissions(form);
+    if (action === "summary") return await handleSummary(form, user);
+
+    return json(
+      {
+        ok: false,
+        error:
+          "Unknown export action. Use the Export & Backup page instead of opening this API URL directly.",
+      },
+      400
+    );
+  } catch (error: any) {
+    const message = errorMessage(error);
+    console.error(`Google Drive export step failed (${action}):`, error);
+
+    await failBatch(batchId, message);
+
+    return json(
+      {
+        ok: false,
+        action,
+        error: message,
+      },
+      500
+    );
   }
 }
