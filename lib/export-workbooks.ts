@@ -26,7 +26,6 @@ const SUBMISSION_SELECT = `
   institution_name,
   institution_type,
   school_region,
-  coordinator_email,
   teacher_name,
   teacher_email,
   teacher_phone,
