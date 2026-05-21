@@ -16,6 +16,9 @@ type Assignment = {
   correction_source_phase?: string | null;
   correction_source_assignment_id?: string | null;
   proofreader_type?: string | null;
+  coordinator_comment?: string | null;
+  coordinator_waiting_for_response?: boolean | null;
+  coordinator_waiting_for_response_at?: string | null;
   submissions?: any;
   task_history?: any[];
 };
@@ -41,8 +44,6 @@ const correctionSourceLabels: Record<string, string> = {
   adek_evaluation: "ADEK Evaluation",
   proofreading: "General Proofreading",
   literary_proofreading: "Literary Proofreading",
-  management_review: "Management Review",
-  final_review: "Final Review",
   coordinator_check: "Coordinator Correction",
 };
 
@@ -260,34 +261,6 @@ function getOriginalImportedFields(submission: any) {
   };
 }
 
-
-function getReviewerEditableFields(
-  submission: any,
-  derived: ReturnType<typeof getDerivedFields>
-) {
-  const latestFields = {
-    englishTitle: derived.englishTitle,
-    arabicTitle: derived.arabicTitle,
-    englishDescription: derived.englishDescription,
-    arabicDescription: derived.arabicDescription,
-    influence: derived.influence,
-    enjoyable: derived.enjoyable,
-    elements: derived.elements,
-  };
-
-  const literaryUpdatedContent = String(
-    submission?.literary_updated_content ?? ""
-  ).trim();
-
-  if (!literaryUpdatedContent) return latestFields;
-
-  if (submission?.literary_language === "arabic") {
-    return { ...latestFields, arabicDescription: literaryUpdatedContent };
-  }
-
-  return { ...latestFields, englishDescription: literaryUpdatedContent };
-}
-
 function DetailField({ label, value }: { label: string; value: unknown }) {
   return (
     <>
@@ -411,45 +384,6 @@ function ReviewerOriginalUpdatedComparison({
   );
 }
 
-
-function EvaluatorCommentNotice({ submission }: { submission: any }) {
-  const comment = String(submission?.evaluator_comment ?? "").trim();
-  if (!comment) return null;
-
-  return (
-    <div
-      className="card"
-      style={{ borderColor: "#d8b45f", background: "#fff9ea" }}
-    >
-      <h3 style={{ marginTop: 0 }}>Evaluator Comment</h3>
-      <p className="muted small" style={{ marginTop: 0 }}>
-        This comment was added by the evaluator and should be considered while
-        reviewing or correcting this submission.
-      </p>
-      <p dir="auto" style={{ whiteSpace: "pre-wrap" }}>{comment}</p>
-    </div>
-  );
-}
-
-function LiteraryProofreaderCommentNotice({ submission }: { submission: any }) {
-  const comment = String(submission?.literary_proofreader_comment ?? "").trim();
-  if (!comment) return null;
-
-  return (
-    <div
-      className="card"
-      style={{ borderColor: "#d8b45f", background: "#fff9ea" }}
-    >
-      <h3 style={{ marginTop: 0 }}>Literary Proofreader Comment</h3>
-      <p className="muted small" style={{ marginTop: 0 }}>
-        This comment was added by the literary proofreader and should be
-        considered while reviewing or correcting this submission.
-      </p>
-      <p dir="auto" style={{ whiteSpace: "pre-wrap" }}>{comment}</p>
-    </div>
-  );
-}
-
 function TaskHistory({ history }: { history: any[] }) {
   if (!history?.length) return null;
 
@@ -561,6 +495,14 @@ function CorrectionSourceCard({ assignment }: { assignment: Assignment }) {
             assignment.correction_reason
           }
         />
+
+        {assignment.coordinator_waiting_for_response && (
+          <DetailField label="Coordinator status" value="Waiting for school response" />
+        )}
+
+        {assignment.coordinator_comment && (
+          <DetailField label="Coordinator comment" value={assignment.coordinator_comment} />
+        )}
       </dl>
 
       <p className="muted small" style={{ marginTop: 12 }}>
@@ -802,6 +744,10 @@ export function WorkspaceClient({
                 <span className={statusClassName(assignment.status)}>
                   {assignment.status}
                 </span>
+
+                {assignment.coordinator_waiting_for_response && (
+                  <span className="pill pill-warning">Waiting for response</span>
+                )}
               </button>
             );
           })}
@@ -996,11 +942,7 @@ export function WorkspaceClient({
               </div>
 
               {phase === "coordinator_check" && (
-                <>
-                  <CorrectionSourceCard assignment={selectedAssignment} />
-                  <EvaluatorCommentNotice submission={selectedSubmission} />
-                  <LiteraryProofreaderCommentNotice submission={selectedSubmission} />
-                </>
+                <CorrectionSourceCard assignment={selectedAssignment} />
               )}
 
               {phase === "final_review" && (
@@ -1255,6 +1197,56 @@ export function WorkspaceClient({
                     then send it back to the same user who requested the correction.
                   </p>
 
+                  <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
+                    <h4 style={{ marginTop: 0 }}>Coordinator Follow-up</h4>
+
+                    <label style={{ display: "block" }}>
+                      <span className="small">Coordinator Comment</span>
+                      <textarea
+                        className="input"
+                        name="coordinator_comment"
+                        rows={4}
+                        dir="auto"
+                        placeholder="Add school follow-up notes, response details, or internal coordinator comments..."
+                        defaultValue={displayText(
+                          selectedAssignment.coordinator_comment,
+                          ""
+                        )}
+                      />
+                    </label>
+
+                    <label
+                      className="actions"
+                      style={{ marginTop: 12, alignItems: "center" }}
+                    >
+                      <input
+                        type="checkbox"
+                        name="coordinator_waiting_for_response"
+                        value="yes"
+                        defaultChecked={Boolean(
+                          selectedAssignment.coordinator_waiting_for_response
+                        )}
+                      />
+                      <span>Waiting for school response</span>
+                    </label>
+
+                    {selectedAssignment.coordinator_waiting_for_response_at && (
+                      <p className="muted small" style={{ marginTop: 8 }}>
+                        Waiting since: {displayText(selectedAssignment.coordinator_waiting_for_response_at)}
+                      </p>
+                    )}
+
+                    <button
+                      className="btn secondary"
+                      type="submit"
+                      name="coordinator_action"
+                      value="save_progress"
+                      style={{ marginTop: 12 }}
+                    >
+                      Save Comment / Waiting Status
+                    </button>
+                  </div>
+
                   <EditableArtworkText
                     key={`coordinator-edit-${selectedSubmission.id}`}
                     derived={derived}
@@ -1308,7 +1300,6 @@ export function WorkspaceClient({
                   <EditableArtworkText
                     key={`proofreader-edit-${selectedSubmission.id}`}
                     derived={derived}
-                    showNarrativeQuestions={false}
                   />
 
                   <label style={{ display: "block", marginTop: 12 }}>
@@ -1382,26 +1373,6 @@ export function WorkspaceClient({
                     )}
                   </div>
 
-                  <label style={{ display: "block", marginTop: 12 }}>
-                    <span className="small">
-                      <strong>Literary Proofreader Comment</strong>
-                      <br />
-                      ملاحظات المدقق الأدبي
-                    </span>
-
-                    <textarea
-                      className="input"
-                      name="literary_proofreader_comment"
-                      rows={5}
-                      dir="auto"
-                      placeholder="Add any notes or comments for the Coordinator or Management..."
-                      defaultValue={displayText(
-                        selectedSubmission.literary_proofreader_comment,
-                        ""
-                      )}
-                    />
-                  </label>
-
                   {literaryPublicationSuitable === "yes" && (
                     <>
                       <label style={{ display: "block", marginTop: 12 }}>
@@ -1469,10 +1440,6 @@ export function WorkspaceClient({
                   <EditableArtworkText
                     key={`reviewer-edit-${selectedSubmission.id}`}
                     derived={derived}
-                    reviewerFields={getReviewerEditableFields(
-                      selectedSubmission,
-                      derived
-                    )}
                   />
 
                   <label style={{ display: "block", marginTop: 12 }}>
@@ -1560,30 +1527,16 @@ export function WorkspaceClient({
 
 function EditableArtworkText({
   derived,
-  reviewerFields,
-  showNarrativeQuestions = true,
 }: {
   derived: ReturnType<typeof getDerivedFields>;
-  reviewerFields?: ReturnType<typeof getReviewerEditableFields>;
-  showNarrativeQuestions?: boolean;
 }) {
-  const fields = reviewerFields ?? {
-    englishTitle: derived.englishTitle,
-    arabicTitle: derived.arabicTitle,
-    englishDescription: derived.englishDescription,
-    arabicDescription: derived.arabicDescription,
-    influence: derived.influence,
-    enjoyable: derived.enjoyable,
-    elements: derived.elements,
-  };
-
   return (
     <div className="grid grid-2">
       <label>
         <span className="small">English Title</span>
         <textarea
           name="artwork_title_en"
-          defaultValue={displayText(fields.englishTitle, "")}
+          defaultValue={displayText(derived.englishTitle, "")}
           rows={3}
           dir="auto"
         />
@@ -1593,7 +1546,7 @@ function EditableArtworkText({
         <span className="small">Arabic Title</span>
         <textarea
           name="artwork_title_ar"
-          defaultValue={displayText(fields.arabicTitle, "")}
+          defaultValue={displayText(derived.arabicTitle, "")}
           rows={3}
           dir="auto"
         />
@@ -1603,7 +1556,7 @@ function EditableArtworkText({
         <span className="small">English Description</span>
         <textarea
           name="description_en"
-          defaultValue={displayText(fields.englishDescription, "")}
+          defaultValue={displayText(derived.englishDescription, "")}
           rows={8}
           dir="auto"
         />
@@ -1613,52 +1566,48 @@ function EditableArtworkText({
         <span className="small">Arabic Description</span>
         <textarea
           name="description_ar"
-          defaultValue={displayText(fields.arabicDescription, "")}
+          defaultValue={displayText(derived.arabicDescription, "")}
           rows={8}
           dir="auto"
         />
       </label>
 
-      {showNarrativeQuestions && (
-        <>
-          <label>
-            <span className="small">
-              Did anyone or anything influence your idea, such as family, an artist,
-              or a place?
-            </span>
-            <textarea
-              name="influence_idea_source"
-              defaultValue={displayText(fields.influence, "")}
-              rows={5}
-              dir="auto"
-            />
-          </label>
+      <label>
+        <span className="small">
+          Did anyone or anything influence your idea, such as family, an artist,
+          or a place?
+        </span>
+        <textarea
+          name="influence_idea_source"
+          defaultValue={displayText(derived.influence, "")}
+          rows={5}
+          dir="auto"
+        />
+      </label>
 
-          <label>
-            <span className="small">
-              What was the most enjoyable part of creating your work?
-            </span>
-            <textarea
-              name="most_enjoyable_part"
-              defaultValue={displayText(fields.enjoyable, "")}
-              rows={5}
-              dir="auto"
-            />
-          </label>
+      <label>
+        <span className="small">
+          What was the most enjoyable part of creating your work?
+        </span>
+        <textarea
+          name="most_enjoyable_part"
+          defaultValue={displayText(derived.enjoyable, "")}
+          rows={5}
+          dir="auto"
+        />
+      </label>
 
-          <label>
-            <span className="small">
-              What elements did you focus on in your artwork, and why?
-            </span>
-            <textarea
-              name="focused_elements"
-              defaultValue={displayText(fields.elements, "")}
-              rows={5}
-              dir="auto"
-            />
-          </label>
-        </>
-      )}
+      <label>
+        <span className="small">
+          What elements did you focus on in your artwork, and why?
+        </span>
+        <textarea
+          name="focused_elements"
+          defaultValue={displayText(derived.elements, "")}
+          rows={5}
+          dir="auto"
+        />
+      </label>
     </div>
   );
 }

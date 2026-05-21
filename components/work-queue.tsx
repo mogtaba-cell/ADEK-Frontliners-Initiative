@@ -61,6 +61,7 @@ function formatViewLabel(view: string) {
   if (view === "sent_for_correction") return "sent for correction";
   if (view === "sent_for_review") return "sent for review";
   if (view === "needs_review") return "needs review";
+  if (view === "waiting_for_response") return "waiting for response";
 
   return view.replaceAll("_", " ");
 }
@@ -85,6 +86,8 @@ function statusesForView(phase: WorkflowPhase, view: string) {
   }
 
   if (view === "sent_for_review") return ["sent_for_review"];
+
+  if (view === "waiting_for_response") return ["assigned", "in_progress"];
 
   if (view === "sent_for_correction" || view === "returned_for_correction") {
     return ["returned_for_correction"];
@@ -122,6 +125,18 @@ function applyDecisionGate(query: any, phase: WorkflowPhase, view: string) {
 function applySourceGate(query: any, correctionSourcePhase?: string) {
   if (!correctionSourcePhase) return query;
   return query.eq("correction_source_phase", correctionSourcePhase);
+}
+
+function applyCoordinatorWaitingGate(
+  query: any,
+  phase: WorkflowPhase,
+  view: string
+) {
+  if (phase === "coordinator_check" && view === "waiting_for_response") {
+    return query.eq("coordinator_waiting_for_response", true);
+  }
+
+  return query;
 }
 
 function applyCoordinatorCorrectionSafetyGate(query: any, _phase: WorkflowPhase) {
@@ -170,6 +185,7 @@ function buildAssignmentCountQuery({
   query = applySubmissionWorkflowGate(query, phase, view);
   query = applyDecisionGate(query, phase, view);
   query = applySourceGate(query, correctionSourcePhase);
+  query = applyCoordinatorWaitingGate(query, phase, view);
   query = applyCoordinatorCorrectionSafetyGate(query, phase);
   query = applyProofreaderTypeGate(query, phase, proofreaderType);
 
@@ -379,6 +395,17 @@ function ViewOptions({
   isGeneralProofreader: boolean;
   isLiteraryProofreader: boolean;
 }) {
+  if (phase === "coordinator_check") {
+    return (
+      <>
+        <option value="not_completed">Not Completed</option>
+        <option value="waiting_for_response">Waiting for Response</option>
+        <option value="completed">Completed</option>
+        <option value="all">All</option>
+      </>
+    );
+  }
+
   if (phase === "management_review") {
     return (
       <>
@@ -487,6 +514,7 @@ export async function WorkQueuePage({
   const correctionSourcePhase = safeFirstParam(
     searchParams.correction_source_phase
   );
+  const school = safeFirstParam(searchParams.school);
   const search = safeFirstParam(searchParams.search);
 
   const isGeneralProofreader =
@@ -503,15 +531,26 @@ export async function WorkQueuePage({
   const isCoordinator = phase === "coordinator_check";
   const statuses = statusesForView(phase, view);
 
-  const [options, kpiCards, filteredSubmissionIds] = await Promise.all([
-    getSubmissionFilterOptions(),
-    getKpiCards({
-      userId: user.id,
-      phase,
-      proofreaderType: user.proofreader_type ?? null,
-    }),
-    getFilteredSubmissionIds({ pathway, search }),
-  ]);
+  const [options, kpiCards, filteredSubmissionIds, schoolFilteredSubmissionIds] =
+    await Promise.all([
+      getSubmissionFilterOptions(),
+      getKpiCards({
+        userId: user.id,
+        phase,
+        proofreaderType: user.proofreader_type ?? null,
+      }),
+      getFilteredSubmissionIds({ pathway, search }),
+      school
+        ? supabaseAdmin
+            .from("submissions")
+            .select("id")
+            .ilike("institution_name", `%${school}%`)
+            .then(({ data, error }) => {
+              if (error) throw error;
+              return (data ?? []).map((row: any) => row.id).filter(Boolean);
+            })
+        : Promise.resolve(null),
+    ]);
 
   let query = supabaseAdmin
     .from("assignments")
@@ -532,6 +571,9 @@ export async function WorkQueuePage({
       correction_source_phase,
       correction_source_assignment_id,
       proofreader_type,
+      coordinator_comment,
+      coordinator_waiting_for_response,
+      coordinator_waiting_for_response_at,
       submissions!inner(*)
       `,
       { count: "exact" }
@@ -545,6 +587,7 @@ export async function WorkQueuePage({
   query = applySubmissionWorkflowGate(query, phase, view);
   query = applyDecisionGate(query, phase, view);
   query = applySourceGate(query, correctionSourcePhase);
+  query = applyCoordinatorWaitingGate(query, phase, view);
   query = applyCoordinatorCorrectionSafetyGate(query, phase);
   query = applyProofreaderTypeGate(query, phase, user.proofreader_type ?? null);
 
@@ -552,10 +595,20 @@ export async function WorkQueuePage({
     query = query.eq("correction_reason", correctionReason);
   }
 
-  if (filteredSubmissionIds && filteredSubmissionIds.length === 0) {
+  let effectiveSubmissionIds = filteredSubmissionIds ?? null;
+
+  if (schoolFilteredSubmissionIds) {
+    const schoolSet = new Set(schoolFilteredSubmissionIds);
+
+    effectiveSubmissionIds = effectiveSubmissionIds
+      ? effectiveSubmissionIds.filter((id) => schoolSet.has(id))
+      : schoolFilteredSubmissionIds;
+  }
+
+  if (effectiveSubmissionIds && effectiveSubmissionIds.length === 0) {
     query = query.eq("submission_id", "00000000-0000-0000-0000-000000000000");
-  } else if (filteredSubmissionIds) {
-    query = query.in("submission_id", filteredSubmissionIds);
+  } else if (effectiveSubmissionIds) {
+    query = query.in("submission_id", effectiveSubmissionIds);
   }
 
   const { data: assignmentData, count, error } = await query;
@@ -667,6 +720,18 @@ export async function WorkQueuePage({
             </select>
           </label>
 
+          {isCoordinator && (
+            <label>
+              <span className="small">School Name</span>
+              <input
+                className="input"
+                name="school"
+                defaultValue={school}
+                placeholder="Filter by school name"
+              />
+            </label>
+          )}
+
           {filterMode === "correction" && (
             <label>
               <span className="small">Correction Reason</span>
@@ -732,6 +797,7 @@ export async function WorkQueuePage({
         <div className="filter-summary">
           <span className="pill">Phase: {phaseLabels[phase]}</span>
           <span className="pill">Showing: {formatViewLabel(view)}</span>
+          {school && <span className="pill">School: {school}</span>}
           <span className="pill">Results: {totalResults}</span>
         </div>
       </div>

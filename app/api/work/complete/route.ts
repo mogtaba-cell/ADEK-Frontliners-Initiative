@@ -167,7 +167,6 @@ async function sendToCoordinatorForCorrection({
 }) {
   const timestamp = nowIso();
 
-  // The requesting user's task is not completed yet. It waits for the coordinator to return it.
   await safeUpdate(
     "assignments",
     {
@@ -233,6 +232,8 @@ async function returnCorrectedSubmission({
 
   await markAssignmentCompleted(assignmentId, {
     decision: "corrected",
+    coordinator_waiting_for_response: false,
+    coordinator_waiting_for_response_at: null,
   });
 
   await reactivateAssignmentForReturn(sourceAssignmentId, actorId, {
@@ -267,6 +268,8 @@ async function disqualifyFromCoordinator({
   await markAssignmentCompleted(assignmentId, {
     decision: "disqualified",
     correction_reason: reason,
+    coordinator_waiting_for_response: false,
+    coordinator_waiting_for_response_at: null,
     completed_at: completedAt,
   });
 
@@ -281,6 +284,35 @@ async function disqualifyFromCoordinator({
     },
     "id",
     submissionId
+  );
+}
+
+async function saveCoordinatorProgress({
+  assignment,
+  assignmentId,
+  form,
+}: {
+  assignment: any;
+  assignmentId: string;
+  form: FormData;
+}) {
+  const timestamp = nowIso();
+  const comment = textValue(form, "coordinator_comment");
+  const waitingForResponse = yesNo(form.get("coordinator_waiting_for_response"));
+  const previousWaitingAt = assignment?.coordinator_waiting_for_response_at ?? null;
+
+  await safeUpdate(
+    "assignments",
+    {
+      coordinator_comment: comment,
+      coordinator_waiting_for_response: waitingForResponse,
+      coordinator_waiting_for_response_at: waitingForResponse
+        ? previousWaitingAt ?? timestamp
+        : null,
+      updated_at: timestamp,
+    },
+    "id",
+    assignmentId
   );
 }
 
@@ -434,12 +466,15 @@ export async function POST(req: Request) {
 
     if (phase === "coordinator_check") {
       await updateEditableContent(submissionId, form);
+      await saveCoordinatorProgress({ assignment, assignmentId, form });
 
       const coordinatorAction = String(
         form.get("coordinator_action") ?? "return_corrected"
       );
 
-      if (coordinatorAction === "disqualify_no_school_response") {
+      if (coordinatorAction === "save_progress") {
+        // Coordinator saved notes / waiting-for-response status without completing the task.
+      } else if (coordinatorAction === "disqualify_no_school_response") {
         await disqualifyFromCoordinator({
           submissionId,
           assignmentId,
@@ -656,7 +691,9 @@ export async function POST(req: Request) {
 
     await audit({
       actorId: user.id,
-      action: "work_completed",
+      action: phase === "coordinator_check" && String(form.get("coordinator_action") ?? "") === "save_progress"
+        ? "work_saved"
+        : "work_completed",
       entityType: "assignment",
       entityId: assignmentId,
       before: {
