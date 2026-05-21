@@ -7,8 +7,7 @@ import {
 import { buildAnalyticsDashboardPdfBuffer } from "@/lib/analytics-pdf";
 import {
   buildActivityLogWorkbookBuffer,
-  buildAllSubmissionsWorkbookBuffer,
-  buildReadySubmissionsWorkbookBuffer,
+  buildSubmissionWorkbookBuffers,
 } from "@/lib/export-workbooks";
 
 export const runtime = "nodejs";
@@ -200,17 +199,13 @@ export async function GET(req: Request) {
       },
     });
 
-    const [
-      analyticsPdfBuffer,
-      activityLogBuffer,
-      allSubmissionsBuffer,
-      readySubmissionsBuffer,
-    ] = await Promise.all([
-      buildAnalyticsDashboardPdfBuffer(),
-      buildActivityLogWorkbookBuffer(),
-      buildAllSubmissionsWorkbookBuffer(),
-      buildReadySubmissionsWorkbookBuffer(),
-    ]);
+    // Build exports in a controlled sequence to avoid opening several heavy
+    // Supabase export queries at the same time. The all/ready submission
+    // workbooks share the same fetched rows instead of querying submissions twice.
+    const analyticsPdfBuffer = await buildAnalyticsDashboardPdfBuffer();
+    const activityLogBuffer = await buildActivityLogWorkbookBuffer();
+    const { allSubmissionsBuffer, readySubmissionsBuffer } =
+      await buildSubmissionWorkbookBuffers();
 
     const summaryBuffer = Buffer.from(
       JSON.stringify(

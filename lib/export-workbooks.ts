@@ -103,9 +103,13 @@ async function fetchPaged(
   options?: {
     eq?: [string, any][];
     order?: { column: string; ascending?: boolean };
+    pageSize?: number;
   }
 ): Promise<AnyRow[]> {
-  const pageSize = 1000;
+  // Keep pages intentionally small. Some export rows are wide because submissions
+  // include imported raw_data JSON, and larger PostgREST pages can hit the
+  // database statement timeout even when the total row count is modest.
+  const pageSize = options?.pageSize ?? 250;
   let from = 0;
   const allRows: AnyRow[] = [];
 
@@ -146,6 +150,7 @@ async function fetchOptionalPaged(
   select: string,
   options?: {
     order?: { column: string; ascending?: boolean };
+    pageSize?: number;
   }
 ): Promise<AnyRow[]> {
   try {
@@ -232,7 +237,11 @@ function summarizeEvaluations(evaluations: AnyRow[]) {
 async function buildSubmissionExportRows(): Promise<AnyRow[]> {
   const [submissions, assignments, evaluations] = await Promise.all([
     fetchPaged("submissions", "*", {
-      order: { column: "updated_at", ascending: false },
+      // Use the primary-key order for export pagination. Ordering wide rows by
+      // updated_at can force an expensive sort and has caused Supabase statement
+      // timeouts during full exports.
+      order: { column: "id", ascending: true },
+      pageSize: 100,
     }),
 
     fetchOptionalPaged(
@@ -245,11 +254,13 @@ async function buildSubmissionExportRows(): Promise<AnyRow[]> {
       `,
       {
         order: { column: "created_at", ascending: true },
+        pageSize: 250,
       }
     ),
 
     fetchOptionalPaged("evaluations", "*", {
-      order: { column: "updated_at", ascending: false },
+      order: { column: "id", ascending: true },
+      pageSize: 250,
     }),
   ]);
 
@@ -303,6 +314,44 @@ export async function buildReadySubmissionsWorkbookBuffer() {
 
   const buffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(buffer);
+}
+
+export async function buildSubmissionWorkbookBuffers() {
+  const allRows: AnyRow[] = await buildSubmissionExportRows();
+
+  const allWorkbook = new ExcelJS.Workbook();
+  allWorkbook.creator = "ADEK Frontliners Initiative";
+  allWorkbook.created = new Date();
+
+  addRowsSheet({
+    workbook: allWorkbook,
+    sheetName: "All Submissions",
+    rows: allRows,
+  });
+
+  const readyRows = allRows.filter(
+    (row) => String(row["workflow_status"] ?? "") === "completed"
+  );
+
+  const readyWorkbook = new ExcelJS.Workbook();
+  readyWorkbook.creator = "ADEK Frontliners Initiative";
+  readyWorkbook.created = new Date();
+
+  addRowsSheet({
+    workbook: readyWorkbook,
+    sheetName: "Ready Submissions",
+    rows: readyRows,
+  });
+
+  const [allBuffer, readyBuffer] = await Promise.all([
+    allWorkbook.xlsx.writeBuffer(),
+    readyWorkbook.xlsx.writeBuffer(),
+  ]);
+
+  return {
+    allSubmissionsBuffer: Buffer.from(allBuffer),
+    readySubmissionsBuffer: Buffer.from(readyBuffer),
+  };
 }
 
 export async function buildActivityLogWorkbookBuffer() {
