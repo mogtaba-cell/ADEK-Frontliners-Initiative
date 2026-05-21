@@ -4,51 +4,76 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 type AnyRow = Record<string, any>;
 
-const SUBMISSION_SELECT = `
-  id,
-  reference_id,
-  created_at,
-  updated_at,
-  registration_status,
-  workflow_status,
-  evaluation_decision,
-  management_decision,
-  reviewer_decision,
-  completed_at,
-  artwork_title_en,
-  artwork_title_ar,
-  art_pathway_name_en,
-  art_pathway_name_ar,
-  art_sub_pathway_name_en,
-  art_sub_pathway_name_ar,
-  literary_language,
-  institution_ref_number,
-  institution_name,
-  institution_type,
-  school_region,
-  teacher_name,
-  teacher_email,
-  teacher_phone,
-  participating_students_count,
-  participating_students_names,
-  participating_students_grades,
-  participating_students_genders,
-  participating_students_nationalities,
-  general_proofreading_completed_at,
-  literary_proofreading_completed_at,
-  literary_publication_suitable,
-  literary_updated_content,
-  literary_proofreader_comment,
-  evaluator_comment,
-  management_artistic_rating,
-  artistic_rating,
-  disqualification_reason,
-  coordinator_disqualification_reason,
-  file_url,
-  file_urls,
-  artwork_file_urls,
-  updated_artwork_file_urls
-`;
+type FetchOptions = {
+  eq?: [string, any][];
+  order?: { column: string; ascending?: boolean };
+  pageSize?: number;
+  maxRows?: number;
+};
+
+// Keep this list intentionally broad, but never trust it blindly. Existing
+// deployments have slightly different submissions schemas because some columns
+// were added during live fixes. fetchPagedResilient() removes any column that
+// does not exist in the connected database and retries, so exports do not fail
+// because of schema differences.
+const PREFERRED_SUBMISSION_COLUMNS = [
+  "id",
+  "reference_id",
+  "created_at",
+  "updated_at",
+  "registration_id",
+  "registration_status",
+  "submission_date",
+  "submission_date_value",
+  "workflow_status",
+  "evaluation_decision",
+  "management_decision",
+  "reviewer_decision",
+  "completed_at",
+  "art_pathway_name_en",
+  "art_pathway_name_ar",
+  "art_sub_pathway_name_en",
+  "art_sub_pathway_name_ar",
+  "institution_type",
+  "school_region",
+  "institution_ref_number",
+  "institution_name",
+  "art_link",
+  "artwork_title_en",
+  "artwork_title_ar",
+  "description_en",
+  "description_ar",
+  "participating_students_esis_numbers",
+  "participating_students_names",
+  "participating_students_grades",
+  "participating_students_genders",
+  "participating_students_nationalities",
+  "evaluator_comment",
+  "evaluator_file_quality_clear",
+  "cultural_authenticity",
+  "artistic_excellence",
+  "ethical_public_appropriateness",
+  "artistic_rating",
+  "management_artistic_rating",
+  "disqualification_reason",
+  "coordinator_disqualification_reason",
+  "literary_language",
+  "literary_publication_suitable",
+  "literary_updated_content",
+  "literary_proofreader_comment",
+  "general_proofreading_completed_at",
+  "literary_proofreading_completed_at",
+  "literary_management_approved_at",
+  "updated_artwork_file_id",
+  "updated_artwork_file_url",
+  "updated_artwork_file_name",
+];
+
+const ACTIVITY_MAX_ROWS = {
+  auditLogs: 5000,
+  assignments: 10000,
+  comments: 5000,
+};
 
 function stringifyValue(value: any) {
   if (value === null || value === undefined) return "";
@@ -126,9 +151,7 @@ function addRowsSheet({
   }
 
   const flattened = rows.map((row) => flattenRow(row));
-  const keys = Array.from(
-    new Set(flattened.flatMap((row) => Object.keys(row)))
-  );
+  const keys = Array.from(new Set(flattened.flatMap((row) => Object.keys(row))));
 
   worksheet.columns = keys.map((key) => ({
     header: key,
@@ -143,15 +166,22 @@ function addRowsSheet({
   autosizeWorksheet(worksheet);
 }
 
+function selectFromColumns(columns: string[]) {
+  return columns.join(",");
+}
+
+function missingColumnFromMessage(message: string) {
+  return (
+    message.match(/column\s+(?:[a-zA-Z_][a-zA-Z0-9_]*\.)?([a-zA-Z_][a-zA-Z0-9_]*)\s+does\s+not\s+exist/i)?.[1] ??
+    message.match(/could\s+not\s+find\s+the\s+['\"]([^'\"]+)['\"]\s+column/i)?.[1] ??
+    null
+  );
+}
+
 async function fetchPaged(
   table: string,
   select: string,
-  options?: {
-    eq?: [string, any][];
-    order?: { column: string; ascending?: boolean };
-    pageSize?: number;
-    maxRows?: number;
-  }
+  options?: FetchOptions
 ): Promise<AnyRow[]> {
   const pageSize = options?.pageSize ?? 250;
   const maxRows = options?.maxRows ?? Number.POSITIVE_INFINITY;
@@ -193,14 +223,47 @@ async function fetchPaged(
   return allRows;
 }
 
+async function fetchPagedResilient(
+  table: string,
+  preferredColumns: string[],
+  options?: FetchOptions
+): Promise<AnyRow[]> {
+  let columns = Array.from(new Set(preferredColumns));
+  const removedColumns: string[] = [];
+
+  while (columns.length) {
+    try {
+      const rows = await fetchPaged(table, selectFromColumns(columns), options);
+
+      if (removedColumns.length) {
+        console.warn(
+          `${table} export skipped missing columns: ${removedColumns.join(", ")}`
+        );
+      }
+
+      return rows;
+    } catch (error: any) {
+      const message = String(error?.message ?? "");
+      const missingColumn = missingColumnFromMessage(message);
+
+      if (!missingColumn || !columns.includes(missingColumn)) {
+        throw error;
+      }
+
+      columns = columns.filter((column) => column !== missingColumn);
+      removedColumns.push(missingColumn);
+    }
+  }
+
+  // Extremely defensive fallback: this should never run, but keeps export from
+  // failing with an empty custom column list.
+  return fetchPaged(table, "*", options);
+}
+
 async function fetchOptionalPaged(
   table: string,
   select: string,
-  options?: {
-    order?: { column: string; ascending?: boolean };
-    pageSize?: number;
-    maxRows?: number;
-  }
+  options?: FetchOptions
 ): Promise<AnyRow[]> {
   try {
     return await fetchPaged(table, select, options);
@@ -211,20 +274,21 @@ async function fetchOptionalPaged(
 }
 
 async function fetchSubmissionRows() {
-  return fetchPaged("submissions", SUBMISSION_SELECT, {
+  return fetchPagedResilient("submissions", PREFERRED_SUBMISSION_COLUMNS, {
     order: { column: "id", ascending: true },
-    pageSize: 100,
+    pageSize: 200,
   });
 }
 
-function workbookWithSheet(sheetName: string, rows: AnyRow[]) {
+async function workbookWithSheet(sheetName: string, rows: AnyRow[]) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "ADEK Frontliners Initiative";
   workbook.created = new Date();
 
   addRowsSheet({ workbook, sheetName, rows });
 
-  return workbook.xlsx.writeBuffer().then((buffer) => Buffer.from(buffer));
+  const buffer = await workbook.xlsx.writeBuffer();
+  return Buffer.from(buffer);
 }
 
 export async function buildAllSubmissionsWorkbookBuffer() {
@@ -243,26 +307,23 @@ export async function buildReadySubmissionsWorkbookBuffer() {
 export async function buildSubmissionWorkbookBuffers() {
   const allRows = await fetchSubmissionRows();
 
-  const allWorkbook = new ExcelJS.Workbook();
-  allWorkbook.creator = "ADEK Frontliners Initiative";
-  allWorkbook.created = new Date();
-  addRowsSheet({ workbook: allWorkbook, sheetName: "All Submissions", rows: allRows });
+  const allSubmissionsBuffer = await workbookWithSheet(
+    "All Submissions",
+    allRows
+  );
 
   const readyRows = allRows.filter(
     (row) => String(row.workflow_status ?? "") === "completed"
   );
 
-  const readyWorkbook = new ExcelJS.Workbook();
-  readyWorkbook.creator = "ADEK Frontliners Initiative";
-  readyWorkbook.created = new Date();
-  addRowsSheet({ workbook: readyWorkbook, sheetName: "Ready Submissions", rows: readyRows });
-
-  const allBuffer = await allWorkbook.xlsx.writeBuffer();
-  const readyBuffer = await readyWorkbook.xlsx.writeBuffer();
+  const readySubmissionsBuffer = await workbookWithSheet(
+    "Ready Submissions",
+    readyRows
+  );
 
   return {
-    allSubmissionsBuffer: Buffer.from(allBuffer),
-    readySubmissionsBuffer: Buffer.from(readyBuffer),
+    allSubmissionsBuffer,
+    readySubmissionsBuffer,
   };
 }
 
@@ -270,50 +331,42 @@ export async function buildActivityLogWorkbookBuffer() {
   const [auditLogs, assignments, comments] = await Promise.all([
     fetchOptionalPaged(
       "audit_logs",
-      `id,actor_id,action,entity_type,entity_id,before,after,created_at,actor:profiles!audit_logs_actor_id_fkey(id,full_name,email,role)`,
+      `
+      *,
+      actor:profiles!audit_logs_actor_id_fkey(id,full_name,email,role)
+      `,
       {
         order: { column: "created_at", ascending: false },
-        pageSize: 250,
-        maxRows: 5000,
+        pageSize: 500,
+        maxRows: ACTIVITY_MAX_ROWS.auditLogs,
       }
     ),
 
     fetchOptionalPaged(
       "assignments",
       `
-      id,
-      submission_id,
-      phase,
-      status,
-      decision,
-      proofreader_type,
-      assigned_to,
-      assigned_by,
-      requested_by_user_id,
-      return_to_user_id,
-      correction_reason,
-      correction_notes,
-      correction_source_phase,
-      created_at,
-      updated_at,
-      completed_at,
+      *,
       assigned_user:profiles!assignments_assigned_to_fkey(id,full_name,email,role,proofreader_type),
+      requested_by_user:profiles!assignments_requested_by_user_id_fkey(id,full_name,email,role,proofreader_type),
       submissions(id,reference_id,artwork_title_en,workflow_status)
       `,
       {
         order: { column: "created_at", ascending: false },
-        pageSize: 250,
-        maxRows: 10000,
+        pageSize: 500,
+        maxRows: ACTIVITY_MAX_ROWS.assignments,
       }
     ),
 
     fetchOptionalPaged(
       "comments",
-      `id,submission_id,author_id,body,created_at,author:profiles!comments_author_id_fkey(id,full_name,email,role)`,
+      `
+      *,
+      author:profiles!comments_author_id_fkey(id,full_name,email,role)
+      `,
       {
         order: { column: "created_at", ascending: false },
-        pageSize: 250,
-        maxRows: 5000,
+        pageSize: 500,
+        maxRows: ACTIVITY_MAX_ROWS.comments,
       }
     ),
   ]);
@@ -322,9 +375,23 @@ export async function buildActivityLogWorkbookBuffer() {
   workbook.creator = "ADEK Frontliners Initiative";
   workbook.created = new Date();
 
-  addRowsSheet({ workbook, sheetName: "Audit Logs Latest 5000", rows: auditLogs });
-  addRowsSheet({ workbook, sheetName: "Assignments Latest 10000", rows: assignments });
-  addRowsSheet({ workbook, sheetName: "Comments Latest 5000", rows: comments });
+  addRowsSheet({
+    workbook,
+    sheetName: "Audit Logs",
+    rows: auditLogs,
+  });
+
+  addRowsSheet({
+    workbook,
+    sheetName: "Assignments",
+    rows: assignments,
+  });
+
+  addRowsSheet({
+    workbook,
+    sheetName: "Comments",
+    rows: comments,
+  });
 
   const buffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(buffer);
