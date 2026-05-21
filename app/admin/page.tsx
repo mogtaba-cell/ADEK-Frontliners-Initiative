@@ -258,8 +258,6 @@ export default async function AdminPage({
                       <th>Evaluator</th>
                       <th>Current assigned total</th>
                       <th>Current remaining</th>
-                      <th>Sent for correction</th>
-                      <th>Completed</th>
                       <th>New artworks to assign</th>
                     </tr>
                   </thead>
@@ -272,8 +270,6 @@ export default async function AdminPage({
                         </td>
                         <td>{evaluator.assigned_total}</td>
                         <td>{evaluator.remaining}</td>
-                        <td>{evaluator.sent_for_correction}</td>
-                        <td>{evaluator.completed}</td>
                         <td>
                           <input
                             className="input compact-input"
