@@ -579,6 +579,11 @@ function CoordinatorUpdatedArtworkUpload({
   submission: any;
   currentPath: string;
 }) {
+    const [returnPath, setReturnPath] = useState(currentPath);
+
+  useEffect(() => {
+    setReturnPath(`${window.location.pathname}${window.location.search}`);
+  }, [currentPath]);
   return (
     <div className="card" style={{ boxShadow: "none", marginTop: 16 }}>
       <h4 style={{ marginTop: 0 }}>Updated Artwork Attachment</h4>
@@ -611,7 +616,7 @@ function CoordinatorUpdatedArtworkUpload({
         data-no-global-loading="true"
       >
         <input type="hidden" name="submission_id" value={submission.id} />
-        <input type="hidden" name="redirect_to" value={currentPath} />
+        <input type="hidden" name="redirect_to" value={returnPath} />
 
         <label>
           <span className="small">Updated artwork file(s)</span>
@@ -662,6 +667,13 @@ export function WorkspaceClient({
     useState("ready");
   const [literaryPublicationSuitable, setLiteraryPublicationSuitable] =
     useState("yes");
+  const [returnPath, setReturnPath] = useState(currentPath);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    setReturnPath(`${window.location.pathname}${window.location.search}`);
+  }, [currentPath]);
 
   const selectedAssignment = useMemo(
     () =>
@@ -1034,7 +1046,7 @@ export function WorkspaceClient({
               <input type="hidden" name="assignment_id" value={selectedAssignment.id} />
               <input type="hidden" name="submission_id" value={selectedSubmission.id} />
               <input type="hidden" name="phase" value={phase} />
-              <input type="hidden" name="redirect_to" value={currentPath} />
+              <input type="hidden" name="redirect_to" value={returnPath} />
               <input
                 type="hidden"
                 name="proofreader_type"
@@ -1286,7 +1298,7 @@ export function WorkspaceClient({
 
                   <CoordinatorUpdatedArtworkUpload
                     submission={selectedSubmission}
-                    currentPath={currentPath}
+                    currentPath={returnPath}
                   />
 
                   <div
