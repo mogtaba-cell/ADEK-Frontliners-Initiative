@@ -2,8 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import html2canvas from "html2canvas";
-import jsPDF from "jspdf";
 
 type ExportResponse = {
   ok: boolean;
@@ -28,10 +26,6 @@ type ExportResponse = {
     webViewLink?: string | null;
   }[];
 };
-
-function wait(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 async function readResponse(res: Response): Promise<ExportResponse> {
   const contentType = res.headers.get("content-type") || "";
@@ -61,123 +55,6 @@ async function postExportStep(action: string, formData?: FormData) {
   }
 
   return result;
-}
-
-async function waitForIframeLoad(iframe: HTMLIFrameElement) {
-  await new Promise<void>((resolve, reject) => {
-    const timeout = window.setTimeout(() => {
-      reject(new Error("Analytics page took too long to load."));
-    }, 30000);
-
-    iframe.onload = () => {
-      window.clearTimeout(timeout);
-      resolve();
-    };
-
-    iframe.onerror = () => {
-      window.clearTimeout(timeout);
-      reject(new Error("Analytics page failed to load."));
-    };
-  });
-}
-
-async function createExactAnalyticsDashboardPdf() {
-  const iframe = document.createElement("iframe");
-
-  iframe.src = "/analytics?export_pdf=1";
-  iframe.style.position = "fixed";
-  iframe.style.left = "-10000px";
-  iframe.style.top = "0";
-  iframe.style.width = "1440px";
-  iframe.style.height = "2400px";
-  iframe.style.border = "0";
-  iframe.style.opacity = "0";
-  iframe.style.pointerEvents = "none";
-  iframe.setAttribute("aria-hidden", "true");
-
-  document.body.appendChild(iframe);
-
-  try {
-    await waitForIframeLoad(iframe);
-    await wait(1200);
-
-    const iframeWindow = iframe.contentWindow;
-    const iframeDocument = iframe.contentDocument;
-
-    if (!iframeWindow || !iframeDocument) {
-      throw new Error("Could not access analytics page for PDF export.");
-    }
-
-    if (iframeWindow.location.pathname.includes("/login")) {
-      throw new Error(
-        "Analytics page could not be captured because the session is not authenticated."
-      );
-    }
-
-    await iframeDocument.fonts?.ready;
-
-    const html = iframeDocument.documentElement;
-    const body = iframeDocument.body;
-
-    const width = Math.max(
-      html.scrollWidth,
-      body.scrollWidth,
-      html.clientWidth,
-      1440
-    );
-
-    const height = Math.max(
-      html.scrollHeight,
-      body.scrollHeight,
-      html.clientHeight,
-      1200
-    );
-
-    iframe.style.width = `${width}px`;
-    iframe.style.height = `${height}px`;
-
-    await wait(500);
-
-    const canvas = await html2canvas(body, {
-      scale: 2,
-      useCORS: true,
-      allowTaint: true,
-      backgroundColor: "#ffffff",
-      logging: false,
-      windowWidth: width,
-      windowHeight: height,
-      width,
-      height,
-      scrollX: 0,
-      scrollY: 0,
-    });
-
-    const imgData = canvas.toDataURL("image/png", 1.0);
-
-    const pdf = new jsPDF("p", "mm", "a4");
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-
-    const imgWidth = pageWidth;
-    const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-    let position = 0;
-    let heightLeft = imgHeight;
-
-    pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-    heightLeft -= pageHeight;
-
-    while (heightLeft > 0) {
-      position = heightLeft - imgHeight;
-      pdf.addPage();
-      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-    }
-
-    return pdf.output("blob");
-  } finally {
-    iframe.remove();
-  }
 }
 
 function buildStepForm({
@@ -220,17 +97,11 @@ export function AdminExportToDriveButton() {
 
       setFolderLink(start.folder?.webViewLink ?? null);
 
-      setMessage("Capturing the Analytics Dashboard as PDF...");
-      const analyticsPdfBlob = await createExactAnalyticsDashboardPdf();
-
-      setMessage("Uploading Analytics Dashboard PDF...");
-      const analyticsForm = buildStepForm({ batchId, folderId, dateLabel });
-      analyticsForm.append(
-        "analytics_pdf",
-        analyticsPdfBlob,
-        `Analytics Dashboard - ${new Date().toISOString().slice(0, 10)}.pdf`
+      setMessage("Building and uploading Analytics Dashboard PDF...");
+      await postExportStep(
+        "analytics",
+        buildStepForm({ batchId, folderId, dateLabel })
       );
-      await postExportStep("analytics", analyticsForm);
 
       setMessage("Building and uploading Activity Log workbook...");
       await postExportStep(
