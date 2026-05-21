@@ -24,6 +24,11 @@ type KpiCard = {
   value: number;
 };
 
+type SchoolOption = {
+  value: string;
+  label: string;
+};
+
 const allAssignmentStatuses = [
   "assigned",
   "in_progress",
@@ -48,9 +53,114 @@ const correctionSourceLabels: Record<string, string> = {
   final_review: "Final Review",
 };
 
+function schoolOptionFromSubmission(submission: any): SchoolOption {
+  const schoolName = String(submission?.institution_name ?? "").trim();
+  const schoolRef = String(submission?.institution_ref_number ?? "").trim();
+
+  if (schoolRef) {
+    return {
+      value: `ref:${schoolRef}`,
+      label: schoolName ? `${schoolName} (${schoolRef})` : schoolRef,
+    };
+  }
+
+  if (schoolName) {
+    return {
+      value: `name:${schoolName}`,
+      label: schoolName,
+    };
+  }
+
+  return {
+    value: "unknown",
+    label: "Unknown School",
+  };
+}
+
+function matchesSchoolOptionValue(submission: any, value: string) {
+  const schoolName = String(submission?.institution_name ?? "").trim();
+  const schoolRef = String(submission?.institution_ref_number ?? "").trim();
+
+  if (value === "unknown") return !schoolName && !schoolRef;
+  if (value.startsWith("ref:")) return schoolRef === value.slice(4);
+  if (value.startsWith("name:")) return schoolName === value.slice(5);
+
+  // Backward compatibility for any old URL that still has free-text school search.
+  return schoolName.toLowerCase().includes(value.toLowerCase());
+}
+
+async function getCoordinatorSchoolOptions(
+  userId: string,
+): Promise<SchoolOption[]> {
+  const { data, error } = await supabaseAdmin
+    .from("assignments")
+    .select(
+      `
+      submission_id,
+      submissions!inner(
+        institution_name,
+        institution_ref_number
+      )
+      `,
+    )
+    .eq("assigned_to", userId)
+    .eq("phase", "coordinator_check")
+    .in("status", allAssignmentStatuses);
+
+  if (error) throw error;
+
+  const schools = new Map<string, SchoolOption>();
+
+  for (const row of data ?? []) {
+    const submission = Array.isArray((row as any).submissions)
+      ? (row as any).submissions[0]
+      : (row as any).submissions;
+
+    const option = schoolOptionFromSubmission(submission);
+    schools.set(option.value, option);
+  }
+
+  return Array.from(schools.values()).sort((a, b) =>
+    a.label.localeCompare(b.label),
+  );
+}
+
+async function getCoordinatorSchoolSubmissionIds(
+  userId: string,
+  schoolValue: string,
+) {
+  const { data, error } = await supabaseAdmin
+    .from("assignments")
+    .select(
+      `
+      submission_id,
+      submissions!inner(
+        institution_name,
+        institution_ref_number
+      )
+      `,
+    )
+    .eq("assigned_to", userId)
+    .eq("phase", "coordinator_check")
+    .in("status", allAssignmentStatuses);
+
+  if (error) throw error;
+
+  return (data ?? [])
+    .filter((row: any) => {
+      const submission = Array.isArray(row.submissions)
+        ? row.submissions[0]
+        : row.submissions;
+
+      return matchesSchoolOptionValue(submission, schoolValue);
+    })
+    .map((row: any) => row.submission_id)
+    .filter(Boolean);
+}
+
 function safeFirstParam(
   value: string | string[] | undefined,
-  fallback = ""
+  fallback = "",
 ): string {
   return firstParam(value) || fallback;
 }
@@ -104,7 +214,7 @@ function defaultViewForPhase(phase: WorkflowPhase) {
 function applySubmissionWorkflowGate(
   query: any,
   _phase: WorkflowPhase,
-  _view: string
+  _view: string,
 ) {
   // Workspaces intentionally do not hide valid assignments based on submission.workflow_status.
   // The assignment row is the source of truth for ownership and user-visible tasks.
@@ -130,7 +240,7 @@ function applySourceGate(query: any, correctionSourcePhase?: string) {
 function applyCoordinatorWaitingGate(
   query: any,
   phase: WorkflowPhase,
-  view: string
+  view: string,
 ) {
   if (phase === "coordinator_check" && view === "waiting_for_response") {
     return query.eq("coordinator_waiting_for_response", true);
@@ -139,14 +249,17 @@ function applyCoordinatorWaitingGate(
   return query;
 }
 
-function applyCoordinatorCorrectionSafetyGate(query: any, _phase: WorkflowPhase) {
+function applyCoordinatorCorrectionSafetyGate(
+  query: any,
+  _phase: WorkflowPhase,
+) {
   return query;
 }
 
 function applyProofreaderTypeGate(
   query: any,
   phase: WorkflowPhase,
-  proofreaderType?: string | null
+  proofreaderType?: string | null,
 ) {
   if (!proofreaderType) return query;
 
@@ -512,7 +625,7 @@ export async function WorkQueuePage({
   const pathway = safeFirstParam(searchParams.pathway);
   const correctionReason = safeFirstParam(searchParams.correction_reason);
   const correctionSourcePhase = safeFirstParam(
-    searchParams.correction_source_phase
+    searchParams.correction_source_phase,
   );
   const school = safeFirstParam(searchParams.school);
   const search = safeFirstParam(searchParams.search);
@@ -531,26 +644,25 @@ export async function WorkQueuePage({
   const isCoordinator = phase === "coordinator_check";
   const statuses = statusesForView(phase, view);
 
-  const [options, kpiCards, filteredSubmissionIds, schoolFilteredSubmissionIds] =
-    await Promise.all([
-      getSubmissionFilterOptions(),
-      getKpiCards({
-        userId: user.id,
-        phase,
-        proofreaderType: user.proofreader_type ?? null,
-      }),
-      getFilteredSubmissionIds({ pathway, search }),
-      school
-        ? supabaseAdmin
-            .from("submissions")
-            .select("id")
-            .ilike("institution_name", `%${school}%`)
-            .then(({ data, error }) => {
-              if (error) throw error;
-              return (data ?? []).map((row: any) => row.id).filter(Boolean);
-            })
-        : Promise.resolve(null),
-    ]);
+  const [
+    options,
+    kpiCards,
+    filteredSubmissionIds,
+    coordinatorSchoolOptions,
+    schoolFilteredSubmissionIds,
+  ] = await Promise.all([
+    getSubmissionFilterOptions(),
+    getKpiCards({
+      userId: user.id,
+      phase,
+      proofreaderType: user.proofreader_type ?? null,
+    }),
+    getFilteredSubmissionIds({ pathway, search }),
+    isCoordinator ? getCoordinatorSchoolOptions(user.id) : Promise.resolve([]),
+    isCoordinator && school
+      ? getCoordinatorSchoolSubmissionIds(user.id, school)
+      : Promise.resolve(null),
+  ]);
 
   let query = supabaseAdmin
     .from("assignments")
@@ -576,7 +688,7 @@ export async function WorkQueuePage({
       coordinator_waiting_for_response_at,
       submissions!inner(*)
       `,
-      { count: "exact" }
+      { count: "exact" },
     )
     .eq("assigned_to", user.id)
     .eq("phase", phase)
@@ -615,7 +727,7 @@ export async function WorkQueuePage({
   const assignments = assignmentData ?? [];
 
   const submissionIds = Array.from(
-    new Set(assignments.map((row: any) => row.submission_id).filter(Boolean))
+    new Set(assignments.map((row: any) => row.submission_id).filter(Boolean)),
   );
 
   const historyBySubmission: Record<string, any[]> = {};
@@ -624,7 +736,7 @@ export async function WorkQueuePage({
     const { data: historyRows } = await supabaseAdmin
       .from("assignments")
       .select(
-        "id,submission_id,phase,status,decision,assigned_to,requested_by_user_id,return_to_user_id,correction_reason,correction_source_phase,created_at,completed_at,proofreader_type"
+        "id,submission_id,phase,status,decision,assigned_to,requested_by_user_id,return_to_user_id,correction_reason,correction_source_phase,created_at,completed_at,proofreader_type",
       )
       .in("submission_id", submissionIds)
       .order("created_at", { ascending: true });
@@ -637,8 +749,8 @@ export async function WorkQueuePage({
             row.requested_by_user_id,
             row.return_to_user_id,
           ])
-          .filter(Boolean)
-      )
+          .filter(Boolean),
+      ),
     );
 
     const profileById: Record<string, any> = {};
@@ -723,12 +835,14 @@ export async function WorkQueuePage({
           {isCoordinator && (
             <label>
               <span className="small">School Name</span>
-              <input
-                className="input"
-                name="school"
-                defaultValue={school}
-                placeholder="Filter by school name"
-              />
+              <select className="input" name="school" defaultValue={school}>
+                <option value="">All schools</option>
+                {coordinatorSchoolOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </label>
           )}
 
@@ -741,11 +855,13 @@ export async function WorkQueuePage({
                 defaultValue={correctionReason}
               >
                 <option value="">All reasons</option>
-                {Object.entries(correctionReasonLabels).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
+                {Object.entries(correctionReasonLabels).map(
+                  ([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ),
+                )}
               </select>
             </label>
           )}
@@ -759,11 +875,13 @@ export async function WorkQueuePage({
                 defaultValue={correctionSourcePhase}
               >
                 <option value="">All sources</option>
-                {Object.entries(correctionSourceLabels).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
+                {Object.entries(correctionSourceLabels).map(
+                  ([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ),
+                )}
               </select>
             </label>
           )}
@@ -797,7 +915,14 @@ export async function WorkQueuePage({
         <div className="filter-summary">
           <span className="pill">Phase: {phaseLabels[phase]}</span>
           <span className="pill">Showing: {formatViewLabel(view)}</span>
-          {school && <span className="pill">School: {school}</span>}
+          {school && (
+            <span className="pill">
+              School:{" "}
+              {coordinatorSchoolOptions.find(
+                (option) => option.value === school,
+              )?.label ?? school}
+            </span>
+          )}
           <span className="pill">Results: {totalResults}</span>
         </div>
       </div>
