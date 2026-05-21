@@ -473,10 +473,20 @@ function SourceButtons({ submission }: { submission: any }) {
   );
 }
 
-function CorrectionSourceCard({ assignment }: { assignment: Assignment }) {
+function CorrectionSourceCard({
+  assignment,
+  submission,
+}: {
+  assignment: Assignment;
+  submission: any;
+}) {
   if (!assignment.correction_reason && !assignment.correction_source_phase) {
     return null;
   }
+
+  const evaluatorComment = displayText(submission?.evaluator_comment, "");
+  const literaryComment = displayText(submission?.literary_proofreader_comment, "");
+  const correctionNotes = displayText(assignment.correction_notes, "");
 
   return (
     <div className="card">
@@ -496,12 +506,35 @@ function CorrectionSourceCard({ assignment }: { assignment: Assignment }) {
           }
         />
 
+        {assignment.correction_source_phase === "adek_evaluation" &&
+          evaluatorComment && (
+            <DetailField label="Evaluator comment" value={evaluatorComment} />
+          )}
+
+        {assignment.correction_source_phase === "literary_proofreading" &&
+          literaryComment && (
+            <DetailField
+              label="Literary proofreader comment"
+              value={literaryComment}
+            />
+          )}
+
+        {correctionNotes && (
+          <DetailField label="Correction notes" value={correctionNotes} />
+        )}
+
         {assignment.coordinator_waiting_for_response && (
-          <DetailField label="Coordinator status" value="Waiting for school response" />
+          <DetailField
+            label="Coordinator status"
+            value="Waiting for school response"
+          />
         )}
 
         {assignment.coordinator_comment && (
-          <DetailField label="Coordinator comment" value={assignment.coordinator_comment} />
+          <DetailField
+            label="Coordinator comment"
+            value={assignment.coordinator_comment}
+          />
         )}
       </dl>
 
@@ -942,7 +975,10 @@ export function WorkspaceClient({
               </div>
 
               {phase === "coordinator_check" && (
-                <CorrectionSourceCard assignment={selectedAssignment} />
+                <CorrectionSourceCard
+                  assignment={selectedAssignment}
+                  submission={selectedSubmission}
+                />
               )}
 
               {phase === "final_review" && (
