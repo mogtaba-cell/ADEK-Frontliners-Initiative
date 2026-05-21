@@ -13,9 +13,11 @@ type ChartRow = {
 type UserProgressRow = {
   full_name: string;
   role: string;
+  proofreader_type?: string | null;
   assigned: number;
   completed: number;
   remaining: number;
+  sent_for_correction: number;
   completion_rate: number;
 };
 
@@ -272,78 +274,143 @@ async function fetchOptionalRows(table: string, select = "*") {
 }
 
 async function getLiveUserProgress(): Promise<UserProgressRow[]> {
-  const [
-    { data: users, error: usersError },
-    { data: assignments, error: assignmentsError },
-  ] = await Promise.all([
+  const pageSize = 1000;
+
+  async function fetchAll<T>(buildQuery: (from: number, to: number) => any) {
+    const rows: T[] = [];
+
+    for (let from = 0; ; from += pageSize) {
+      const to = from + pageSize - 1;
+      const { data, error } = await buildQuery(from, to);
+
+      if (error) throw error;
+
+      const pageRows = (data ?? []) as T[];
+      rows.push(...pageRows);
+
+      if (pageRows.length < pageSize) break;
+    }
+
+    return rows;
+  }
+
+  const users = await fetchAll<{
+    id: string;
+    full_name: string | null;
+    role: string | null;
+    proofreader_type?: string | null;
+    is_active: boolean | null;
+  }>((from, to) =>
     supabaseAdmin
       .from("profiles")
-      .select("id,full_name,role,is_active")
+      .select("id,full_name,role,proofreader_type,is_active")
       .not("role", "in", "(admin,adek_hq)")
       .eq("is_active", true)
       .order("role", { ascending: true })
-      .order("full_name", { ascending: true }),
-
-    supabaseAdmin.from("assignments").select("assigned_to,status"),
-  ]);
-
-  if (usersError) {
-    console.error("Live user progress users query failed:", usersError.message);
+      .order("full_name", { ascending: true })
+      .range(from, to)
+  ).catch((error: any) => {
+    console.error("Live user progress users query failed:", error.message);
     return [];
-  }
+  });
 
-  if (assignmentsError) {
-    console.error(
-      "Live user progress assignments query failed:",
-      assignmentsError.message
-    );
+  const assignments = await fetchAll<{
+    assigned_to: string | null;
+    submission_id: string | null;
+    phase: string | null;
+    proofreader_type?: string | null;
+    status: string | null;
+    completed_at: string | null;
+  }>((from, to) =>
+    supabaseAdmin
+      .from("assignments")
+      .select("assigned_to,submission_id,phase,proofreader_type,status,completed_at")
+      .in("status", [
+        "assigned",
+        "in_progress",
+        "returned_for_correction",
+        "sent_for_review",
+        "completed",
+      ])
+      .range(from, to)
+  ).catch((error: any) => {
+    console.error("Live user progress assignments query failed:", error.message);
     return [];
-  }
+  });
 
+  const userById = new Map(users.map((user) => [user.id, user]));
   const progressMap = new Map<
     string,
     {
-      assigned: number;
-      completed: number;
+      assigned: Set<string>;
+      completed: Set<string>;
+      remaining: Set<string>;
+      sentForCorrection: Set<string>;
     }
   >();
 
-  for (const user of users ?? []) {
+  for (const user of users) {
     progressMap.set(user.id, {
-      assigned: 0,
-      completed: 0,
+      assigned: new Set(),
+      completed: new Set(),
+      remaining: new Set(),
+      sentForCorrection: new Set(),
     });
   }
 
-  for (const assignment of assignments ?? []) {
-    if (!assignment.assigned_to) continue;
+  for (const assignment of assignments) {
+    if (!assignment.assigned_to || !assignment.submission_id) continue;
 
     const current = progressMap.get(assignment.assigned_to);
-    if (!current) continue;
+    const user = userById.get(assignment.assigned_to);
+    if (!current || !user) continue;
 
-    current.assigned += 1;
+    const status = String(assignment.status ?? "");
+    const phase = String(assignment.phase ?? "");
 
-    if (assignment.status === "completed") {
-      current.completed += 1;
+    current.assigned.add(assignment.submission_id);
+
+    if (status === "completed" && assignment.completed_at) {
+      current.completed.add(assignment.submission_id);
+    }
+
+    if (["assigned", "in_progress", "returned_for_correction", "sent_for_review"].includes(status)) {
+      current.remaining.add(assignment.submission_id);
+    }
+
+    const isEvaluatorCorrection =
+      user.role === "evaluator" &&
+      phase === "adek_evaluation" &&
+      status === "returned_for_correction";
+
+    const isProofreaderCorrection =
+      user.role === "proofreader" &&
+      ["proofreading", "literary_proofreading"].includes(phase) &&
+      status === "returned_for_correction";
+
+    if (isEvaluatorCorrection || isProofreaderCorrection) {
+      current.sentForCorrection.add(assignment.submission_id);
     }
   }
 
-  return (users ?? [])
+  return users
     .map((user: any) => {
       const progress = progressMap.get(user.id) ?? {
-        assigned: 0,
-        completed: 0,
+        assigned: new Set<string>(),
+        completed: new Set<string>(),
+        remaining: new Set<string>(),
+        sentForCorrection: new Set<string>(),
       };
-
-      const remaining = Math.max(0, progress.assigned - progress.completed);
 
       return {
         full_name: user.full_name ?? user.id,
         role: user.role,
-        assigned: progress.assigned,
-        completed: progress.completed,
-        remaining,
-        completion_rate: pct(progress.completed, progress.assigned),
+        proofreader_type: user.proofreader_type ?? null,
+        assigned: progress.assigned.size,
+        completed: progress.completed.size,
+        remaining: progress.remaining.size,
+        sent_for_correction: progress.sentForCorrection.size,
+        completion_rate: pct(progress.completed.size, progress.assigned.size),
       };
     })
     .sort((a, b) => {
@@ -351,6 +418,67 @@ async function getLiveUserProgress(): Promise<UserProgressRow[]> {
       if (b.completed !== a.completed) return b.completed - a.completed;
       return a.full_name.localeCompare(b.full_name);
     });
+}
+
+function userProgressSectionLabel(row: UserProgressRow) {
+  if (row.role === "evaluator") return "Evaluators";
+  if (row.role === "coordinator") return "Coordinators";
+  if (row.role === "management") return "Management";
+  if (row.role === "reviewer") return "Reviewers";
+
+  if (row.role === "proofreader") {
+    if (row.proofreader_type === "general") return "General Proofreaders";
+    if (row.proofreader_type === "literary_arabic") return "Literary Proofreaders - Arabic";
+    if (row.proofreader_type === "literary_english_or_others") {
+      return "Literary Proofreaders - English/Others";
+    }
+
+    return "Proofreaders";
+  }
+
+  return "Other Users";
+}
+
+function userProgressSectionOrder(title: string) {
+  const order: Record<string, number> = {
+    Evaluators: 1,
+    "General Proofreaders": 2,
+    "Literary Proofreaders - Arabic": 3,
+    "Literary Proofreaders - English/Others": 4,
+    Proofreaders: 5,
+    Coordinators: 6,
+    Management: 7,
+    Reviewers: 8,
+    "Other Users": 9,
+  };
+
+  return order[title] ?? 99;
+}
+
+function groupUserProgress(rows: UserProgressRow[]) {
+  const groups = new Map<string, UserProgressRow[]>();
+
+  for (const row of rows) {
+    const title = userProgressSectionLabel(row);
+    if (!groups.has(title)) groups.set(title, []);
+    groups.get(title)?.push(row);
+  }
+
+  return Array.from(groups.entries())
+    .map(([title, groupRows]) => ({
+      title,
+      rows: groupRows.sort(
+        (a, b) =>
+          b.assigned - a.assigned ||
+          b.completed - a.completed ||
+          a.full_name.localeCompare(b.full_name)
+      ),
+    }))
+    .sort(
+      (a, b) =>
+        userProgressSectionOrder(a.title) - userProgressSectionOrder(b.title) ||
+        a.title.localeCompare(b.title)
+    );
 }
 
 export function filtersFromSearchParams(
@@ -1065,20 +1193,39 @@ export async function buildAnalyticsDashboardPdfBuffer(
     numericColumns: [1, 2],
   });
 
-  drawSimpleTable({
-    title: "User Progress",
-    headers: ["User", "Role", "Assigned", "Completed", "Remaining", "Completion Rate"],
-    rows: report.charts.userProgress.map((row) => [
-      row.full_name,
-      row.role,
-      String(row.assigned),
-      String(row.completed),
-      String(row.remaining),
-      `${row.completion_rate.toFixed(2)}%`,
-    ]),
-    columnWidths: [75, 42, 36, 38, 38, 46],
-    numericColumns: [2, 3, 4, 5],
-  });
+  for (const group of groupUserProgress(report.charts.userProgress)) {
+    const showSentForCorrection =
+      group.title === "Evaluators" || group.title.includes("Proofreaders");
+
+    drawSimpleTable({
+      title: `User Progress - ${group.title}`,
+      headers: showSentForCorrection
+        ? ["User", "Assigned", "Completed", "Remaining", "Sent for Correction", "Completion Rate"]
+        : ["User", "Assigned", "Completed", "Remaining", "Completion Rate"],
+      rows: group.rows.map((row) =>
+        showSentForCorrection
+          ? [
+              row.full_name,
+              String(row.assigned),
+              String(row.completed),
+              String(row.remaining),
+              String(row.sent_for_correction),
+              `${row.completion_rate.toFixed(2)}%`,
+            ]
+          : [
+              row.full_name,
+              String(row.assigned),
+              String(row.completed),
+              String(row.remaining),
+              `${row.completion_rate.toFixed(2)}%`,
+            ]
+      ),
+      columnWidths: showSentForCorrection
+        ? [95, 34, 34, 34, 50, 42]
+        : [120, 38, 38, 38, 46],
+      numericColumns: showSentForCorrection ? [1, 2, 3, 4, 5] : [1, 2, 3, 4],
+    });
+  }
 
   drawFooter();
 

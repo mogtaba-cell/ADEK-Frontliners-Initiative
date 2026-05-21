@@ -1,4 +1,4 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import {
   createAssignmentBatch,
@@ -6,45 +6,50 @@ import {
   processAutoAssignPending,
 } from "@/lib/assignment";
 import type { WorkflowPhase } from "@/lib/types";
-import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const allowedPhases: WorkflowPhase[] = [
+const repairPhases: WorkflowPhase[] = [
   "coordinator_check",
-  "adek_evaluation",
   "management_review",
   "proofreading",
   "literary_proofreading",
   "final_review",
 ];
 
+async function readPayload(req: Request) {
+  const contentType = req.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    return await req.json();
+  }
+
+  const form = await req.formData();
+  return {
+    phase: String(form.get("phase") ?? ""),
+    limit: Number(form.get("limit") ?? 5000),
+  };
+}
+
 export async function GET(req: Request) {
   try {
     await requireUser(["admin"]);
 
-    const url = new URL(req.url);
-    const batchId = url.searchParams.get("batchId");
+    const { searchParams } = new URL(req.url);
+    const batchId = searchParams.get("batchId");
 
     if (!batchId) {
-      return NextResponse.json({ error: "Missing batchId" }, { status: 400 });
+      return NextResponse.json({ error: "Missing batchId." }, { status: 400 });
     }
 
     const batch = await getAssignmentBatch(batchId);
-
-    return NextResponse.json(batch, {
-      headers: {
-        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-      },
-    });
+    return NextResponse.json(batch);
   } catch (error: any) {
-    console.error("Assignment progress GET failed:", error);
-
     return NextResponse.json(
-      { error: error.message ?? "Failed to read assignment progress." },
-      { status: error.message === "FORBIDDEN" ? 403 : 500 }
+      { error: error?.message ?? "Could not read assignment batch." },
+      { status: 500 }
     );
   }
 }
@@ -52,51 +57,73 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const user = await requireUser(["admin"]);
-    const body = await req.json();
+    const payload = await readPayload(req);
 
-    const phase = String(body.phase ?? "") as WorkflowPhase;
+    const phase = String(payload.phase ?? "");
+    const limit = Number.isFinite(Number(payload.limit))
+      ? Number(payload.limit)
+      : 5000;
 
-    // Default was too small for large imports. Use 5000 unless the UI sends a value.
-    const parsedLimit = Number(body.limit ?? 5000);
-    const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 5000;
-
-    if (!allowedPhases.includes(phase)) {
-      return NextResponse.json({ error: "Invalid assignment phase." }, { status: 400 });
+    if (!phase) {
+      return NextResponse.json({ error: "Missing assignment phase." }, { status: 400 });
     }
 
-    const batchId = await createAssignmentBatch(phase, user.id);
-
-    await audit({
-      actorId: user.id,
-      action: "auto_assignment_started",
-      entityType: "assignment_batch",
-      entityId: batchId,
-      after: { phase, limit },
-    });
-
-    // More reliable than a floating Promise in serverless.
-    after(async () => {
-      try {
-        await processAutoAssignPending(batchId, phase, limit, user.id);
-      } catch (error) {
-        console.error("Background assignment failed:", error);
-      }
-    });
-
-    return NextResponse.json(
-      { ok: true, batchId, message: "Assignment started" },
-      {
-        headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+    if (phase === "adek_evaluation") {
+      return NextResponse.json(
+        {
+          error:
+            "ADEK evaluator assignments are not repaired automatically. Use the evaluator quantity assignment controls instead.",
         },
+        { status: 400 }
+      );
+    }
+
+    if (phase === "repair_missing") {
+      const batchId = await createAssignmentBatch("coordinator_check", user.id);
+
+      let eligible = 0;
+      let assigned = 0;
+      let skipped = 0;
+      let errors = 0;
+
+      for (const repairPhase of repairPhases) {
+        await processAutoAssignPending(batchId, repairPhase, limit, user.id);
+        const batch = await getAssignmentBatch(batchId);
+
+        eligible += Number(batch.eligible_count ?? 0);
+        assigned += Number(batch.assigned_count ?? 0);
+        skipped += Number(batch.skipped_count ?? 0);
+        errors += Number(batch.error_count ?? 0);
       }
-    );
+
+      return NextResponse.json({
+        batchId,
+        status: "completed",
+        message: "Repair missing assignments completed.",
+        eligible_count: eligible,
+        assigned_count: assigned,
+        skipped_count: skipped,
+        error_count: errors,
+      });
+    }
+
+    if (!repairPhases.includes(phase as WorkflowPhase)) {
+      return NextResponse.json(
+        { error: `Unsupported assignment phase: ${phase}` },
+        { status: 400 }
+      );
+    }
+
+    const batchId = await createAssignmentBatch(phase as WorkflowPhase, user.id);
+    await processAutoAssignPending(batchId, phase as WorkflowPhase, limit, user.id);
+
+    return NextResponse.json({ batchId });
   } catch (error: any) {
-    console.error("Assignment POST failed:", error);
+    console.error("Assignment API failed:", error);
 
     return NextResponse.json(
-      { error: error.message ?? "Assignment failed to start." },
-      { status: error.message === "FORBIDDEN" ? 403 : 500 }
+      { error: error?.message ?? "Assignment failed." },
+      { status: 500 }
     );
   }
 }

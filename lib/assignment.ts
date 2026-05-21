@@ -26,8 +26,6 @@ const workloadAssignmentStatuses = [
   "completed",
 ];
 
-const completedStatuses = ["completed"];
-
 type SubmissionForAssignment = {
   id: string;
   reference_id?: string | null;
@@ -55,32 +53,41 @@ function eligibleStatusForPhase(phase: WorkflowPhase) {
   return [];
 }
 
-function chunkArray<T>(items: T[], size: number) {
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
-  return chunks;
+function isLiteraryPathway(
+  pathway: string | null | undefined,
+  subpathway?: string | null | undefined,
+  pathwayAr?: string | null | undefined,
+  subpathwayAr?: string | null | undefined
+) {
+  const combined = `${pathway ?? ""} ${subpathway ?? ""} ${pathwayAr ?? ""} ${subpathwayAr ?? ""}`.toLowerCase();
+
+  return (
+    combined.includes("literary") ||
+    combined.includes("الأدبية") ||
+    combined.includes("الادبية") ||
+    combined.includes("ادبية") ||
+    combined.includes("التعبيرات الأدبية") ||
+    combined.includes("التعبيرات الادبية")
+  );
 }
 
-const SUPABASE_PAGE_SIZE = 1000;
+function literaryProofreaderTypeForSubmission(
+  submission: Pick<
+    SubmissionForAssignment,
+    "literary_language" | "reference_id" | "id"
+  >
+): ProofreaderType {
+  if (submission.literary_language === "arabic") return "literary_arabic";
 
-async function fetchAllRows<T>(
-  buildQuery: (from: number, to: number) => any
-): Promise<T[]> {
-  const rows: T[] = [];
-
-  for (let from = 0; ; from += SUPABASE_PAGE_SIZE) {
-    const to = from + SUPABASE_PAGE_SIZE - 1;
-    const { data, error } = await buildQuery(from, to);
-
-    if (error) throw error;
-
-    const page = (data ?? []) as T[];
-    rows.push(...page);
-
-    if (page.length < SUPABASE_PAGE_SIZE) break;
+  if (submission.literary_language === "english_or_others") {
+    return "literary_english_or_others";
   }
 
-  return rows;
+  throw new Error(
+    `${
+      submission.reference_id ?? submission.id
+    }: Literary language is not classified yet. Admin must set Arabic or English/Others before literary proofreading can be assigned.`
+  );
 }
 
 function schoolKeyFromSubmission(submission: {
@@ -94,41 +101,13 @@ function schoolKeyFromSubmission(submission: {
   );
 }
 
-function isLiteraryPathway(
-  pathway: string | null | undefined,
-  subpathway?: string | null | undefined,
-  pathwayAr?: string | null | undefined,
-  subpathwayAr?: string | null | undefined
-) {
-  const combined = `${pathway ?? ""} ${subpathway ?? ""} ${pathwayAr ?? ""} ${subpathwayAr ?? ""}`.toLowerCase();
-  return (
-    combined.includes("literary") ||
-    combined.includes("الأدبية") ||
-    combined.includes("الادبية") ||
-    combined.includes("ادبية") ||
-    combined.includes("التعبيرات الأدبية") ||
-    combined.includes("التعبيرات الادبية")
-  );
-}
-
-function literaryProofreaderTypeForSubmission(
-  submission: Pick<SubmissionForAssignment, "literary_language" | "reference_id" | "id">
-): ProofreaderType {
-  if (submission.literary_language === "arabic") return "literary_arabic";
-  if (submission.literary_language === "english_or_others") return "literary_english_or_others";
-
-  throw new Error(
-    `${submission.reference_id ?? submission.id}: Literary language is not classified yet. Admin must set Arabic or English/Others before literary proofreading can be assigned.`
-  );
-}
-
 async function getActiveUsers(
   role: Role,
   options?: { proofreaderType?: ProofreaderType }
 ) {
   let query = supabaseAdmin
     .from("profiles")
-    .select("id,full_name,email,role,is_active,proofreader_type")
+    .select("id,full_name,role,is_active,proofreader_type")
     .eq("role", role)
     .eq("is_active", true);
 
@@ -137,14 +116,15 @@ async function getActiveUsers(
   }
 
   const { data, error } = await query;
+
   if (error) throw error;
+
   return data ?? [];
 }
 
 async function getLeastLoadedUser(
   role: Role,
   options?: {
-    phase?: WorkflowPhase;
     proofreaderType?: ProofreaderType;
     candidateIds?: string[];
   }
@@ -160,36 +140,34 @@ async function getLeastLoadedUser(
 
   if (!users.length) {
     throw new Error(
-      `No active ${options?.proofreaderType ? `${options.proofreaderType} ` : ""}${role} users available.`
+      `No active ${
+        options?.proofreaderType ? `${options.proofreaderType} ` : ""
+      }${role} users available.`
     );
   }
 
-  const userIds = users.map((user) => user.id);
+  const { data: activeAssignments, error } = await supabaseAdmin
+    .from("assignments")
+    .select("assigned_to")
+    .in(
+      "assigned_to",
+      users.map((user) => user.id)
+    )
+    .in("status", workloadAssignmentStatuses);
 
-  const assignments = await fetchAllRows<{
-    assigned_to: string | null;
-    submission_id: string | null;
-  }>((from, to) => {
-    let query = supabaseAdmin
-      .from("assignments")
-      .select("assigned_to,submission_id")
-      .in("assigned_to", userIds)
-      .in("status", workloadAssignmentStatuses);
+  if (error) throw error;
 
-    if (options?.phase) query = query.eq("phase", options.phase);
+  const workload = new Map<string, number>();
 
-    return query.range(from, to);
-  });
-
-  const workload = new Map<string, Set<string>>();
-  for (const user of users) workload.set(user.id, new Set());
-
-  for (const row of assignments) {
-    if (!row.assigned_to || !row.submission_id) continue;
-    workload.get(row.assigned_to)?.add(row.submission_id);
+  for (const user of users) {
+    workload.set(user.id, 0);
   }
 
-  return Array.from(workload.entries()).sort((a, b) => a[1].size - b[1].size)[0][0];
+  for (const row of activeAssignments ?? []) {
+    workload.set(row.assigned_to, (workload.get(row.assigned_to) ?? 0) + 1);
+  }
+
+  return Array.from(workload.entries()).sort((a, b) => a[1] - b[1])[0][0];
 }
 
 async function getCoordinatorForSchool(submissionId: string) {
@@ -202,16 +180,17 @@ async function getCoordinatorForSchool(submissionId: string) {
   if (submissionError) throw submissionError;
 
   const schoolKey = schoolKeyFromSubmission(submission ?? {});
+
   const coordinators = await getActiveUsers("coordinator");
 
   if (!coordinators.length) {
     throw new Error("No active coordinator users available.");
   }
 
-  const activeCoordinatorIds = new Set(coordinators.map((coordinator) => coordinator.id));
+  const coordinatorIds = new Set(coordinators.map((coordinator) => coordinator.id));
 
-  const existingSchoolAssignments = await fetchAllRows<any>((from, to) =>
-    supabaseAdmin
+  const { data: existingSchoolAssignments, error: existingError } =
+    await supabaseAdmin
       .from("assignments")
       .select(
         `
@@ -224,24 +203,26 @@ async function getCoordinatorForSchool(submissionId: string) {
         `
       )
       .eq("phase", "coordinator_check")
-      .in("status", workloadAssignmentStatuses)
-      .order("created_at", { ascending: false })
-      .range(from, to)
-  );
+      .in("status", ["assigned", "in_progress", "completed"])
+      .order("created_at", { ascending: false });
 
-  for (const assignment of existingSchoolAssignments) {
-    const assignedSchoolKey = schoolKeyFromSubmission((assignment as any).submissions ?? {});
+  if (existingError) throw existingError;
+
+  for (const assignment of existingSchoolAssignments ?? []) {
+    const assignedSchoolKey = schoolKeyFromSubmission(
+      (assignment as any).submissions ?? {}
+    );
 
     if (
       assignedSchoolKey === schoolKey &&
       assignment.assigned_to &&
-      activeCoordinatorIds.has(assignment.assigned_to)
+      coordinatorIds.has(assignment.assigned_to)
     ) {
       return assignment.assigned_to;
     }
   }
 
-  return getLeastLoadedUser("coordinator", { phase: "coordinator_check" });
+  return getLeastLoadedUser("coordinator");
 }
 
 export async function autoAssignOne(
@@ -261,7 +242,7 @@ export async function autoAssignOne(
 ) {
   const existing = await supabaseAdmin
     .from("assignments")
-    .select("id,status")
+    .select("id")
     .eq("submission_id", submissionId)
     .eq("phase", phase)
     .in("status", activeAssignmentStatuses)
@@ -273,11 +254,12 @@ export async function autoAssignOne(
     return {
       id: existing.data.id,
       skipped: true,
-      reason: "Already has an active task for this phase.",
+      reason: "Already assigned for this phase.",
     };
   }
 
   const role = phaseToRole[phase];
+
   let assignedTo = options?.assignedTo;
 
   if (!assignedTo && phase === "coordinator_check") {
@@ -286,7 +268,6 @@ export async function autoAssignOne(
 
   if (!assignedTo) {
     assignedTo = await getLeastLoadedUser(role, {
-      phase,
       proofreaderType: options?.proofreaderType,
     });
   }
@@ -312,8 +293,13 @@ export async function autoAssignOne(
 
   if (error) throw error;
 
-  return { id: data.id, skipped: false, assigned_to: assignedTo };
+  return {
+    id: data.id,
+    skipped: false,
+    assigned_to: assignedTo,
+  };
 }
+
 
 export async function reactivateAssignmentForReturn(
   assignmentId: string,
@@ -352,42 +338,19 @@ export async function reactivateAssignmentForReturn(
   return data;
 }
 
-async function hasAnyPhaseAssignment(submissionId: string, phase: WorkflowPhase) {
-  const { count, error } = await supabaseAdmin
-    .from("assignments")
-    .select("id", { count: "exact", head: true })
-    .eq("submission_id", submissionId)
-    .eq("phase", phase);
-
-  if (error) throw error;
-  return (count ?? 0) > 0;
-}
-
-async function hasActivePhaseAssignment(submissionId: string, phase: WorkflowPhase) {
-  const { count, error } = await supabaseAdmin
-    .from("assignments")
-    .select("id", { count: "exact", head: true })
-    .eq("submission_id", submissionId)
-    .eq("phase", phase)
-    .in("status", activeAssignmentStatuses);
-
-  if (error) throw error;
-  return (count ?? 0) > 0;
-}
-
 export async function countUnassignedAdekSubmissions() {
-  const submittedSubmissions = await fetchAllRows<{ id: string }>((from, to) =>
-    supabaseAdmin
-      .from("submissions")
-      .select("id")
-      .eq("registration_status", "Submitted")
-      .range(from, to)
-  );
+  const { data, error } = await supabaseAdmin
+    .from("submissions")
+    .select("id")
+    .eq("registration_status", "Submitted");
 
-  const submissionIds = submittedSubmissions.map((row) => row.id).filter(Boolean);
+  if (error) throw error;
+
+  const submissionIds = (data ?? []).map((row) => row.id).filter(Boolean);
   if (!submissionIds.length) return 0;
 
   const assignedIds = new Set<string>();
+
   for (const chunk of chunkArray(submissionIds, 500)) {
     const { data: assignments, error: assignmentError } = await supabaseAdmin
       .from("assignments")
@@ -396,7 +359,10 @@ export async function countUnassignedAdekSubmissions() {
       .in("submission_id", chunk);
 
     if (assignmentError) throw assignmentError;
-    for (const row of assignments ?? []) assignedIds.add(row.submission_id);
+
+    for (const row of assignments ?? []) {
+      if (row.submission_id) assignedIds.add(row.submission_id);
+    }
   }
 
   return submissionIds.filter((id) => !assignedIds.has(id)).length;
@@ -413,58 +379,44 @@ export async function getEvaluatorAssignmentWorkloads() {
   if (evaluatorsError) throw evaluatorsError;
 
   const evaluatorIds = (evaluators ?? []).map((evaluator) => evaluator.id);
-
-  type EvaluatorWorkloadSets = {
-    total: Set<string>;
-    remaining: Set<string>;
-    sentForCorrection: Set<string>;
-    completed: Set<string>;
-  };
-
-  const workload = new Map<string, EvaluatorWorkloadSets>();
+  const workload = new Map<
+    string,
+    { total: Set<string>; remaining: Set<string>; sent_for_correction: Set<string>; completed: Set<string> }
+  >();
 
   for (const id of evaluatorIds) {
     workload.set(id, {
       total: new Set(),
       remaining: new Set(),
-      sentForCorrection: new Set(),
+      sent_for_correction: new Set(),
       completed: new Set(),
     });
   }
 
   if (evaluatorIds.length) {
-    const assignments = await fetchAllRows<{
-      assigned_to: string | null;
-      submission_id: string | null;
-      status: string | null;
-      completed_at: string | null;
-    }>((from, to) =>
-      supabaseAdmin
-        .from("assignments")
-        .select("assigned_to,submission_id,status,completed_at")
-        .eq("phase", "adek_evaluation")
-        .in("assigned_to", evaluatorIds)
-        .range(from, to)
-    );
+    const { data: assignments, error } = await supabaseAdmin
+      .from("assignments")
+      .select("assigned_to,submission_id,status,completed_at")
+      .eq("phase", "adek_evaluation")
+      .in("assigned_to", evaluatorIds)
+      .in("status", workloadAssignmentStatuses);
 
-    for (const assignment of assignments) {
+    if (error) throw error;
+
+    for (const assignment of assignments ?? []) {
       if (!assignment.assigned_to || !assignment.submission_id) continue;
-
       const row = workload.get(assignment.assigned_to);
       if (!row) continue;
 
       const status = String(assignment.status ?? "");
+      row.total.add(assignment.submission_id);
 
-      if (workloadAssignmentStatuses.includes(status)) {
-        row.total.add(assignment.submission_id);
-      }
-
-      if (["assigned", "in_progress"].includes(status)) {
+      if (["assigned", "in_progress", "returned_for_correction", "sent_for_review"].includes(status)) {
         row.remaining.add(assignment.submission_id);
       }
 
       if (status === "returned_for_correction") {
-        row.sentForCorrection.add(assignment.submission_id);
+        row.sent_for_correction.add(assignment.submission_id);
       }
 
       if (status === "completed" && assignment.completed_at) {
@@ -480,7 +432,7 @@ export async function getEvaluatorAssignmentWorkloads() {
       ...evaluator,
       assigned_total: stats?.total.size ?? 0,
       remaining: stats?.remaining.size ?? 0,
-      sent_for_correction: stats?.sentForCorrection.size ?? 0,
+      sent_for_correction: stats?.sent_for_correction.size ?? 0,
       completed: stats?.completed.size ?? 0,
     };
   });
@@ -491,7 +443,10 @@ export async function assignAdekToEvaluatorQuantities(
   actorId?: string
 ) {
   const cleanedTargets = targets
-    .map((target) => ({ evaluatorId: target.evaluatorId, quantity: Math.max(0, Math.floor(Number(target.quantity) || 0)) }))
+    .map((target) => ({
+      evaluatorId: target.evaluatorId,
+      quantity: Math.max(0, Math.floor(Number(target.quantity) || 0)),
+    }))
     .filter((target) => target.evaluatorId && target.quantity > 0);
 
   if (!cleanedTargets.length) {
@@ -499,6 +454,7 @@ export async function assignAdekToEvaluatorQuantities(
   }
 
   const evaluatorIds = Array.from(new Set(cleanedTargets.map((target) => target.evaluatorId)));
+
   const { data: evaluators, error: evaluatorsError } = await supabaseAdmin
     .from("profiles")
     .select("id,full_name,email")
@@ -510,26 +466,28 @@ export async function assignAdekToEvaluatorQuantities(
 
   const validEvaluatorIds = new Set((evaluators ?? []).map((evaluator) => evaluator.id));
   const invalidTargets = evaluatorIds.filter((id) => !validEvaluatorIds.has(id));
-  if (invalidTargets.length) throw new Error("One or more selected evaluators are inactive or invalid.");
+
+  if (invalidTargets.length) {
+    throw new Error("One or more selected evaluators are inactive or invalid.");
+  }
 
   const totalRequested = cleanedTargets.reduce((sum, target) => sum + target.quantity, 0);
 
-  const submissions = await fetchAllRows<{ id: string; reference_id: string | null; created_at: string | null }>(
-    (from, to) =>
-      supabaseAdmin
-        .from("submissions")
-        .select("id,reference_id,created_at")
-        .eq("registration_status", "Submitted")
-        .order("created_at", { ascending: true })
-        .order("reference_id", { ascending: true })
-        .range(from, to)
-  );
+  const { data: submissions, error: submissionsError } = await supabaseAdmin
+    .from("submissions")
+    .select("id,reference_id,created_at")
+    .eq("registration_status", "Submitted")
+    .order("created_at", { ascending: true })
+    .order("reference_id", { ascending: true });
 
-  const submissionIds = submissions.map((submission) => submission.id).filter(Boolean);
+  if (submissionsError) throw submissionsError;
+
+  const submissionIds = (submissions ?? []).map((submission) => submission.id).filter(Boolean);
   const alreadyAssigned = new Set<string>();
 
   for (const chunk of chunkArray(submissionIds, 500)) {
     if (!chunk.length) continue;
+
     const { data, error } = await supabaseAdmin
       .from("assignments")
       .select("submission_id")
@@ -537,10 +495,15 @@ export async function assignAdekToEvaluatorQuantities(
       .in("submission_id", chunk);
 
     if (error) throw error;
-    for (const row of data ?? []) alreadyAssigned.add(row.submission_id);
+
+    for (const row of data ?? []) {
+      if (row.submission_id) alreadyAssigned.add(row.submission_id);
+    }
   }
 
-  const availableSubmissions = submissions.filter((submission) => !alreadyAssigned.has(submission.id));
+  const availableSubmissions = (submissions ?? []).filter(
+    (submission) => !alreadyAssigned.has(submission.id)
+  );
 
   if (totalRequested > availableSubmissions.length) {
     throw new Error(
@@ -555,6 +518,7 @@ export async function assignAdekToEvaluatorQuantities(
     for (let i = 0; i < target.quantity; i++) {
       const submission = availableSubmissions[cursor++];
       if (!submission) break;
+
       assignmentsToInsert.push({
         submission_id: submission.id,
         phase: "adek_evaluation",
@@ -572,11 +536,13 @@ export async function assignAdekToEvaluatorQuantities(
 
   if (assignmentsToInsert.length) {
     const ids = assignmentsToInsert.map((assignment) => assignment.submission_id);
+
     for (const chunk of chunkArray(ids, 500)) {
       const { error } = await supabaseAdmin
         .from("submissions")
         .update({ workflow_status: "ready_for_adek", updated_at: new Date().toISOString() })
         .in("id", chunk);
+
       if (error) throw error;
     }
   }
@@ -594,16 +560,42 @@ export async function assignAdekToEvaluatorQuantities(
   };
 }
 
+
+async function hasAnyBlockingPhaseAssignment(submissionId: string, phase: WorkflowPhase) {
+  const { count, error } = await supabaseAdmin
+    .from("assignments")
+    .select("id", { count: "exact", head: true })
+    .eq("submission_id", submissionId)
+    .eq("phase", phase)
+    .in("status", workloadAssignmentStatuses);
+
+  if (error) throw error;
+  return (count ?? 0) > 0;
+}
+
+async function hasActivePhaseAssignment(submissionId: string, phase: WorkflowPhase) {
+  const { count, error } = await supabaseAdmin
+    .from("assignments")
+    .select("id", { count: "exact", head: true })
+    .eq("submission_id", submissionId)
+    .eq("phase", phase)
+    .in("status", activeAssignmentStatuses);
+
+  if (error) throw error;
+  return (count ?? 0) > 0;
+}
+
 export async function autoAssignPending(
   phase: WorkflowPhase,
   limit = 5000,
   actorId?: string
 ) {
   if (phase === "adek_evaluation") {
-    throw new Error("ADEK evaluator assignments must be created from Admin Dashboard using evaluator quantities.");
+    throw new Error("ADEK evaluator assignments must be created from the Admin Dashboard evaluator assignment controls.");
   }
 
   const eligibleStatuses = eligibleStatusForPhase(phase);
+
   let query = supabaseAdmin
     .from("submissions")
     .select(
@@ -611,6 +603,21 @@ export async function autoAssignPending(
     )
     .in("workflow_status", eligibleStatuses)
     .limit(limit);
+
+  if (phase === "literary_proofreading") {
+    query = query.or(
+      [
+        "art_pathway_name_en.ilike.%Literary%",
+        "art_sub_pathway_name_en.ilike.%Literary%",
+        "art_pathway_name_ar.ilike.%الأدبية%",
+        "art_sub_pathway_name_ar.ilike.%الأدبية%",
+        "art_pathway_name_ar.ilike.%الادبية%",
+        "art_sub_pathway_name_ar.ilike.%الادبية%",
+        "art_pathway_name_ar.ilike.%ادبية%",
+        "art_sub_pathway_name_ar.ilike.%ادبية%",
+      ].join(",")
+    );
+  }
 
   const { data: submissions, error } = await query;
   if (error) throw error;
@@ -629,10 +636,11 @@ export async function autoAssignPending(
       }
 
       if (phase === "proofreading") {
-        if (await hasAnyPhaseAssignment(submission.id, "proofreading")) {
+        if (await hasAnyBlockingPhaseAssignment(submission.id, "proofreading")) {
           skipped++;
           continue;
         }
+
         proofreaderType = "general";
       }
 
@@ -649,7 +657,7 @@ export async function autoAssignPending(
           continue;
         }
 
-        if (await hasAnyPhaseAssignment(submission.id, "literary_proofreading")) {
+        if (await hasAnyBlockingPhaseAssignment(submission.id, "literary_proofreading")) {
           skipped++;
           continue;
         }
@@ -658,18 +666,29 @@ export async function autoAssignPending(
       }
 
       if (phase === "management_review") {
-        if (await hasAnyPhaseAssignment(submission.id, "management_review")) {
+        if (await hasAnyBlockingPhaseAssignment(submission.id, "management_review")) {
+          skipped++;
+          continue;
+        }
+      }
+
+      if (phase === "coordinator_check") {
+        if (await hasActivePhaseAssignment(submission.id, "coordinator_check")) {
           skipped++;
           continue;
         }
       }
 
       if (phase === "final_review") {
-        if (!(await isReadyForFinalReview(submission.id))) {
+        const generalDone = await hasCompletedPhase(submission.id, "proofreading");
+        const literaryReady = await isLiteraryReady(submission.id);
+
+        if (!generalDone || !literaryReady) {
           skipped++;
           continue;
         }
-        if (await hasAnyPhaseAssignment(submission.id, "final_review")) {
+
+        if (await hasAnyBlockingPhaseAssignment(submission.id, "final_review")) {
           skipped++;
           continue;
         }
@@ -679,19 +698,142 @@ export async function autoAssignPending(
         proofreaderType,
       });
 
-      if (result.skipped) skipped++;
-      else assigned++;
+      if (result.skipped) {
+        skipped++;
+      } else {
+        assigned++;
+      }
     } catch (error: any) {
       skipped++;
-      errors.push(`${submission.reference_id ?? submission.id}: ${error?.message ?? "Assignment failed"}`);
+      errors.push(
+        `${submission.reference_id ?? submission.id}: ${
+          error?.message ?? "Assignment failed"
+        }`
+      );
     }
   }
 
-  return { phase, eligible: submissions?.length ?? 0, assigned, skipped, errors };
+  return {
+    phase,
+    eligible: submissions?.length ?? 0,
+    assigned,
+    skipped,
+    errors,
+  };
 }
 
-export async function assignAdekAfterImport(_submissionId: string, _actorId?: string) {
+export async function assignAdekAfterImport(
+  _submissionId: string,
+  _actorId?: string
+) {
   return { skipped: true, reason: "Imports no longer auto-assign ADEK evaluator tasks." };
+}
+
+export async function bulkAssignAdekAfterImport(
+  submissionIds: string[],
+  actorId?: string
+) {
+  const uniqueSubmissionIds = Array.from(new Set(submissionIds)).filter(Boolean);
+
+  if (!uniqueSubmissionIds.length) {
+    return {
+      assigned: 0,
+      skipped: 0,
+    };
+  }
+
+  const { data: evaluators, error: evaluatorsError } = await supabaseAdmin
+    .from("profiles")
+    .select("id")
+    .eq("role", "evaluator")
+    .eq("is_active", true);
+
+  if (evaluatorsError) throw evaluatorsError;
+
+  const evaluatorIds = (evaluators ?? []).map((user) => user.id);
+
+  if (!evaluatorIds.length) {
+    throw new Error("No active ADEK evaluators available.");
+  }
+
+  const { data: activeAssignments, error: activeAssignmentsError } =
+    await supabaseAdmin
+      .from("assignments")
+      .select("assigned_to")
+      .in("assigned_to", evaluatorIds)
+      .in("status", activeAssignmentStatuses);
+
+  if (activeAssignmentsError) throw activeAssignmentsError;
+
+  const workload = new Map<string, number>();
+
+  for (const evaluatorId of evaluatorIds) {
+    workload.set(evaluatorId, 0);
+  }
+
+  for (const row of activeAssignments ?? []) {
+    workload.set(row.assigned_to, (workload.get(row.assigned_to) ?? 0) + 1);
+  }
+
+  const alreadyAssigned = new Set<string>();
+
+  for (const submissionChunk of chunkArray(uniqueSubmissionIds, 500)) {
+    const { data, error } = await supabaseAdmin
+      .from("assignments")
+      .select("submission_id")
+      .in("submission_id", submissionChunk)
+      .eq("phase", "adek_evaluation")
+      .in("status", activeAssignmentStatuses);
+
+    if (error) throw error;
+
+    for (const row of data ?? []) {
+      alreadyAssigned.add(row.submission_id);
+    }
+  }
+
+  const assignmentsToInsert: any[] = [];
+
+  for (const submissionId of uniqueSubmissionIds) {
+    if (alreadyAssigned.has(submissionId)) continue;
+
+    const assignedTo = Array.from(workload.entries()).sort(
+      (a, b) => a[1] - b[1]
+    )[0][0];
+
+    workload.set(assignedTo, (workload.get(assignedTo) ?? 0) + 1);
+
+    assignmentsToInsert.push({
+      submission_id: submissionId,
+      phase: "adek_evaluation",
+      assigned_to: assignedTo,
+      assigned_by: actorId ?? null,
+      status: "assigned",
+    });
+  }
+
+  for (const assignmentChunk of chunkArray(assignmentsToInsert, 500)) {
+    const { error } = await supabaseAdmin
+      .from("assignments")
+      .insert(assignmentChunk);
+
+    if (error) throw error;
+  }
+
+  return {
+    assigned: assignmentsToInsert.length,
+    skipped: uniqueSubmissionIds.length - assignmentsToInsert.length,
+  };
+}
+
+function chunkArray<T>(items: T[], size: number) {
+  const chunks: T[][] = [];
+
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+
+  return chunks;
 }
 
 export async function assignProofreadingAfterApproval(
@@ -708,14 +850,11 @@ export async function assignProofreadingAfterApproval(
 
   if (error) throw error;
 
-  const generalAlreadyExists = await hasAnyPhaseAssignment(submissionId, "proofreading");
-  const general = generalAlreadyExists
-    ? { skipped: true, reason: "General proofreading task already exists." }
-    : await autoAssignOne(submissionId, "proofreading", actorId, {
-        proofreaderType: "general",
-      });
+  const general = await autoAssignOne(submissionId, "proofreading", actorId, {
+    proofreaderType: "general",
+  });
 
-  let literary: Awaited<ReturnType<typeof autoAssignOne>> | { skipped: boolean; reason: string } | null = null;
+  let literary: Awaited<ReturnType<typeof autoAssignOne>> | null = null;
   let literarySkippedReason: string | null = null;
 
   if (
@@ -731,19 +870,26 @@ export async function assignProofreadingAfterApproval(
       submission.literary_language === "english_or_others"
     ) {
       const proofreaderType = literaryProofreaderTypeForSubmission(submission);
-      const literaryAlreadyExists = await hasAnyPhaseAssignment(submissionId, "literary_proofreading");
-      literary = literaryAlreadyExists
-        ? { skipped: true, reason: "Literary proofreading task already exists." }
-        : await autoAssignOne(submissionId, "literary_proofreading", actorId, {
-            proofreaderType,
-          });
+
+      literary = await autoAssignOne(
+        submissionId,
+        "literary_proofreading",
+        actorId,
+        {
+          proofreaderType,
+        }
+      );
     } else {
       literarySkippedReason =
         "Literary language is not classified yet. General proofreading was assigned. Literary proofreading will be assigned after Admin classifies the language.";
     }
   }
 
-  return { general, literary, literarySkippedReason };
+  return {
+    general,
+    literary,
+    literarySkippedReason,
+  };
 }
 
 async function hasCompletedPhase(submissionId: string, phase: WorkflowPhase) {
@@ -752,57 +898,67 @@ async function hasCompletedPhase(submissionId: string, phase: WorkflowPhase) {
     .select("id", { count: "exact", head: true })
     .eq("submission_id", submissionId)
     .eq("phase", phase)
-    .eq("status", "completed")
-    .not("completed_at", "is", null);
+    .eq("status", "completed");
 
   if (error) throw error;
+
   return (count ?? 0) > 0;
 }
 
-async function hasActivePhase(submissionId: string, phase: WorkflowPhase) {
+async function hasCompletedLiteraryProofreadingForLanguage(
+  submissionId: string,
+  proofreaderType: ProofreaderType
+) {
   const { count, error } = await supabaseAdmin
     .from("assignments")
     .select("id", { count: "exact", head: true })
     .eq("submission_id", submissionId)
-    .eq("phase", phase)
-    .in("status", activeAssignmentStatuses);
+    .eq("phase", "literary_proofreading")
+    .eq("proofreader_type", proofreaderType)
+    .eq("status", "completed");
 
   if (error) throw error;
+
   return (count ?? 0) > 0;
 }
 
-async function isLiterarySubmission(submissionId: string) {
+async function isLiteraryReady(submissionId: string) {
   const { data: submission, error } = await supabaseAdmin
     .from("submissions")
-    .select("art_pathway_name_en,art_pathway_name_ar,art_sub_pathway_name_en,art_sub_pathway_name_ar,literary_language")
+    .select(
+      "id,reference_id,art_pathway_name_en,art_pathway_name_ar,art_sub_pathway_name_en,art_sub_pathway_name_ar,literary_language,literary_management_approved_at"
+    )
     .eq("id", submissionId)
     .single();
 
   if (error) throw error;
 
-  return isLiteraryPathway(
-    submission?.art_pathway_name_en,
-    submission?.art_sub_pathway_name_en,
-    submission?.art_pathway_name_ar,
-    submission?.art_sub_pathway_name_ar
+  if (
+    !isLiteraryPathway(
+      submission?.art_pathway_name_en,
+      submission?.art_sub_pathway_name_en,
+      submission?.art_pathway_name_ar,
+      submission?.art_sub_pathway_name_ar
+    )
+  ) {
+    return true;
+  }
+
+  if (submission?.literary_management_approved_at) return true;
+
+  if (
+    submission.literary_language !== "arabic" &&
+    submission.literary_language !== "english_or_others"
+  ) {
+    return false;
+  }
+
+  const proofreaderType = literaryProofreaderTypeForSubmission(submission);
+
+  return hasCompletedLiteraryProofreadingForLanguage(
+    submissionId,
+    proofreaderType
   );
-}
-
-async function hasPendingManagementReview(submissionId: string) {
-  return hasActivePhase(submissionId, "management_review");
-}
-
-export async function isReadyForFinalReview(submissionId: string) {
-  const adekDone = await hasCompletedPhase(submissionId, "adek_evaluation");
-  const generalDone = await hasCompletedPhase(submissionId, "proofreading");
-  const literaryRequired = await isLiterarySubmission(submissionId);
-  const literaryDone = literaryRequired
-    ? await hasCompletedPhase(submissionId, "literary_proofreading")
-    : true;
-  const activeCorrection = await hasActivePhase(submissionId, "coordinator_check");
-  const activeManagement = await hasPendingManagementReview(submissionId);
-
-  return adekDone && generalDone && literaryDone && !activeCorrection && !activeManagement;
 }
 
 async function getReviewerForProofreader(generalProofreaderId: string) {
@@ -813,10 +969,11 @@ async function getReviewerForProofreader(generalProofreaderId: string) {
 
   if (error) throw error;
 
-  const linkedReviewerIds = (links ?? []).map((row) => row.reviewer_id).filter(Boolean);
+  const linkedReviewerIds = (links ?? [])
+    .map((row) => row.reviewer_id)
+    .filter(Boolean);
 
   return getLeastLoadedUser("reviewer", {
-    phase: "final_review",
     candidateIds: linkedReviewerIds.length ? linkedReviewerIds : undefined,
   });
 }
@@ -826,14 +983,16 @@ export async function maybeAssignReviewerAfterProofreading(
   generalProofreaderId: string,
   actorId?: string
 ) {
-  const ready = await isReadyForFinalReview(submissionId);
+  const generalDone = await hasCompletedPhase(submissionId, "proofreading");
+  const literaryReady = await isLiteraryReady(submissionId);
 
-  if (!ready) {
-    return { assigned: false, waiting_for: "previous_stages" };
-  }
-
-  if (await hasAnyPhaseAssignment(submissionId, "final_review")) {
-    return { assigned: false, waiting_for: "already_has_final_review" };
+  if (!generalDone || !literaryReady) {
+    return {
+      assigned: false,
+      waiting_for: !generalDone
+        ? "general_proofreading"
+        : "literary_proofreading",
+    };
   }
 
   const assignedTo = await getReviewerForProofreader(generalProofreaderId);
@@ -845,13 +1004,23 @@ export async function maybeAssignReviewerAfterProofreading(
 
   await supabaseAdmin
     .from("submissions")
-    .update({ workflow_status: "proofreading_done", updated_at: new Date().toISOString() })
+    .update({
+      workflow_status: "proofreading_done",
+      updated_at: new Date().toISOString(),
+    })
     .eq("id", submissionId);
 
-  return { assigned: !result.skipped, reviewer_id: assignedTo, result };
+  return {
+    assigned: !result.skipped,
+    reviewer_id: assignedTo,
+    result,
+  };
 }
 
-export async function createAssignmentBatch(phase: WorkflowPhase, actorId: string) {
+export async function createAssignmentBatch(
+  phase: WorkflowPhase,
+  actorId: string
+) {
   const { data, error } = await supabaseAdmin
     .from("assignment_batches")
     .insert({
@@ -869,13 +1038,16 @@ export async function createAssignmentBatch(phase: WorkflowPhase, actorId: strin
     .single();
 
   if (error) throw error;
+
   return data.id as string;
 }
 
 export async function getAssignmentBatch(batchId: string) {
   const { data, error } = await supabaseAdmin
     .from("assignment_batches")
-    .select("id,phase,status,current_step,eligible_count,processed_count,assigned_count,skipped_count,error_count,error_message,started_by,started_at,completed_at,created_at")
+    .select(
+      "id,phase,status,current_step,eligible_count,processed_count,assigned_count,skipped_count,error_count,error_message,started_by,started_at,completed_at,created_at"
+    )
     .eq("id", batchId)
     .single();
 
@@ -888,7 +1060,10 @@ export async function getAssignmentBatch(batchId: string) {
     .order("created_at", { ascending: false })
     .limit(10);
 
-  return { ...data, recent_errors: errors ?? [] };
+  return {
+    ...data,
+    recent_errors: errors ?? [],
+  };
 }
 
 export async function processAutoAssignPending(
@@ -902,23 +1077,45 @@ export async function processAutoAssignPending(
       .from("assignment_batches")
       .update({
         status: "processing",
-        current_step: `Assigning ${phase}`,
+        current_step: `Preparing ${phase} assignments`,
         started_at: new Date().toISOString(),
       })
       .eq("id", batchId);
 
+    if (phase === "adek_evaluation") {
+      const { error: normalizeError } = await supabaseAdmin
+        .from("submissions")
+        .update({
+          workflow_status: "ready_for_adek",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("registration_status", "Submitted")
+        .in("workflow_status", ["imported", "coordinator_pending"]);
+
+      if (normalizeError) {
+        throw new Error(
+          `Could not prepare submitted artworks for ADEK assignment: ${normalizeError.message}`
+        );
+      }
+    }
+
     const result = await autoAssignPending(phase, limit, actorId);
 
     if (result.errors.length > 0) {
-      for (const chunk of chunkArray(result.errors, 500)) {
-        const { error } = await supabaseAdmin.from("assignment_batch_errors").insert(
-          chunk.map((message) => ({
-            assignment_batch_id: batchId,
-            reference_id: null,
-            error_message: message,
-          }))
-        );
-        if (error) throw error;
+      for (const errorChunk of chunkArray(result.errors, 500)) {
+        const { error } = await supabaseAdmin
+          .from("assignment_batch_errors")
+          .insert(
+            errorChunk.map((message) => ({
+              assignment_batch_id: batchId,
+              reference_id: null,
+              error_message: message,
+            }))
+          );
+
+        if (error) {
+          throw new Error(`Could not save assignment errors: ${error.message}`);
+        }
       }
     }
 
