@@ -203,6 +203,7 @@ async function fetchSubmissions(filters: AnalyticsFilters) {
       .from("submissions")
       .select("*")
       .order("updated_at", { ascending: false })
+      .order("id", { ascending: true })
       .range(from, from + pageSize - 1);
 
     if (filters.pathway) {
@@ -255,6 +256,7 @@ async function fetchOptionalRows(table: string, select = "*") {
       const { data, error } = await supabaseAdmin
         .from(table)
         .select(select)
+        .order("id", { ascending: true })
         .range(from, from + pageSize - 1);
 
       if (error) throw error;
@@ -308,11 +310,9 @@ async function getLiveUserProgress(): Promise<UserProgressRow[]> {
       .eq("is_active", true)
       .order("role", { ascending: true })
       .order("full_name", { ascending: true })
+      .order("id", { ascending: true })
       .range(from, to)
-  ).catch((error: any) => {
-    console.error("Live user progress users query failed:", error.message);
-    return [];
-  });
+  );
 
   const assignments = await fetchAll<{
     assigned_to: string | null;
@@ -332,11 +332,9 @@ async function getLiveUserProgress(): Promise<UserProgressRow[]> {
         "sent_for_review",
         "completed",
       ])
+      .order("id", { ascending: true })
       .range(from, to)
-  ).catch((error: any) => {
-    console.error("Live user progress assignments query failed:", error.message);
-    return [];
-  });
+  );
 
   const userById = new Map(users.map((user) => [user.id, user]));
   const progressMap = new Map<

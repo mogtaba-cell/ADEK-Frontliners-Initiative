@@ -260,6 +260,7 @@ async function getFilterOptions() {
     supabaseAdmin
       .from("submissions")
       .select("art_pathway_name_en,art_sub_pathway_name_en,institution_type,school_region,registration_status,workflow_status")
+      .order("id", { ascending: true })
       .range(from, to)
   );
 
@@ -301,11 +302,9 @@ async function getLiveUserProgress(): Promise<UserProgressRow[]> {
       .eq("is_active", true)
       .order("role", { ascending: true })
       .order("full_name", { ascending: true })
+      .order("id", { ascending: true })
       .range(from, to)
-  ).catch((error: any) => {
-    console.error("Live user progress users query failed:", error.message);
-    return [];
-  });
+  );
 
   const assignments = await fetchAllRows<{
     assigned_to: string | null;
@@ -325,11 +324,9 @@ async function getLiveUserProgress(): Promise<UserProgressRow[]> {
         "sent_for_review",
         "completed",
       ])
+      .order("id", { ascending: true })
       .range(from, to)
-  ).catch((error: any) => {
-    console.error("Live user progress assignments query failed:", error.message);
-    return [];
-  });
+  );
 
   const progressMap = new Map<
     string,
@@ -416,11 +413,9 @@ async function getFilteredAnalytics(filters: AnalyticsFilters) {
     supabaseAdmin
       .from("submissions")
       .select("id,art_pathway_name_en,art_sub_pathway_name_en,institution_type,school_region,institution_ref_number,institution_name,registration_status,workflow_status,evaluation_decision,management_decision,reviewer_decision")
+      .order("id", { ascending: true })
       .range(from, to)
-  ).catch((error: any) => {
-    console.error("Analytics submissions query failed:", error.message);
-    return [];
-  });
+  );
 
   const submissions = allSubmissions.filter((row) => submissionMatchesFilters(row, filters));
   const submissionIds = submissions.map((row) => row.id);
@@ -454,11 +449,10 @@ async function getFilteredAnalytics(filters: AnalyticsFilters) {
         .from("students")
         .select("student_key,gender,nationality,grade")
         .in("submission_id", chunk)
+        .order("submission_id", { ascending: true })
+        .order("student_key", { ascending: true })
         .range(from, to)
-    ).catch((error: any) => {
-      console.error("Analytics students query failed:", error.message);
-      return [];
-    });
+    );
 
     students.push(...data);
   }
