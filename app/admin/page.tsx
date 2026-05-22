@@ -151,7 +151,7 @@ export default async function AdminPage({
 
       {maintenance && (
         <div className="card" style={{ marginBottom: 16 }}>
-          <p className="pill">Workflow maintenance completed: {maintenance}</p>
+          <p className="pill">Workflow Maintenance Completed: {maintenance}</p>
         </div>
       )}
 
