@@ -16,6 +16,12 @@ export const maxDuration = 60;
 
 const EXPORT_TIME_ZONE = "Asia/Dubai";
 
+type ExportFileInfo = {
+  id: string;
+  name: string;
+  webViewLink: string | null;
+};
+
 function getDubaiDateParts(date = new Date()) {
   const formatter = new Intl.DateTimeFormat("en-GB", {
     timeZone: EXPORT_TIME_ZONE,
@@ -28,7 +34,6 @@ function getDubaiDateParts(date = new Date()) {
   });
 
   const parts = formatter.formatToParts(date);
-
   const get = (type: string) =>
     parts.find((part) => part.type === type)?.value ?? "00";
 
@@ -48,31 +53,33 @@ function safeDateName(date = new Date()) {
 
 function isAuthorized(req: Request) {
   const cronSecret = process.env.CRON_SECRET;
-
-  if (!cronSecret) {
-    return false;
-  }
+  if (!cronSecret) return false;
 
   const url = new URL(req.url);
   const secretFromQuery = url.searchParams.get("secret");
   const authorization = req.headers.get("authorization");
 
-  return (
-    secretFromQuery === cronSecret ||
-    authorization === `Bearer ${cronSecret}`
-  );
+  return secretFromQuery === cronSecret || authorization === `Bearer ${cronSecret}`;
+}
+
+function errorMessage(error: any) {
+  return error?.message ?? "Automatic Google Drive export failed.";
 }
 
 async function getAutomationUserId() {
   const adminEmail = process.env.ADMIN_EMAIL;
 
   if (adminEmail) {
-    const { data } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("profiles")
       .select("id")
       .eq("email", adminEmail)
       .eq("role", "admin")
       .maybeSingle();
+
+    if (error) {
+      console.error("Automation admin lookup by ADMIN_EMAIL failed:", error.message);
+    }
 
     if (data?.id) return data.id as string;
   }
@@ -144,11 +151,7 @@ async function insertExportFile({
 }: {
   batchId: string;
   dataType: string;
-  file: {
-    id: string;
-    name: string;
-    webViewLink: string | null;
-  };
+  file: ExportFileInfo;
 }) {
   const { error } = await supabaseAdmin.from("export_files").insert({
     export_batch_id: batchId,
@@ -163,16 +166,68 @@ async function insertExportFile({
   }
 }
 
+async function getExportFiles(batchId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("export_files")
+    .select("data_type,file_name,google_file_id,google_file_url,created_at")
+    .eq("export_batch_id", batchId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new Error(`Could not read export files: ${error.message}`);
+  }
+
+  return data ?? [];
+}
+
+async function failBatch(batchId: string | null, message: string) {
+  if (!batchId) return;
+
+  await updateExportBatch({
+    batchId,
+    values: {
+      status: "failed",
+      error_message: message,
+      completed_at: new Date().toISOString(),
+    },
+  });
+}
+
+async function buildAndUpload({
+  batchId,
+  folderId,
+  filename,
+  mimeType,
+  dataType,
+  buildBuffer,
+}: {
+  batchId: string;
+  folderId: string;
+  filename: string;
+  mimeType: string;
+  dataType: string;
+  buildBuffer: () => Promise<Buffer>;
+}) {
+  const buffer = await buildBuffer();
+  const file = await uploadBufferToDrive({
+    folderId,
+    filename,
+    mimeType,
+    buffer,
+  });
+
+  await insertExportFile({ batchId, dataType, file });
+  return file;
+}
+
 export async function GET(req: Request) {
   let batchId: string | null = null;
+  let currentStep = "starting automatic export";
 
   try {
     if (!isAuthorized(req)) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "Unauthorized cron request.",
-        },
+        { ok: false, error: "Unauthorized cron request." },
         { status: 401 }
       );
     }
@@ -185,12 +240,10 @@ export async function GET(req: Request) {
     });
 
     const now = new Date();
-    const folderName = safeDateName(now);
-    const dateLabel = folderName;
+    const dateLabel = safeDateName(now);
 
-    const exportFolder = await createDatedExportFolder({
-      folderName,
-    });
+    currentStep = "creating Google Drive export folder";
+    const exportFolder = await createDatedExportFolder({ folderName: dateLabel });
 
     await updateExportBatch({
       batchId,
@@ -199,14 +252,63 @@ export async function GET(req: Request) {
       },
     });
 
-    // Build exports in a controlled sequence to avoid opening several heavy
-    // Supabase export queries at the same time. The all/ready submission
-    // workbooks share the same fetched rows instead of querying submissions twice.
-    const analyticsPdfBuffer = await buildAnalyticsDashboardPdfBuffer();
-    const activityLogBuffer = await buildActivityLogWorkbookBuffer();
+    currentStep = "building and uploading Analytics Dashboard PDF";
+    await buildAndUpload({
+      batchId,
+      folderId: exportFolder.id,
+      filename: `Analytics Dashboard - ${dateLabel}.pdf`,
+      mimeType: "application/pdf",
+      dataType: "analytics_dashboard_pdf",
+      buildBuffer: buildAnalyticsDashboardPdfBuffer,
+    });
+
+    currentStep = "building and uploading Activity Log workbook";
+    await buildAndUpload({
+      batchId,
+      folderId: exportFolder.id,
+      filename: `Activity Log - ${dateLabel}.xlsx`,
+      mimeType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      dataType: "activity_log",
+      buildBuffer: buildActivityLogWorkbookBuffer,
+    });
+
+    currentStep = "building submissions workbooks";
     const { allSubmissionsBuffer, readySubmissionsBuffer } =
       await buildSubmissionWorkbookBuffers();
 
+    currentStep = "uploading All Submissions workbook";
+    const allSubmissionsFile = await uploadBufferToDrive({
+      folderId: exportFolder.id,
+      filename: `All Submissions Full Data - ${dateLabel}.xlsx`,
+      mimeType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      buffer: allSubmissionsBuffer,
+    });
+
+    await insertExportFile({
+      batchId,
+      dataType: "all_submissions_full_data",
+      file: allSubmissionsFile,
+    });
+
+    currentStep = "uploading Ready Submissions workbook";
+    const readySubmissionsFile = await uploadBufferToDrive({
+      folderId: exportFolder.id,
+      filename: `Ready Submissions - ${dateLabel}.xlsx`,
+      mimeType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      buffer: readySubmissionsBuffer,
+    });
+
+    await insertExportFile({
+      batchId,
+      dataType: "ready_submissions",
+      file: readySubmissionsFile,
+    });
+
+    currentStep = "writing export summary";
+    const filesBeforeSummary = await getExportFiles(batchId);
     const summaryBuffer = Buffer.from(
       JSON.stringify(
         {
@@ -217,127 +319,54 @@ export async function GET(req: Request) {
           requested_by_user_id: automationUserId,
           parent_folder: "Data export",
           folder: exportFolder,
-          files: [
-            `Analytics Dashboard - ${dateLabel}.pdf`,
-            `Activity Log - ${dateLabel}.xlsx`,
-            `All Submissions Full Data - ${dateLabel}.xlsx`,
-            `Ready Submissions - ${dateLabel}.xlsx`,
-            `Export Summary - ${dateLabel}.json`,
-          ],
+          files: filesBeforeSummary,
         },
         null,
         2
       )
     );
 
-    const uploadedFiles = await Promise.all([
-      uploadBufferToDrive({
-        folderId: exportFolder.id,
-        filename: `Analytics Dashboard - ${dateLabel}.pdf`,
-        mimeType: "application/pdf",
-        buffer: analyticsPdfBuffer,
-      }),
+    const summaryFile = await uploadBufferToDrive({
+      folderId: exportFolder.id,
+      filename: `Export Summary - ${dateLabel}.json`,
+      mimeType: "application/json",
+      buffer: summaryBuffer,
+    });
 
-      uploadBufferToDrive({
-        folderId: exportFolder.id,
-        filename: `Activity Log - ${dateLabel}.xlsx`,
-        mimeType:
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        buffer: activityLogBuffer,
-      }),
+    await insertExportFile({
+      batchId,
+      dataType: "export_summary",
+      file: summaryFile,
+    });
 
-      uploadBufferToDrive({
-        folderId: exportFolder.id,
-        filename: `All Submissions Full Data - ${dateLabel}.xlsx`,
-        mimeType:
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        buffer: allSubmissionsBuffer,
-      }),
-
-      uploadBufferToDrive({
-        folderId: exportFolder.id,
-        filename: `Ready Submissions - ${dateLabel}.xlsx`,
-        mimeType:
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        buffer: readySubmissionsBuffer,
-      }),
-
-      uploadBufferToDrive({
-        folderId: exportFolder.id,
-        filename: `Export Summary - ${dateLabel}.json`,
-        mimeType: "application/json",
-        buffer: summaryBuffer,
-      }),
-    ]);
-
-    await Promise.all([
-      insertExportFile({
-        batchId,
-        dataType: "analytics_dashboard_pdf",
-        file: uploadedFiles[0],
-      }),
-
-      insertExportFile({
-        batchId,
-        dataType: "activity_log",
-        file: uploadedFiles[1],
-      }),
-
-      insertExportFile({
-        batchId,
-        dataType: "all_submissions_full_data",
-        file: uploadedFiles[2],
-      }),
-
-      insertExportFile({
-        batchId,
-        dataType: "ready_submissions",
-        file: uploadedFiles[3],
-      }),
-
-      insertExportFile({
-        batchId,
-        dataType: "export_summary",
-        file: uploadedFiles[4],
-      }),
-    ]);
+    const files = await getExportFiles(batchId);
 
     await updateExportBatch({
       batchId,
       values: {
         status: "completed",
         completed_at: new Date().toISOString(),
+        error_message: null,
       },
     });
 
     return NextResponse.json({
       ok: true,
-      mode: "automatic",
-      batch_id: batchId,
-      timezone: EXPORT_TIME_ZONE,
-      date_label: dateLabel,
+      batchId,
       folder: exportFolder,
-      files: uploadedFiles,
+      files,
     });
   } catch (error: any) {
+    const message = `${currentStep} failed. ${errorMessage(error)}`;
     console.error("Automatic Google Drive export failed:", error);
 
-    if (batchId) {
-      await updateExportBatch({
-        batchId,
-        values: {
-          status: "failed",
-          error_message:
-            error.message ?? "Automatic Google Drive export failed.",
-          completed_at: new Date().toISOString(),
-        },
-      });
-    }
+    await failBatch(batchId, message);
 
     return NextResponse.json(
       {
         ok: false,
-        error: error.message ?? "Automatic Google Drive export failed.",
+        batchId,
+        error: message,
       },
       { status: 500 }
     );

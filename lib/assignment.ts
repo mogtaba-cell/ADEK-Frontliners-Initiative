@@ -161,6 +161,7 @@ async function getActiveUsers(
 async function getLeastLoadedUser(
   role: Role,
   options?: {
+    phase?: WorkflowPhase;
     proofreaderType?: ProofreaderType;
     candidateIds?: string[];
   }
@@ -182,28 +183,49 @@ async function getLeastLoadedUser(
     );
   }
 
-  const { data: activeAssignments, error } = await supabaseAdmin
-    .from("assignments")
-    .select("assigned_to")
-    .in(
-      "assigned_to",
-      users.map((user) => user.id)
-    )
-    .in("status", workloadAssignmentStatuses);
-
-  if (error) throw error;
+  const userIds = users.map((user) => user.id);
 
   const workload = new Map<string, number>();
-
   for (const user of users) {
     workload.set(user.id, 0);
   }
 
-  for (const row of activeAssignments ?? []) {
-    workload.set(row.assigned_to, (workload.get(row.assigned_to) ?? 0) + 1);
+  for (const chunk of chunkArray(userIds, 500)) {
+    if (!chunk.length) continue;
+
+    const assignments = await fetchAllRows<{ assigned_to: string | null }>((from, to) => {
+      let query = supabaseAdmin
+        .from("assignments")
+        .select("assigned_to")
+        .in("assigned_to", chunk)
+        .in("status", workloadAssignmentStatuses)
+        .range(from, to);
+
+      if (options?.phase) {
+        query = query.eq("phase", options.phase);
+      }
+
+      if (role === "proofreader" && options?.proofreaderType) {
+        query = query.eq("proofreader_type", options.proofreaderType);
+      }
+
+      return query;
+    });
+
+    for (const row of assignments) {
+      if (!row.assigned_to) continue;
+      workload.set(row.assigned_to, (workload.get(row.assigned_to) ?? 0) + 1);
+    }
   }
 
-  return Array.from(workload.entries()).sort((a, b) => a[1] - b[1])[0][0];
+  return Array.from(workload.entries()).sort((a, b) => {
+    const byWorkload = a[1] - b[1];
+    if (byWorkload !== 0) return byWorkload;
+
+    const aUser = users.find((user) => user.id === a[0]);
+    const bUser = users.find((user) => user.id === b[0]);
+    return String(aUser?.full_name ?? a[0]).localeCompare(String(bUser?.full_name ?? b[0]));
+  })[0][0];
 }
 
 async function getCoordinatorForSchool(submissionId: string) {
@@ -258,7 +280,7 @@ async function getCoordinatorForSchool(submissionId: string) {
     }
   }
 
-  return getLeastLoadedUser("coordinator");
+  return getLeastLoadedUser("coordinator", { phase: "coordinator_check" });
 }
 
 export async function autoAssignOne(
@@ -304,6 +326,7 @@ export async function autoAssignOne(
 
   if (!assignedTo) {
     assignedTo = await getLeastLoadedUser(role, {
+      phase,
       proofreaderType: options?.proofreaderType,
     });
   }
@@ -1047,6 +1070,7 @@ async function getReviewerForProofreader(generalProofreaderId: string) {
     .filter(Boolean);
 
   return getLeastLoadedUser("reviewer", {
+    phase: "final_review",
     candidateIds: linkedReviewerIds.length ? linkedReviewerIds : undefined,
   });
 }
