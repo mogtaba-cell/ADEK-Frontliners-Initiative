@@ -88,6 +88,7 @@ function mapToRows(map: Map<string, number>): ChartRow[] {
 }
 
 const SUPABASE_PAGE_SIZE = 1000;
+const SUPABASE_IN_FILTER_CHUNK_SIZE = 100;
 
 async function fetchAllRows<T>(
   buildQuery: (from: number, to: number) => any
@@ -159,6 +160,101 @@ function NationalityPie({ uae, nonUae }: { uae: number; nonUae: number }) {
   );
 }
 
+function roleLabel(row: UserProgressRow) {
+  if (row.role === "proofreader" && row.proofreader_type) {
+    if (row.proofreader_type === "general") return "General Proofreader";
+    if (row.proofreader_type === "literary_arabic") return "Literary Proofreader - Arabic";
+    if (row.proofreader_type === "literary_english_or_others") return "Literary Proofreader - English/Others";
+    return `Proofreader - ${row.proofreader_type}`;
+  }
+
+  if (row.role === "evaluator") return "Evaluator";
+  if (row.role === "coordinator") return "Coordinator";
+  if (row.role === "management") return "Management";
+  if (row.role === "reviewer") return "Reviewer";
+
+  return row.role;
+}
+
+function userProgressGroupKey(row: UserProgressRow) {
+  if (row.role === "evaluator") return "Evaluators";
+  if (row.role === "proofreader" && row.proofreader_type === "general") return "General Proofreaders";
+  if (row.role === "proofreader" && row.proofreader_type === "literary_arabic") return "Literary Proofreaders - Arabic";
+  if (row.role === "proofreader" && row.proofreader_type === "literary_english_or_others") return "Literary Proofreaders - English/Others";
+  if (row.role === "coordinator") return "Coordinators";
+  if (row.role === "management") return "Management";
+  if (row.role === "reviewer") return "Reviewers";
+  return "Other Users";
+}
+
+function UserProgressTable({ title, rows }: { title: string; rows: UserProgressRow[] }) {
+  const showSentCorrection = rows.some((row) => row.role === "evaluator" || row.role === "proofreader");
+
+  return (
+    <div className="analytics-section">
+      <h3>{title}</h3>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Role</th>
+              <th>Assigned</th>
+              <th>Completed</th>
+              <th>Remaining</th>
+              {showSentCorrection && <th>Sent for Correction</th>}
+              <th>Completion Rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={`${title}-${row.full_name}-${row.role}-${row.proofreader_type ?? ""}`}>
+                <td>{row.full_name}</td>
+                <td>{roleLabel(row)}</td>
+                <td>{row.assigned}</td>
+                <td>{row.completed}</td>
+                <td>{row.remaining}</td>
+                {showSentCorrection && <td>{row.role === "evaluator" || row.role === "proofreader" ? row.sent_for_correction : "-"}</td>}
+                <td>{Number(row.completion_rate).toFixed(2)}%</td>
+              </tr>
+            ))}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={showSentCorrection ? 7 : 6}>No user progress data available.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function groupUserProgress(rows: UserProgressRow[]) {
+  const order = [
+    "Evaluators",
+    "General Proofreaders",
+    "Literary Proofreaders - Arabic",
+    "Literary Proofreaders - English/Others",
+    "Coordinators",
+    "Management",
+    "Reviewers",
+    "Other Users",
+  ];
+
+  const grouped = new Map<string, UserProgressRow[]>();
+
+  for (const row of rows) {
+    const key = userProgressGroupKey(row);
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key)?.push(row);
+  }
+
+  return order
+    .map((title) => ({ title, rows: grouped.get(title) ?? [] }))
+    .filter((group) => group.rows.length > 0);
+}
+
 async function getFilterOptions() {
   const data = await fetchAllRows<any>((from, to) =>
     supabaseAdmin
@@ -190,122 +286,12 @@ async function getFilterOptions() {
   ) as Record<string, string[]>;
 }
 
-function userProgressSectionLabel(row: UserProgressRow) {
-  if (row.role === "evaluator") return "Evaluators";
-  if (row.role === "coordinator") return "Coordinators";
-  if (row.role === "management") return "Management";
-  if (row.role === "reviewer") return "Reviewers";
-
-  if (row.role === "proofreader") {
-    if (row.proofreader_type === "general") return "General Proofreaders";
-    if (row.proofreader_type === "literary_arabic") return "Literary Proofreaders - Arabic";
-    if (row.proofreader_type === "literary_english_or_others") {
-      return "Literary Proofreaders - English/Others";
-    }
-
-    return "Proofreaders";
-  }
-
-  return "Other Users";
-}
-
-function userProgressSectionOrder(title: string) {
-  const order: Record<string, number> = {
-    Evaluators: 1,
-    "General Proofreaders": 2,
-    "Literary Proofreaders - Arabic": 3,
-    "Literary Proofreaders - English/Others": 4,
-    Proofreaders: 5,
-    Coordinators: 6,
-    Management: 7,
-    Reviewers: 8,
-    "Other Users": 9,
-  };
-
-  return order[title] ?? 99;
-}
-
-function groupUserProgress(rows: UserProgressRow[]) {
-  const groups = new Map<string, UserProgressRow[]>();
-
-  for (const row of rows) {
-    const title = userProgressSectionLabel(row);
-    if (!groups.has(title)) groups.set(title, []);
-    groups.get(title)?.push(row);
-  }
-
-  return Array.from(groups.entries())
-    .map(([title, groupRows]) => ({
-      title,
-      rows: groupRows.sort(
-        (a, b) =>
-          b.assigned - a.assigned ||
-          b.completed - a.completed ||
-          a.full_name.localeCompare(b.full_name)
-      ),
-    }))
-    .sort(
-      (a, b) =>
-        userProgressSectionOrder(a.title) - userProgressSectionOrder(b.title) ||
-        a.title.localeCompare(b.title)
-    );
-}
-
-function UserProgressTable({ title, rows }: { title: string; rows: UserProgressRow[] }) {
-  const showSentForCorrection = title === "Evaluators" || title.includes("Proofreaders");
-  const colSpan = showSentForCorrection ? 6 : 5;
-
-  return (
-    <div style={{ marginTop: 18 }}>
-      <div className="table-title-row">
-        <div>
-          <h3 style={{ margin: 0 }}>{title}</h3>
-          <p className="muted small" style={{ marginTop: 4 }}>
-            {rows.length} user{rows.length === 1 ? "" : "s"} tracked.
-          </p>
-        </div>
-      </div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>User</th>
-              <th>Assigned</th>
-              <th>Completed</th>
-              <th>Remaining</th>
-              {showSentForCorrection && <th>Sent for Correction</th>}
-              <th>Completion Rate</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={`${row.full_name}-${row.role}-${row.proofreader_type ?? ""}`}>
-                <td>{row.full_name}</td>
-                <td>{row.assigned}</td>
-                <td>{row.completed}</td>
-                <td>{row.remaining}</td>
-                {showSentForCorrection && <td>{row.sent_for_correction}</td>}
-                <td>{Number(row.completion_rate).toFixed(2)}%</td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={colSpan}>No user progress data available.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
 async function getLiveUserProgress(): Promise<UserProgressRow[]> {
   const users = await fetchAllRows<{
     id: string;
     full_name: string | null;
     role: string | null;
-    proofreader_type?: string | null;
+    proofreader_type: string | null;
     is_active: boolean | null;
   }>((from, to) =>
     supabaseAdmin
@@ -325,7 +311,7 @@ async function getLiveUserProgress(): Promise<UserProgressRow[]> {
     assigned_to: string | null;
     submission_id: string | null;
     phase: string | null;
-    proofreader_type?: string | null;
+    proofreader_type: string | null;
     status: string | null;
     completed_at: string | null;
   }>((from, to) =>
@@ -345,15 +331,9 @@ async function getLiveUserProgress(): Promise<UserProgressRow[]> {
     return [];
   });
 
-  const userById = new Map(users.map((user) => [user.id, user]));
   const progressMap = new Map<
     string,
-    {
-      assigned: Set<string>;
-      completed: Set<string>;
-      remaining: Set<string>;
-      sentForCorrection: Set<string>;
-    }
+    { assigned: Set<string>; completed: Set<string>; remaining: Set<string>; sentForCorrection: Set<string> }
   >();
 
   for (const user of users) {
@@ -369,11 +349,9 @@ async function getLiveUserProgress(): Promise<UserProgressRow[]> {
     if (!assignment.assigned_to || !assignment.submission_id) continue;
 
     const current = progressMap.get(assignment.assigned_to);
-    const user = userById.get(assignment.assigned_to);
-    if (!current || !user) continue;
+    if (!current) continue;
 
     const status = String(assignment.status ?? "");
-    const phase = String(assignment.phase ?? "");
 
     current.assigned.add(assignment.submission_id);
 
@@ -385,15 +363,7 @@ async function getLiveUserProgress(): Promise<UserProgressRow[]> {
       current.remaining.add(assignment.submission_id);
     }
 
-    const isEvaluatorCorrection =
-      user.role === "evaluator" && phase === "adek_evaluation" && status === "returned_for_correction";
-
-    const isProofreaderCorrection =
-      user.role === "proofreader" &&
-      ["proofreading", "literary_proofreading"].includes(phase) &&
-      status === "returned_for_correction";
-
-    if (isEvaluatorCorrection || isProofreaderCorrection) {
+    if (status === "returned_for_correction") {
       current.sentForCorrection.add(assignment.submission_id);
     }
   }
@@ -410,7 +380,7 @@ async function getLiveUserProgress(): Promise<UserProgressRow[]> {
       return {
         full_name: user.full_name ?? user.id,
         role: user.role,
-        proofreader_type: user.proofreader_type ?? null,
+        proofreader_type: user.proofreader_type,
         assigned: progress.assigned.size,
         completed: progress.completed.size,
         remaining: progress.remaining.size,
@@ -476,8 +446,8 @@ async function getFilteredAnalytics(filters: AnalyticsFilters) {
   }
 
   const students: any[] = [];
-  for (let i = 0; i < submissionIds.length; i += 500) {
-    const chunk = submissionIds.slice(i, i + 500);
+  for (let i = 0; i < submissionIds.length; i += SUPABASE_IN_FILTER_CHUNK_SIZE) {
+    const chunk = submissionIds.slice(i, i + SUPABASE_IN_FILTER_CHUNK_SIZE);
     if (!chunk.length) continue;
     const data = await fetchAllRows<any>((from, to) =>
       supabaseAdmin
