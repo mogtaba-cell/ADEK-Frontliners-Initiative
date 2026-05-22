@@ -15,11 +15,25 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const EXPORT_TIME_ZONE = "Asia/Dubai";
+const PROCESSING_REUSE_HOURS = 12;
+const COMPLETED_EXPORT_GUARD_HOURS = 12;
+const STALE_PROCESSING_HOURS = 18;
 
 type ExportFileInfo = {
   id: string;
   name: string;
   webViewLink: string | null;
+};
+
+type ExportBatch = {
+  id: string;
+  requested_by: string | null;
+  mode: string;
+  status: string;
+  destination_folder_id: string | null;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
 };
 
 function getDubaiDateParts(date = new Date()) {
@@ -69,6 +83,14 @@ function errorMessage(error: any) {
   return error?.message ?? "Automatic Google Drive export failed.";
 }
 
+function hoursAgoIso(hours: number) {
+  return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+}
+
+function folderUrl(folderId: string) {
+  return `https://drive.google.com/drive/folders/${folderId}`;
+}
+
 async function getAutomationUserId() {
   const adminEmail = process.env.ADMIN_EMAIL;
 
@@ -109,7 +131,7 @@ async function getAutomationUserId() {
   return data.id as string;
 }
 
-async function failOldProcessingAutomaticExports() {
+async function failVeryOldProcessingAutomaticExports() {
   const { error } = await supabaseAdmin
     .from("export_batches")
     .update({
@@ -120,14 +142,54 @@ async function failOldProcessingAutomaticExports() {
     })
     .eq("mode", "automatic")
     .eq("status", "processing")
-    .lt(
-      "created_at",
-      new Date(Date.now() - 15 * 60 * 1000).toISOString()
-    );
+    .lt("created_at", hoursAgoIso(STALE_PROCESSING_HOURS));
 
   if (error) {
-    console.error("Could not fail old processing automatic exports:", error.message);
+    console.error(
+      "Could not fail old processing automatic exports:",
+      error.message
+    );
   }
+}
+
+async function getRecentCompletedAutomaticExport() {
+  const { data, error } = await supabaseAdmin
+    .from("export_batches")
+    .select(
+      "id,requested_by,mode,status,destination_folder_id,error_message,created_at,completed_at"
+    )
+    .eq("mode", "automatic")
+    .eq("status", "completed")
+    .gte("created_at", hoursAgoIso(COMPLETED_EXPORT_GUARD_HOURS))
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Could not check recent completed export: ${error.message}`);
+  }
+
+  return (data as ExportBatch | null) ?? null;
+}
+
+async function getProcessingAutomaticExport() {
+  const { data, error } = await supabaseAdmin
+    .from("export_batches")
+    .select(
+      "id,requested_by,mode,status,destination_folder_id,error_message,created_at,completed_at"
+    )
+    .eq("mode", "automatic")
+    .eq("status", "processing")
+    .gte("created_at", hoursAgoIso(PROCESSING_REUSE_HOURS))
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Could not check processing export: ${error.message}`);
+  }
+
+  return (data as ExportBatch | null) ?? null;
 }
 
 async function createExportBatch({
@@ -144,14 +206,16 @@ async function createExportBatch({
       mode,
       status: "processing",
     })
-    .select("id")
+    .select(
+      "id,requested_by,mode,status,destination_folder_id,error_message,created_at,completed_at"
+    )
     .single();
 
   if (error) {
     throw new Error(`Could not create export batch: ${error.message}`);
   }
 
-  return data.id as string;
+  return data as ExportBatch;
 }
 
 async function updateExportBatch({
@@ -167,7 +231,7 @@ async function updateExportBatch({
     .eq("id", batchId);
 
   if (error) {
-    console.error("Export batch update failed:", error.message);
+    throw new Error(`Export batch update failed: ${error.message}`);
   }
 }
 
@@ -189,7 +253,7 @@ async function insertExportFile({
   });
 
   if (error) {
-    console.error("Export file log insert failed:", error.message);
+    throw new Error(`Export file log insert failed: ${error.message}`);
   }
 }
 
@@ -207,17 +271,26 @@ async function getExportFiles(batchId: string) {
   return data ?? [];
 }
 
+async function getExportFileTypes(batchId: string) {
+  const files = await getExportFiles(batchId);
+  return new Set(files.map((file) => file.data_type));
+}
+
 async function failBatch(batchId: string | null, message: string) {
   if (!batchId) return;
 
-  await updateExportBatch({
-    batchId,
-    values: {
-      status: "failed",
-      error_message: message,
-      completed_at: new Date().toISOString(),
-    },
-  });
+  try {
+    await updateExportBatch({
+      batchId,
+      values: {
+        status: "failed",
+        error_message: message,
+        completed_at: new Date().toISOString(),
+      },
+    });
+  } catch (error: any) {
+    console.error("Could not mark automatic export failed:", error.message);
+  }
 }
 
 async function buildAndUpload({
@@ -253,6 +326,40 @@ async function buildAndUpload({
   return file;
 }
 
+async function getOrCreateAutomaticBatch() {
+  const automationUserId = await getAutomationUserId();
+
+  const processingBatch = await getProcessingAutomaticExport();
+  if (processingBatch) {
+    return {
+      batch: processingBatch,
+      automationUserId,
+      isNew: false,
+    };
+  }
+
+  const recentCompleted = await getRecentCompletedAutomaticExport();
+  if (recentCompleted) {
+    return {
+      batch: recentCompleted,
+      automationUserId,
+      isNew: false,
+      alreadyCompletedRecently: true,
+    };
+  }
+
+  const newBatch = await createExportBatch({
+    requestedBy: automationUserId,
+    mode: "automatic",
+  });
+
+  return {
+    batch: newBatch,
+    automationUserId,
+    isNew: true,
+  };
+}
+
 export async function GET(req: Request) {
   let batchId: string | null = null;
   let currentStep = "starting automatic export";
@@ -265,133 +372,239 @@ export async function GET(req: Request) {
       );
     }
 
-    await failOldProcessingAutomaticExports();
+    await failVeryOldProcessingAutomaticExports();
 
-    const automationUserId = await getAutomationUserId();
+    const { batch, automationUserId, alreadyCompletedRecently } =
+      await getOrCreateAutomaticBatch();
 
-    batchId = await createExportBatch({
-      requestedBy: automationUserId,
-      mode: "automatic",
-    });
+    batchId = batch.id;
 
-    const now = new Date();
-    const dateLabel = safeDateName(now);
+    if (alreadyCompletedRecently) {
+      return NextResponse.json({
+        ok: true,
+        batchId: batch.id,
+        status: "already_completed_recently",
+        destination_folder_id: batch.destination_folder_id,
+        message:
+          "A completed automatic export already exists recently. No new export was started.",
+      });
+    }
 
-    currentStep = "creating Google Drive export folder";
-    const exportFolder = await createDatedExportFolder({
-      folderName: dateLabel,
-    });
+    const dateLabel = safeDateName(new Date(batch.created_at));
+    let folderId = batch.destination_folder_id;
 
-    await updateExportBatch({
-      batchId,
-      values: {
-        destination_folder_id: exportFolder.id,
-      },
-    });
+    if (!folderId) {
+      currentStep = "creating Google Drive export folder";
 
-    currentStep = "building and uploading Analytics Dashboard PDF";
-    await buildAndUpload({
-      batchId,
-      folderId: exportFolder.id,
-      filename: `Analytics Dashboard - ${dateLabel}.pdf`,
-      mimeType: "application/pdf",
-      dataType: "analytics_dashboard_pdf",
-      buildBuffer: buildAnalyticsDashboardPdfBuffer,
-    });
+      const exportFolder = await createDatedExportFolder({
+        folderName: dateLabel,
+      });
 
-    currentStep = "building and uploading Activity Log workbook";
-    await buildAndUpload({
-      batchId,
-      folderId: exportFolder.id,
-      filename: `Activity Log - ${dateLabel}.xlsx`,
-      mimeType:
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      dataType: "activity_log",
-      buildBuffer: buildActivityLogWorkbookBuffer,
-    });
+      folderId = exportFolder.id;
 
-    currentStep = "building submissions workbooks";
-    const { allSubmissionsBuffer, readySubmissionsBuffer } =
-      await buildSubmissionWorkbookBuffers();
-
-    currentStep = "uploading All Submissions workbook";
-    const allSubmissionsFile = await uploadBufferToDrive({
-      folderId: exportFolder.id,
-      filename: `All Submissions Full Data - ${dateLabel}.xlsx`,
-      mimeType:
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      buffer: allSubmissionsBuffer,
-    });
-
-    await insertExportFile({
-      batchId,
-      dataType: "all_submissions_full_data",
-      file: allSubmissionsFile,
-    });
-
-    currentStep = "uploading Ready Submissions workbook";
-    const readySubmissionsFile = await uploadBufferToDrive({
-      folderId: exportFolder.id,
-      filename: `Ready Submissions - ${dateLabel}.xlsx`,
-      mimeType:
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      buffer: readySubmissionsBuffer,
-    });
-
-    await insertExportFile({
-      batchId,
-      dataType: "ready_submissions",
-      file: readySubmissionsFile,
-    });
-
-    currentStep = "writing export summary";
-    const filesBeforeSummary = await getExportFiles(batchId);
-
-    const summaryBuffer = Buffer.from(
-      JSON.stringify(
-        {
-          export_mode: "automatic",
-          exported_at_utc: now.toISOString(),
-          exported_at_uae_label: dateLabel,
-          timezone: EXPORT_TIME_ZONE,
-          requested_by_user_id: automationUserId,
-          parent_folder: "Data export",
-          folder: exportFolder,
-          files: filesBeforeSummary,
+      await updateExportBatch({
+        batchId: batch.id,
+        values: {
+          destination_folder_id: folderId,
         },
-        null,
-        2
-      )
-    );
+      });
 
-    const summaryFile = await uploadBufferToDrive({
-      folderId: exportFolder.id,
-      filename: `Export Summary - ${dateLabel}.json`,
-      mimeType: "application/json",
-      buffer: summaryBuffer,
-    });
+      return NextResponse.json({
+        ok: true,
+        batchId: batch.id,
+        status: "processing",
+        step_completed: "folder_created",
+        destination_folder_id: folderId,
+        folder: exportFolder,
+        next_step: "analytics_dashboard_pdf",
+      });
+    }
 
-    await insertExportFile({
-      batchId,
-      dataType: "export_summary",
-      file: summaryFile,
-    });
+    const existingTypes = await getExportFileTypes(batch.id);
 
-    const files = await getExportFiles(batchId);
+    if (!existingTypes.has("analytics_dashboard_pdf")) {
+      currentStep = "building and uploading Analytics Dashboard PDF";
+
+      const file = await buildAndUpload({
+        batchId: batch.id,
+        folderId,
+        filename: `Analytics Dashboard - ${dateLabel}.pdf`,
+        mimeType: "application/pdf",
+        dataType: "analytics_dashboard_pdf",
+        buildBuffer: buildAnalyticsDashboardPdfBuffer,
+      });
+
+      return NextResponse.json({
+        ok: true,
+        batchId: batch.id,
+        status: "processing",
+        step_completed: "analytics_dashboard_pdf",
+        file,
+        next_step: "activity_log",
+      });
+    }
+
+    if (!existingTypes.has("activity_log")) {
+      currentStep = "building and uploading Activity Log workbook";
+
+      const file = await buildAndUpload({
+        batchId: batch.id,
+        folderId,
+        filename: `Activity Log - ${dateLabel}.xlsx`,
+        mimeType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        dataType: "activity_log",
+        buildBuffer: buildActivityLogWorkbookBuffer,
+      });
+
+      return NextResponse.json({
+        ok: true,
+        batchId: batch.id,
+        status: "processing",
+        step_completed: "activity_log",
+        file,
+        next_step: "submissions_workbooks",
+      });
+    }
+
+    if (
+      !existingTypes.has("all_submissions_full_data") ||
+      !existingTypes.has("ready_submissions")
+    ) {
+      currentStep = "building submissions workbooks";
+
+      const { allSubmissionsBuffer, readySubmissionsBuffer } =
+        await buildSubmissionWorkbookBuffers();
+
+      const uploadedFiles: ExportFileInfo[] = [];
+
+      if (!existingTypes.has("all_submissions_full_data")) {
+        currentStep = "uploading All Submissions workbook";
+
+        const allSubmissionsFile = await uploadBufferToDrive({
+          folderId,
+          filename: `All Submissions Full Data - ${dateLabel}.xlsx`,
+          mimeType:
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          buffer: allSubmissionsBuffer,
+        });
+
+        await insertExportFile({
+          batchId: batch.id,
+          dataType: "all_submissions_full_data",
+          file: allSubmissionsFile,
+        });
+
+        uploadedFiles.push(allSubmissionsFile);
+      }
+
+      if (!existingTypes.has("ready_submissions")) {
+        currentStep = "uploading Ready Submissions workbook";
+
+        const readySubmissionsFile = await uploadBufferToDrive({
+          folderId,
+          filename: `Ready Submissions - ${dateLabel}.xlsx`,
+          mimeType:
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          buffer: readySubmissionsBuffer,
+        });
+
+        await insertExportFile({
+          batchId: batch.id,
+          dataType: "ready_submissions",
+          file: readySubmissionsFile,
+        });
+
+        uploadedFiles.push(readySubmissionsFile);
+      }
+
+      return NextResponse.json({
+        ok: true,
+        batchId: batch.id,
+        status: "processing",
+        step_completed: "submissions_workbooks",
+        files: uploadedFiles,
+        next_step: "export_summary",
+      });
+    }
+
+    if (!existingTypes.has("export_summary")) {
+      currentStep = "writing export summary";
+
+      const filesBeforeSummary = await getExportFiles(batch.id);
+
+      const summaryBuffer = Buffer.from(
+        JSON.stringify(
+          {
+            export_mode: "automatic",
+            exported_at_utc: new Date().toISOString(),
+            exported_at_uae_label: dateLabel,
+            timezone: EXPORT_TIME_ZONE,
+            requested_by_user_id: automationUserId,
+            parent_folder: "Data export",
+            folder: {
+              id: folderId,
+              webViewLink: folderUrl(folderId),
+            },
+            files: filesBeforeSummary,
+          },
+          null,
+          2
+        )
+      );
+
+      const summaryFile = await uploadBufferToDrive({
+        folderId,
+        filename: `Export Summary - ${dateLabel}.json`,
+        mimeType: "application/json",
+        buffer: summaryBuffer,
+      });
+
+      await insertExportFile({
+        batchId: batch.id,
+        dataType: "export_summary",
+        file: summaryFile,
+      });
+
+      const files = await getExportFiles(batch.id);
+
+      await updateExportBatch({
+        batchId: batch.id,
+        values: {
+          status: "completed",
+          completed_at: new Date().toISOString(),
+          error_message: null,
+        },
+      });
+
+      return NextResponse.json({
+        ok: true,
+        batchId: batch.id,
+        status: "completed",
+        destination_folder_id: folderId,
+        folder_url: folderUrl(folderId),
+        step_completed: "export_summary",
+        files,
+      });
+    }
 
     await updateExportBatch({
-      batchId,
+      batchId: batch.id,
       values: {
         status: "completed",
-        completed_at: new Date().toISOString(),
+        completed_at: batch.completed_at ?? new Date().toISOString(),
         error_message: null,
       },
     });
 
+    const files = await getExportFiles(batch.id);
+
     return NextResponse.json({
       ok: true,
-      batchId,
-      folder: exportFolder,
+      batchId: batch.id,
+      status: "completed",
+      destination_folder_id: folderId,
+      folder_url: folderUrl(folderId),
       files,
     });
   } catch (error: any) {

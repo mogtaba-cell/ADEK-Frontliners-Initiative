@@ -1,0 +1,43 @@
+name: Daily Automatic Google Drive Export
+
+on:
+  schedule:
+    # 20:00 UTC = 00:00 UAE during GST.
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+
+jobs:
+  run-daily-export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Run automatic export steps
+        env:
+          APP_URL: https://frontliners.gvc.ae
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "Missing GitHub secret CRON_SECRET"
+            exit 1
+          fi
+
+          for step in 1 2 3 4 5 6; do
+            echo "Running automatic export step ${step}..."
+
+            curl -fS \
+              --max-time 120 \
+              --retry 1 \
+              --retry-delay 10 \
+              -H "Authorization: Bearer ${CRON_SECRET}" \
+              "${APP_URL}/api/cron/daily-export"
+
+            echo ""
+            echo "Finished step ${step}."
+
+            if [ "${step}" != "6" ]; then
+              sleep 20
+            fi
+          done
