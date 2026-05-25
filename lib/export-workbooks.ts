@@ -48,6 +48,14 @@ const PREFERRED_SUBMISSION_COLUMNS = [
   "participating_students_grades",
   "participating_students_genders",
   "participating_students_nationalities",
+
+  // Narrative / artwork fields edited by proofreaders/reviewers.
+  "influence_idea_source",
+  "most_enjoyable_part",
+  "focused_elements",
+  "group_name",
+
+  // Evaluation fields.
   "evaluator_comment",
   "evaluator_file_quality_clear",
   "cultural_authenticity",
@@ -57,6 +65,8 @@ const PREFERRED_SUBMISSION_COLUMNS = [
   "management_artistic_rating",
   "disqualification_reason",
   "coordinator_disqualification_reason",
+
+  // Literary / proofreading fields.
   "literary_language",
   "literary_publication_suitable",
   "literary_updated_content",
@@ -64,9 +74,14 @@ const PREFERRED_SUBMISSION_COLUMNS = [
   "general_proofreading_completed_at",
   "literary_proofreading_completed_at",
   "literary_management_approved_at",
+
+  // Updated artwork fields.
   "updated_artwork_file_id",
   "updated_artwork_file_url",
   "updated_artwork_file_name",
+
+  // Required for export-only fallback fields that are not normal columns.
+  "raw_data",
 ];
 
 const ACTIVITY_MAX_ROWS = {
@@ -75,8 +90,21 @@ const ACTIVITY_MAX_ROWS = {
   comments: 5000,
 };
 
-function stringifyValue(value: any) {
-  if (value === null || value === undefined) return "";
+function isBlankLike(value: any) {
+  if (value === null || value === undefined) return true;
+
+  const text = String(value).trim();
+
+  return (
+    text === "" ||
+    text.toLowerCase() === "null" ||
+    text.toLowerCase() === "undefined" ||
+    text.toLowerCase() === "nan"
+  );
+}
+
+function cleanExportValue(value: any) {
+  if (isBlankLike(value)) return "";
 
   if (typeof value === "object") {
     try {
@@ -86,7 +114,23 @@ function stringifyValue(value: any) {
     }
   }
 
-  return String(value);
+  return value;
+}
+
+function stringifyValue(value: any) {
+  const cleaned = cleanExportValue(value);
+
+  if (cleaned === null || cleaned === undefined) return "";
+
+  if (typeof cleaned === "object") {
+    try {
+      return JSON.stringify(cleaned);
+    } catch {
+      return String(cleaned);
+    }
+  }
+
+  return String(cleaned);
 }
 
 function flattenRow(row: AnyRow, prefix = ""): AnyRow {
@@ -273,11 +317,112 @@ async function fetchOptionalPaged(
   }
 }
 
+function rawValue(rawData: any, ...keys: string[]) {
+  if (!rawData || typeof rawData !== "object") return "";
+
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(rawData, key)) {
+      const value = cleanExportValue(rawData[key]);
+      if (!isBlankLike(value)) return value;
+    }
+  }
+
+  return "";
+}
+
+function firstNonBlank(...values: any[]) {
+  for (const value of values) {
+    const cleaned = cleanExportValue(value);
+    if (!isBlankLike(cleaned)) return cleaned;
+  }
+
+  return "";
+}
+
+function artisticRatingArabic(value: any) {
+  const rating = String(value ?? "").trim().toLowerCase();
+
+  const map: Record<string, string> = {
+    excellent: "ممتاز",
+    good: "جيد",
+    medium: "متوسط",
+    weak: "ضعيف",
+  };
+
+  return map[rating] ?? "";
+}
+
+function addReadySubmissionExportColumns(row: AnyRow) {
+  const rawData = row.raw_data && typeof row.raw_data === "object" ? row.raw_data : {};
+
+  const rating =
+    firstNonBlank(row.artistic_rating, row.management_artistic_rating) || "";
+
+  const enriched: AnyRow = {
+    ...row,
+
+    // Arabic rating required by the final Ready Submissions template.
+    artistic_rating_ar: artisticRatingArabic(rating),
+
+    // These three should use the proofreader/reviewer-edited columns first,
+    // then fall back to original imported raw_data if the edited column is blank.
+    "Did anyone or anything influence your idea (family, artist, place)?":
+      firstNonBlank(
+        row.influence_idea_source,
+        rawValue(
+          rawData,
+          "Did anyone or anything influence your idea (family, artist, place)?"
+        )
+      ),
+
+    "What was the most enjoyable part of creating your work?":
+      firstNonBlank(
+        row.most_enjoyable_part,
+        rawValue(rawData, "What was the most enjoyable part of creating your work?")
+      ),
+
+    "What elements did you focus on, and why?":
+      firstNonBlank(
+        row.focused_elements,
+        rawValue(rawData, "What elements did you focus on, and why?")
+      ),
+
+    // Imported registration/artwork fields that are not normal submission columns.
+    GroupName: firstNonBlank(row.group_name, rawValue(rawData, "GroupName")),
+    NumberOfStudents: rawValue(rawData, "NumberOfStudents"),
+    participating_students_names_arabic: rawValue(
+      rawData,
+      "ParticipatingStudentsNamesAr"
+    ),
+    RegistrationType: rawValue(rawData, "RegistrationType"),
+    ArtWorkMedium: rawValue(rawData, "ArtWorkMedium"),
+    Length: rawValue(rawData, "Length"),
+    Breadth: rawValue(rawData, "Breadth"),
+    Width: rawValue(rawData, "Width"),
+  };
+
+  // raw_data is used internally for fallback values, but it should not appear as
+  // a huge JSON column or raw_data.* columns in the exported Excel sheets.
+  delete enriched.raw_data;
+
+  return enriched;
+}
+
+function prepareSubmissionRowsForExport(rows: AnyRow[]) {
+  return rows.map(addReadySubmissionExportColumns);
+}
+
 async function fetchSubmissionRows() {
-  return fetchPagedResilient("submissions", PREFERRED_SUBMISSION_COLUMNS, {
-    order: { column: "id", ascending: true },
-    pageSize: 200,
-  });
+  const rows = await fetchPagedResilient(
+    "submissions",
+    PREFERRED_SUBMISSION_COLUMNS,
+    {
+      order: { column: "id", ascending: true },
+      pageSize: 200,
+    }
+  );
+
+  return prepareSubmissionRowsForExport(rows);
 }
 
 async function workbookWithSheet(sheetName: string, rows: AnyRow[]) {
