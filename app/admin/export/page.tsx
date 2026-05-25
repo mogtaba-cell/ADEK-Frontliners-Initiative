@@ -60,9 +60,9 @@ export default async function ExportPage({
         <h1>Export & Backup</h1>
 
         <p className="muted">
-          Use this button to create a dated folder in Google Shared Drive and
-          upload the analytics PDF, activity log, all submissions workbook,
-          ready submissions workbook, and export summary.
+          Manual platform export is locked to protect Vercel CPU usage. Use the
+          local Ready Submissions export script whenever possible. Only unlock
+          this export if you intentionally need the full Google Drive export.
         </p>
 
         {success && (
@@ -97,7 +97,9 @@ export default async function ExportPage({
         </p>
 
         {exportError ? (
-          <p className="muted">Could not load export history: {exportError.message}</p>
+          <p className="muted">
+            Could not load export history: {exportError.message}
+          </p>
         ) : (
           <div className="table-wrap">
             <table>

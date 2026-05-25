@@ -16,6 +16,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const EXPORT_TIME_ZONE = "Asia/Dubai";
+const MANUAL_EXPORT_PASSWORD = process.env.MANUAL_EXPORT_PASSWORD || "726642";
 
 type ExportFileInfo = {
   id: string;
@@ -63,6 +64,14 @@ function textValue(form: FormData, key: string) {
 
 function errorMessage(error: any) {
   return error?.message ?? "Google Drive export failed.";
+}
+
+function validateManualExportPassword(form: FormData) {
+  const submittedPassword = textValue(form, "export_password");
+
+  if (!submittedPassword || submittedPassword !== MANUAL_EXPORT_PASSWORD) {
+    throw new Error("Invalid manual export password.");
+  }
 }
 
 async function createExportBatch({
@@ -213,8 +222,6 @@ async function handleAnalytics(form: FormData) {
   if (uploadedPdf instanceof File && uploadedPdf.size > 0) {
     pdfBuffer = Buffer.from(await uploadedPdf.arrayBuffer());
   } else {
-    // Fallback for direct/API usage. The browser export page normally sends the
-    // PDF it captured client-side, which avoids spending serverless runtime here.
     pdfBuffer = await buildAnalyticsDashboardPdfBuffer();
   }
 
@@ -364,9 +371,10 @@ async function handleSummary(form: FormData, user: any) {
   });
 }
 
-
 export async function GET(req: Request) {
-  return NextResponse.redirect(new URL("/admin/export", req.url), { status: 303 });
+  return NextResponse.redirect(new URL("/admin/export", req.url), {
+    status: 303,
+  });
 }
 
 export async function POST(req: Request) {
@@ -376,14 +384,13 @@ export async function POST(req: Request) {
 
   try {
     const user = await requireUser(["admin"]);
-
-    if (action === "start") {
-      return await handleStart(user);
-    }
-
     const form = await req.formData();
+
+    validateManualExportPassword(form);
+
     batchId = textValue(form, "batch_id") || null;
 
+    if (action === "start") return await handleStart(user);
     if (action === "analytics") return await handleAnalytics(form);
     if (action === "activity") return await handleActivity(form);
     if (action === "submissions") return await handleSubmissions(form);
