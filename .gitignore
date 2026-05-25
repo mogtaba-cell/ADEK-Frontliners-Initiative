@@ -30,3 +30,5 @@ Thumbs.db
 # zip backups
 *.zip
 .vercel
+
+exports/
