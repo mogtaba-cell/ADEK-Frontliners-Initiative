@@ -8,6 +8,20 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const ANALYTICS_PDF_PASSWORD =
+  process.env.ANALYTICS_PDF_PASSWORD ||
+  process.env.MANUAL_EXPORT_PASSWORD ||
+  "726642";
+
+function validateAnalyticsPdfPassword(req: Request) {
+  const submittedPassword =
+    req.headers.get("x-analytics-pdf-password")?.trim() ?? "";
+
+  if (!submittedPassword || submittedPassword !== ANALYTICS_PDF_PASSWORD) {
+    throw new Error("INVALID_ANALYTICS_PDF_PASSWORD");
+  }
+}
+
 export async function GET(req: Request) {
   try {
     await requireUser([
@@ -19,6 +33,8 @@ export async function GET(req: Request) {
       "reviewer",
       "adek_hq",
     ]);
+
+    validateAnalyticsPdfPassword(req);
 
     const url = new URL(req.url);
     const filters = filtersFromSearchParams(url.searchParams);
@@ -37,6 +53,15 @@ export async function GET(req: Request) {
     });
   } catch (error: any) {
     console.error("Analytics PDF export failed:", error);
+
+    if (error.message === "INVALID_ANALYTICS_PDF_PASSWORD") {
+      return NextResponse.json(
+        {
+          error: "Invalid Analytics PDF password.",
+        },
+        { status: 403 }
+      );
+    }
 
     return NextResponse.json(
       {
