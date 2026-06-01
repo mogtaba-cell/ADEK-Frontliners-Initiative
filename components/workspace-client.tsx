@@ -542,6 +542,117 @@ function CorrectionSourceCard({
   );
 }
 
+function ManagementReviewContextCard({
+  assignment,
+  submission,
+}: {
+  assignment: Assignment;
+  submission: any;
+}) {
+  const evaluatorComment = displayText(submission?.evaluator_comment, "");
+  const evaluatorDecision = displayText(submission?.evaluation_decision, "");
+  const artisticRating = displayText(submission?.artistic_rating, "");
+  const managementSource = getCorrectionSourceLabel(
+    assignment.correction_source_phase ?? "adek_evaluation"
+  );
+
+  const literaryComment = displayText(
+    submission?.literary_proofreader_comment,
+    ""
+  );
+  const literaryUpdatedContent = displayText(
+    submission?.literary_updated_content,
+    ""
+  );
+
+  const hasEvaluatorContext =
+    evaluatorComment ||
+    evaluatorDecision ||
+    artisticRating ||
+    submission?.cultural_authenticity !== null ||
+    submission?.artistic_excellence !== null ||
+    submission?.ethical_public_appropriateness !== null;
+
+  const hasLiteraryContext = literaryComment || literaryUpdatedContent;
+
+  if (!hasEvaluatorContext && !hasLiteraryContext && !assignment.correction_reason) {
+    return null;
+  }
+
+  return (
+    <div className="card">
+      <h3 style={{ marginTop: 0 }}>Management Review Details</h3>
+
+      <dl className="detail-grid">
+        <DetailField label="Review requested from" value={managementSource} />
+
+        {assignment.correction_reason && (
+          <DetailField
+            label="Review reason"
+            value={
+              correctionReasonLabels[assignment.correction_reason] ??
+              assignment.correction_reason
+            }
+          />
+        )}
+
+        {evaluatorComment && (
+          <DetailField label="Evaluator comment" value={evaluatorComment} />
+        )}
+
+        {evaluatorDecision && (
+          <DetailField label="Evaluator decision" value={evaluatorDecision} />
+        )}
+
+        {artisticRating && (
+          <DetailField
+            label="ADEK Artistic Rating"
+            value={artisticRatingLabels[artisticRating] ?? artisticRating}
+          />
+        )}
+
+        {submission?.cultural_authenticity !== null &&
+          submission?.cultural_authenticity !== undefined && (
+            <DetailField
+              label="Cultural Authenticity"
+              value={submission.cultural_authenticity ? "Yes" : "No"}
+            />
+          )}
+
+        {submission?.artistic_excellence !== null &&
+          submission?.artistic_excellence !== undefined && (
+            <DetailField
+              label="Artistic Excellence"
+              value={submission.artistic_excellence ? "Yes" : "No"}
+            />
+          )}
+
+        {submission?.ethical_public_appropriateness !== null &&
+          submission?.ethical_public_appropriateness !== undefined && (
+            <DetailField
+              label="Ethical / Public Appropriateness"
+              value={submission.ethical_public_appropriateness ? "Yes" : "No"}
+            />
+          )}
+
+        {literaryComment && (
+          <DetailField
+            label="Literary proofreader comment"
+            value={literaryComment}
+          />
+        )}
+
+        {literaryUpdatedContent && (
+          <DetailField
+            label="Literary updated content"
+            value={literaryUpdatedContent}
+          />
+        )}
+      </dl>
+    </div>
+  );
+}
+
 function LiteraryCriteriaCard() {
   return (
     <div className="card">
@@ -984,6 +1095,13 @@ export function WorkspaceClient({
 
               {phase === "coordinator_check" && (
                 <CorrectionSourceCard
+                  assignment={selectedAssignment}
+                  submission={selectedSubmission}
+                />
+              )}
+
+              {phase === "management_review" && (
+                <ManagementReviewContextCard
                   assignment={selectedAssignment}
                   submission={selectedSubmission}
                 />
