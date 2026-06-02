@@ -55,6 +55,33 @@ async function safeUpdate(
   }
 }
 
+async function addWorkflowComment({
+  submissionId,
+  authorId,
+  phase,
+  comment,
+}: {
+  submissionId: string;
+  authorId: string;
+  phase: WorkflowPhase;
+  comment?: string | null;
+}) {
+  const text = String(comment ?? "").trim();
+
+  if (!text) return;
+
+  const { error } = await supabaseAdmin.from("comments").insert({
+    submission_id: submissionId,
+    author_id: authorId,
+    phase,
+    comment_text: text,
+  });
+
+  if (error) {
+    throw new Error(`comments insert failed: ${error.message}`);
+  }
+}
+
 async function getAssignment(assignmentId: string) {
   const { data, error } = await supabaseAdmin
     .from("assignments")
@@ -606,17 +633,51 @@ export async function POST(req: Request) {
     }
 
     if (phase === "management_review") {
+      const managementAction = String(form.get("management_action") ?? "complete");
       const managementDecision = String(form.get("management_decision") ?? "approved");
       const managementArtisticRating = textValue(
         form,
         "management_artistic_rating"
       );
-      const completedAt = nowIso();
+      const managementComment = textValue(form, "management_comment");
+      const timestamp = nowIso();
 
-      if (managementDecision === "disqualified") {
+      await addWorkflowComment({
+        submissionId,
+        authorId: user.id,
+        phase,
+        comment: managementComment,
+      });
+
+      if (managementAction === "pending") {
+        await safeUpdate(
+          "assignments",
+          {
+            status: "in_progress",
+            decision: "pending",
+            correction_notes: managementComment,
+            completed_at: null,
+            updated_at: timestamp,
+          },
+          "id",
+          assignmentId
+        );
+
+        await safeUpdate(
+          "submissions",
+          {
+            workflow_status: "needs_management_review",
+            management_artistic_rating: managementArtisticRating,
+            updated_at: timestamp,
+          },
+          "id",
+          submissionId
+        );
+      } else if (managementDecision === "disqualified") {
         await markAssignmentCompleted(assignmentId, {
           decision: "disqualified",
-          completed_at: completedAt,
+          correction_notes: managementComment,
+          completed_at: timestamp,
         });
 
         await safeUpdate(
@@ -625,8 +686,8 @@ export async function POST(req: Request) {
             workflow_status: "disqualified",
             management_decision: "disqualified",
             management_artistic_rating: managementArtisticRating,
-            completed_at: completedAt,
-            updated_at: completedAt,
+            completed_at: timestamp,
+            updated_at: timestamp,
           },
           "id",
           submissionId
@@ -634,7 +695,8 @@ export async function POST(req: Request) {
       } else {
         await markAssignmentCompleted(assignmentId, {
           decision: "approved",
-          completed_at: completedAt,
+          correction_notes: managementComment,
+          completed_at: timestamp,
         });
 
         await safeUpdate(
@@ -643,8 +705,8 @@ export async function POST(req: Request) {
             workflow_status: "selected_for_proofreading",
             management_decision: "approved",
             management_artistic_rating: managementArtisticRating,
-            literary_management_approved_at: completedAt,
-            updated_at: completedAt,
+            literary_management_approved_at: timestamp,
+            updated_at: timestamp,
           },
           "id",
           submissionId
@@ -652,13 +714,14 @@ export async function POST(req: Request) {
 
         if (assignment.correction_source_phase === "literary_proofreading") {
           const sourceAssignmentId = assignment.correction_source_assignment_id;
-          const returnToUserId = assignment.return_to_user_id ?? assignment.requested_by_user_id;
+          const returnToUserId =
+            assignment.return_to_user_id ?? assignment.requested_by_user_id;
 
           if (sourceAssignmentId && returnToUserId) {
             await reactivateAssignmentForReturn(sourceAssignmentId, user.id, {
               assignedTo: returnToUserId,
               requestedByUserId: user.id,
-              correctionNotes: assignment.correction_notes ?? null,
+              correctionNotes: managementComment ?? assignment.correction_notes ?? null,
             });
           }
         } else {
@@ -691,9 +754,13 @@ export async function POST(req: Request) {
 
     await audit({
       actorId: user.id,
-      action: phase === "coordinator_check" && String(form.get("coordinator_action") ?? "") === "save_progress"
-        ? "work_saved"
-        : "work_completed",
+      action:
+        (phase === "coordinator_check" &&
+          String(form.get("coordinator_action") ?? "") === "save_progress") ||
+        (phase === "management_review" &&
+          String(form.get("management_action") ?? "") === "pending")
+          ? "work_saved"
+          : "work_completed",
       entityType: "assignment",
       entityId: assignmentId,
       before: {

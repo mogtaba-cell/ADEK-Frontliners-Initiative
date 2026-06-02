@@ -4,6 +4,7 @@ import { Nav } from "@/components/nav";
 import { getCurrentUser, homeForRole } from "@/lib/auth";
 import { getSubmissionFilterOptions } from "@/lib/filter-options";
 import { firstParam } from "@/lib/pagination";
+import { getFilteredSubmissionIds } from "@/lib/submission-query";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import type { Role, WorkflowPhase } from "@/lib/types";
 import { phaseLabels } from "@/lib/workflow";
@@ -200,6 +201,7 @@ function formatViewLabel(view: string) {
   if (view === "sent_for_correction") return "sent for correction";
   if (view === "sent_for_review") return "sent for review";
   if (view === "needs_review") return "needs review";
+  if (view === "pending") return "pending";
   if (view === "waiting_for_response") return "waiting for response";
 
   return view.replaceAll("_", " ");
@@ -218,10 +220,12 @@ function statusesForView(phase: WorkflowPhase, view: string) {
     return ["completed"];
   }
 
+  if (phase === "management_review" && view === "pending") {
+    return ["in_progress"];
+  }
+
   if (view === "needs_review") {
-    return phase === "management_review"
-      ? ["assigned", "in_progress"]
-      : ["completed"];
+    return phase === "management_review" ? ["assigned"] : ["completed"];
   }
 
   if (view === "sent_for_review") return ["sent_for_review"];
@@ -253,6 +257,10 @@ function applySubmissionWorkflowGate(
 function applyDecisionGate(query: any, phase: WorkflowPhase, view: string) {
   if (view === "approved") return query.eq("decision", "approved");
   if (view === "disqualified") return query.eq("decision", "disqualified");
+
+  if (phase === "management_review" && view === "pending") {
+    return query.eq("decision", "pending");
+  }
 
   if (view === "needs_review" && phase !== "management_review") {
     return query.eq("decision", "needs_review");
@@ -297,68 +305,6 @@ function applyProofreaderTypeGate(
   }
 
   return query;
-}
-
-function sanitizePostgrestSearch(value: string) {
-  return value
-    .trim()
-    .replaceAll("%", "")
-    .replace(/[(),]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function applySchoolGate(query: any, schoolValue: string) {
-  if (!schoolValue) return query;
-
-  if (schoolValue === "unknown") {
-    return query
-      .is("submissions.institution_name", null)
-      .is("submissions.institution_ref_number", null);
-  }
-
-  if (schoolValue.startsWith("ref:")) {
-    return query.eq("submissions.institution_ref_number", schoolValue.slice(4));
-  }
-
-  if (schoolValue.startsWith("name:")) {
-    return query.eq("submissions.institution_name", schoolValue.slice(5));
-  }
-
-  return query.ilike("submissions.institution_name", `%${sanitizePostgrestSearch(schoolValue)}%`);
-}
-
-function applyWorkspaceSubmissionFilters({
-  query,
-  pathway,
-  school,
-  search,
-}: {
-  query: any;
-  pathway?: string;
-  school?: string;
-  search?: string;
-}) {
-  let nextQuery = query;
-
-  if (pathway) {
-    nextQuery = nextQuery.eq("submissions.art_pathway_name_en", pathway);
-  }
-
-  if (school) {
-    nextQuery = applySchoolGate(nextQuery, school);
-  }
-
-  const q = sanitizePostgrestSearch(search ?? "");
-
-  if (q.length >= 2) {
-    nextQuery = nextQuery.or(
-      `reference_id.ilike.%${q}%,institution_name.ilike.%${q}%,artwork_title_en.ilike.%${q}%,artwork_title_ar.ilike.%${q}%`,
-      { foreignTable: "submissions" },
-    );
-  }
-
-  return nextQuery;
 }
 
 function buildAssignmentCountQuery({
@@ -454,14 +400,16 @@ async function getKpiCards({
   }
 
   if (phase === "management_review") {
-    const [remaining, approved, disqualified] = await Promise.all([
+    const [remaining, pending, approved, disqualified] = await Promise.all([
       getAssignmentCount({ userId, phase, view: "needs_review" }),
+      getAssignmentCount({ userId, phase, view: "pending" }),
       getAssignmentCount({ userId, phase, view: "approved" }),
       getAssignmentCount({ userId, phase, view: "disqualified" }),
     ]);
 
     return [
       { label: "Needs Review", value: remaining },
+      { label: "Pending", value: pending },
       { label: "Approved by Me", value: approved },
       { label: "Disqualified by Me", value: disqualified },
     ];
@@ -614,6 +562,7 @@ function ViewOptions({
     return (
       <>
         <option value="needs_review">Needs Review</option>
+        <option value="pending">Pending</option>
         <option value="approved">Approved</option>
         <option value="disqualified">Disqualified</option>
         <option value="all">All</option>
@@ -735,14 +684,24 @@ export async function WorkQueuePage({
   const isCoordinator = phase === "coordinator_check";
   const statuses = statusesForView(phase, view);
 
-  const [options, kpiCards, coordinatorSchoolOptions] = await Promise.all([
+  const [
+    options,
+    kpiCards,
+    filteredSubmissionIds,
+    coordinatorSchoolOptions,
+    schoolFilteredSubmissionIds,
+  ] = await Promise.all([
     getSubmissionFilterOptions(),
     getKpiCards({
       userId: user.id,
       phase,
       proofreaderType: user.proofreader_type ?? null,
     }),
+    getFilteredSubmissionIds({ pathway, search }),
     isCoordinator ? getCoordinatorSchoolOptions(user.id) : Promise.resolve([]),
+    isCoordinator && school
+      ? getCoordinatorSchoolSubmissionIds(user.id, school)
+      : Promise.resolve(null),
   ]);
 
   let query = supabaseAdmin
@@ -783,15 +742,25 @@ export async function WorkQueuePage({
   query = applyCoordinatorWaitingGate(query, phase, view);
   query = applyCoordinatorCorrectionSafetyGate(query, phase);
   query = applyProofreaderTypeGate(query, phase, user.proofreader_type ?? null);
-  query = applyWorkspaceSubmissionFilters({
-    query,
-    pathway,
-    school: isCoordinator ? school : "",
-    search,
-  });
 
   if (correctionReason) {
     query = query.eq("correction_reason", correctionReason);
+  }
+
+  let effectiveSubmissionIds = filteredSubmissionIds ?? null;
+
+  if (schoolFilteredSubmissionIds) {
+    const schoolSet = new Set(schoolFilteredSubmissionIds);
+
+    effectiveSubmissionIds = effectiveSubmissionIds
+      ? effectiveSubmissionIds.filter((id) => schoolSet.has(id))
+      : schoolFilteredSubmissionIds;
+  }
+
+  if (effectiveSubmissionIds && effectiveSubmissionIds.length === 0) {
+    query = query.eq("submission_id", "00000000-0000-0000-0000-000000000000");
+  } else if (effectiveSubmissionIds) {
+    query = query.in("submission_id", effectiveSubmissionIds);
   }
 
   const { data: assignmentData, count, error } = await query;
