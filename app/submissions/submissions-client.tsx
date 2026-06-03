@@ -10,6 +10,10 @@ const artisticRatingLabels: Record<string, string> = {
   medium: "متوسط / Medium",
   good: "جيد / Good",
   excellent: "ممتاز / Excellent",
+  "ضعيف": "ضعيف / Weak",
+  "متوسط": "متوسط / Medium",
+  "جيد": "جيد / Good",
+  "ممتاز": "ممتاز / Excellent",
 };
 
 function rawText(rawData: any, keys: string[]) {
@@ -48,6 +52,12 @@ function fallbackText(
   }
 
   return rawText(submission.raw_data, rawKeys);
+}
+
+function artisticRatingLabel(value: unknown) {
+  const key = String(value ?? "").trim().toLowerCase();
+  if (!key) return "—";
+  return artisticRatingLabels[key] ?? String(value);
 }
 
 function DetailField({ label, value }: { label: string; value: unknown }) {
@@ -232,6 +242,7 @@ export function SubmissionsClient({
                 <th>Group Name</th>
                 <th>Region</th>
                 <th>Pathway</th>
+                <th>ADEK Artistic Rating</th>
                 <th>Updated File</th>
                 <th>Action</th>
               </tr>
@@ -268,6 +279,8 @@ export function SubmissionsClient({
                     <td>{displayText(submission.group_name)}</td>
                     <td>{displayText(submission.school_region)}</td>
                     <td>{displayText(submission.art_pathway_name_en)}</td>
+
+                    <td>{artisticRatingLabel(submission.artistic_rating)}</td>
 
                     <td>
                       {submission.updated_artwork_file_url ? (
@@ -312,7 +325,7 @@ export function SubmissionsClient({
 
               {submissions.length === 0 && (
                 <tr>
-                  <td colSpan={11}>
+                  <td colSpan={12}>
                     No submissions found for the selected filters.
                   </td>
                 </tr>
@@ -398,8 +411,7 @@ function SubmissionModal({
                 <DetailField
                   label="ADEK Artistic Rating"
                   value={
-                    artisticRatingLabels[submission.artistic_rating] ??
-                    submission.artistic_rating
+                    artisticRatingLabel(submission.artistic_rating)
                   }
                 />
               )}
@@ -408,8 +420,7 @@ function SubmissionModal({
                 <DetailField
                   label="Management Artistic Rating"
                   value={
-                    artisticRatingLabels[submission.management_artistic_rating] ??
-                    submission.management_artistic_rating
+                    artisticRatingLabel(submission.management_artistic_rating)
                   }
                 />
               )}

@@ -16,6 +16,7 @@ type FilterOptions = {
   subpathways: string[];
   regions: string[];
   schoolTypes: string[];
+  artisticRatings: string[];
 };
 
 const emptyOptions: FilterOptions = {
@@ -25,7 +26,24 @@ const emptyOptions: FilterOptions = {
   subpathways: [],
   regions: [],
   schoolTypes: [],
+  artisticRatings: [],
 };
+
+const artisticRatingLabels: Record<string, string> = {
+  weak: "ضعيف / Weak",
+  medium: "متوسط / Medium",
+  good: "جيد / Good",
+  excellent: "ممتاز / Excellent",
+  "ضعيف": "ضعيف / Weak",
+  "متوسط": "متوسط / Medium",
+  "جيد": "جيد / Good",
+  "ممتاز": "ممتاز / Excellent",
+};
+
+function labelArtisticRating(value: string) {
+  const key = value.trim().toLowerCase();
+  return artisticRatingLabels[key] ?? value;
+}
 
 function ErrorBox({
   title,
@@ -83,6 +101,7 @@ export default async function SubmissionsPage({
   const subpathway = firstParam(params.subpathway);
   const region = firstParam(params.region);
   const schoolType = firstParam(params.school_type);
+  const artisticRating = firstParam(params.artistic_rating);
   const search = firstParam(params.search);
   const dateFrom = firstParam(params.date_from);
   const dateTo = firstParam(params.date_to);
@@ -112,6 +131,7 @@ export default async function SubmissionsPage({
   if (subpathway) query = query.eq("art_sub_pathway_name_en", subpathway);
   if (region) query = query.eq("school_region", region);
   if (schoolType) query = query.eq("institution_type", schoolType);
+  if (artisticRating) query = query.eq("artistic_rating", artisticRating);
   if (dateFrom) query = query.gte("submission_date_value", dateFrom);
   if (dateTo) query = query.lte("submission_date_value", dateTo);
 
@@ -141,6 +161,7 @@ export default async function SubmissionsPage({
     subpathway,
     region,
     school_type: schoolType,
+    artistic_rating: artisticRating,
     search,
     date_from: dateFrom,
     date_to: dateTo,
@@ -267,6 +288,16 @@ export default async function SubmissionsPage({
               <option value="">All</option>
               {options.schoolTypes.map((x) => (
                 <option key={x} value={x}>{x}</option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            <span className="small">ADEK Artistic Rating</span>
+            <select className="input" name="artistic_rating" defaultValue={artisticRating}>
+              <option value="">All</option>
+              {options.artisticRatings.map((x) => (
+                <option key={x} value={x}>{labelArtisticRating(x)}</option>
               ))}
             </select>
           </label>
