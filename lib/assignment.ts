@@ -106,21 +106,19 @@ function schoolKeyFromSubmission(submission: {
 
 function isLiteraryPathway(
   pathway: string | null | undefined,
-  subpathway?: string | null | undefined,
+  _subpathway?: string | null | undefined,
   pathwayAr?: string | null | undefined,
-  subpathwayAr?: string | null | undefined
+  _subpathwayAr?: string | null | undefined
 ) {
-  const combined = `${pathway ?? ""} ${subpathway ?? ""} ${
-    pathwayAr ?? ""
-  } ${subpathwayAr ?? ""}`.toLowerCase();
+  // Literary proofreading is required only for the main pathway
+  // "Literary Expressions". Do not infer it from subpathway text.
+  const pathwayEn = String(pathway ?? "").trim().toLowerCase();
+  const pathwayArabic = String(pathwayAr ?? "").trim().toLowerCase();
 
   return (
-    combined.includes("literary") ||
-    combined.includes("الأدبية") ||
-    combined.includes("الادبية") ||
-    combined.includes("ادبية") ||
-    combined.includes("التعبيرات الأدبية") ||
-    combined.includes("التعبيرات الادبية")
+    pathwayEn === "literary expressions" ||
+    pathwayArabic === "التعبيرات الأدبية" ||
+    pathwayArabic === "التعبيرات الادبية"
   );
 }
 
@@ -279,6 +277,69 @@ async function getCoordinatorForSchool(submissionId: string) {
   });
 }
 
+async function getAssignmentById(assignmentId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("assignments")
+    .select(
+      "id,submission_id,phase,status,assigned_to,proofreader_type,correction_source_phase,correction_source_assignment_id"
+    )
+    .eq("id", assignmentId)
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function cancelDuplicateActiveAssignmentsForSource(
+  sourceAssignment: {
+    id: string;
+    submission_id: string;
+    phase: WorkflowPhase;
+    proofreader_type?: ProofreaderType | null;
+  },
+  actorId?: string
+) {
+  let query = supabaseAdmin
+    .from("assignments")
+    .update({
+      status: "cancelled",
+      decision: "cancelled_duplicate_return",
+      completed_at: null,
+      updated_at: new Date().toISOString(),
+      assigned_by: actorId ?? null,
+    })
+    .eq("submission_id", sourceAssignment.submission_id)
+    .eq("phase", sourceAssignment.phase)
+    .neq("id", sourceAssignment.id)
+    .in("status", ["assigned", "in_progress"]);
+
+  if (sourceAssignment.phase === "proofreading") {
+    query = query.eq("proofreader_type", sourceAssignment.proofreader_type ?? "general");
+  }
+
+  if (sourceAssignment.phase === "literary_proofreading" && sourceAssignment.proofreader_type) {
+    query = query.eq("proofreader_type", sourceAssignment.proofreader_type);
+  }
+
+  const { error } = await query;
+  if (error) throw error;
+}
+
+function activeAssignmentMatchDescription(
+  phase: WorkflowPhase,
+  proofreaderType?: ProofreaderType | null
+) {
+  if (phase === "proofreading") {
+    return proofreaderType ? ` for ${proofreaderType}` : " for general proofreading";
+  }
+
+  if (phase === "literary_proofreading") {
+    return proofreaderType ? ` for ${proofreaderType}` : " for literary proofreading";
+  }
+
+  return "";
+}
+
 export async function autoAssignOne(
   submissionId: string,
   phase: WorkflowPhase,
@@ -294,13 +355,27 @@ export async function autoAssignOne(
     correctionSourceAssignmentId?: string | null;
   }
 ) {
-  const existing = await supabaseAdmin
+  let existingQuery = supabaseAdmin
     .from("assignments")
-    .select("id,status")
+    .select("id,status,assigned_to,proofreader_type,correction_source_assignment_id")
     .eq("submission_id", submissionId)
     .eq("phase", phase)
     .in("status", activeAssignmentStatuses)
-    .maybeSingle();
+    .order("updated_at", { ascending: false })
+    .limit(1);
+
+  if (phase === "proofreading") {
+    existingQuery = existingQuery.eq(
+      "proofreader_type",
+      options?.proofreaderType ?? "general"
+    );
+  }
+
+  if (phase === "literary_proofreading" && options?.proofreaderType) {
+    existingQuery = existingQuery.eq("proofreader_type", options.proofreaderType);
+  }
+
+  const existing = await existingQuery.maybeSingle();
 
   if (existing.error) throw existing.error;
 
@@ -308,7 +383,10 @@ export async function autoAssignOne(
     return {
       id: existing.data.id,
       skipped: true,
-      reason: "Already has an active task for this phase.",
+      reason: `Already has an active ${phase} task${activeAssignmentMatchDescription(
+        phase,
+        options?.proofreaderType
+      )}.`,
     };
   }
 
@@ -365,8 +443,21 @@ export async function reactivateAssignmentForReturn(
     correctionNotes?: string | null;
   }
 ) {
+  const sourceAssignment = await getAssignmentById(assignmentId);
+
+  await cancelDuplicateActiveAssignmentsForSource(
+    {
+      id: sourceAssignment.id,
+      submission_id: sourceAssignment.submission_id,
+      phase: sourceAssignment.phase as WorkflowPhase,
+      proofreader_type: sourceAssignment.proofreader_type as ProofreaderType | null,
+    },
+    actorId
+  );
+
   const updateValues: Record<string, any> = {
     status: "assigned",
+    decision: null,
     completed_at: null,
     started_at: null,
     locked_by: null,
@@ -385,7 +476,7 @@ export async function reactivateAssignmentForReturn(
     .from("assignments")
     .update(updateValues)
     .eq("id", assignmentId)
-    .select("id,assigned_to")
+    .select("id,assigned_to,phase,status,decision,submission_id")
     .single();
 
   if (error) throw error;
@@ -398,7 +489,8 @@ async function hasAnyPhaseAssignment(submissionId: string, phase: WorkflowPhase)
     .from("assignments")
     .select("id", { count: "exact", head: true })
     .eq("submission_id", submissionId)
-    .eq("phase", phase);
+    .eq("phase", phase)
+    .neq("status", "cancelled");
 
   if (error) throw error;
 

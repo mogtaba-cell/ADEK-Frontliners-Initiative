@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { labelWorkflowStatus } from "@/lib/workflow";
+import { labelPhase, labelWorkflowStatus } from "@/lib/workflow";
 
 type Submission = Record<string, any>;
 
@@ -106,6 +106,210 @@ function SourceButtons({ submission }: { submission: Submission }) {
         >
           Open Updated File
         </a>
+      )}
+    </div>
+  );
+}
+
+function formatDateTime(value: unknown) {
+  if (!value) return "—";
+
+  const date = new Date(String(value));
+
+  if (Number.isNaN(date.getTime())) return String(value);
+
+  return date.toLocaleString();
+}
+
+function displayProfile(profile: any, fallback = "—") {
+  if (!profile) return fallback;
+
+  return profile.full_name || profile.email || fallback;
+}
+
+function phaseLabel(value: unknown) {
+  const text = String(value ?? "").trim();
+  if (!text) return "—";
+
+  try {
+    return labelPhase(text as any);
+  } catch {
+    return text;
+  }
+}
+
+function statusLabel(value: unknown) {
+  const status = String(value ?? "").trim();
+
+  if (!status) return "—";
+
+  const labels: Record<string, string> = {
+    assigned: "Assigned / Remaining",
+    in_progress: "In Progress / Remaining",
+    returned_for_correction: "Sent for Coordinator Correction",
+    sent_for_review: "Sent for Management Review",
+    completed: "Completed",
+    cancelled: "Cancelled",
+  };
+
+  return labels[status] ?? status;
+}
+
+function decisionLabel(value: unknown) {
+  const decision = String(value ?? "").trim();
+
+  if (!decision) return "—";
+
+  const labels: Record<string, string> = {
+    approved: "Approved",
+    needs_review: "Needs Management Review",
+    needs_correction: "Needs Correction",
+    corrected: "Corrected",
+    completed: "Completed",
+    disqualified: "Disqualified",
+    pending: "Pending",
+    cancelled_duplicate_return: "Cancelled Duplicate Return Task",
+    cancelled_invalid_before_evaluator_completion: "Cancelled Invalid Early Task",
+    cancelled_by_workflow_repair: "Cancelled by Workflow Repair",
+  };
+
+  return labels[decision] ?? decision;
+}
+
+function taskRelationshipText(task: any) {
+  const parts: string[] = [];
+
+  if (task.assigned_by_profile) {
+    parts.push(`Assigned by ${displayProfile(task.assigned_by_profile)}`);
+  }
+
+  if (task.requested_by_profile) {
+    parts.push(`Requested by ${displayProfile(task.requested_by_profile)}`);
+  }
+
+  if (task.return_to_profile) {
+    parts.push(`Returns to ${displayProfile(task.return_to_profile)}`);
+  }
+
+  if (task.correction_source_phase) {
+    parts.push(`Source: ${phaseLabel(task.correction_source_phase)}`);
+  }
+
+  return parts.length ? parts.join(" • ") : "—";
+}
+
+function buildStoredSubmissionComments(submission: Submission) {
+  const comments: Array<{ label: string; text: string }> = [];
+
+  const evaluatorComment = String(submission.evaluator_comment ?? "").trim();
+  const literaryComment = String(submission.literary_proofreader_comment ?? "").trim();
+
+  if (evaluatorComment) {
+    comments.push({ label: "ADEK Evaluator Comment", text: evaluatorComment });
+  }
+
+  if (literaryComment) {
+    comments.push({ label: "Literary Proofreader Comment", text: literaryComment });
+  }
+
+  return comments;
+}
+
+function WorkflowComments({ submission }: { submission: Submission }) {
+  const comments = Array.isArray(submission.__comments) ? submission.__comments : [];
+  const storedComments = buildStoredSubmissionComments(submission);
+
+  return (
+    <div className="card" style={{ boxShadow: "none" }}>
+      <h3>Workflow Comments</h3>
+
+      {storedComments.length > 0 && (
+        <div className="grid" style={{ marginBottom: comments.length ? 16 : 0 }}>
+          {storedComments.map((comment) => (
+            <div
+              className="submission-text-block"
+              key={`${comment.label}-${comment.text}`}
+            >
+              <strong>{comment.label}</strong>
+              <div dir="auto">{comment.text}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {comments.length > 0 ? (
+        <div className="grid">
+          {comments.map((comment: any) => (
+            <div
+              className="submission-text-block"
+              key={comment.id ?? `${comment.created_at}-${comment.comment_text}`}
+            >
+              <strong>
+                {displayProfile(comment.author_profile, "User")}
+                {comment.author_profile?.role ? ` — ${comment.author_profile.role}` : ""}
+              </strong>
+              <div className="muted small">
+                {phaseLabel(comment.phase)} — {formatDateTime(comment.created_at)}
+              </div>
+              <div dir="auto">{displayText(comment.comment_text)}</div>
+            </div>
+          ))}
+        </div>
+      ) : storedComments.length === 0 ? (
+        <p className="muted">No workflow comments recorded for this artwork yet.</p>
+      ) : null}
+    </div>
+  );
+}
+
+function TaskFlow({ submission }: { submission: Submission }) {
+  const taskFlow = Array.isArray(submission.__taskFlow) ? submission.__taskFlow : [];
+
+  return (
+    <div className="card" style={{ boxShadow: "none" }}>
+      <h3>Task Flow</h3>
+
+      {taskFlow.length > 0 ? (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Created</th>
+                <th>Phase</th>
+                <th>Assigned To</th>
+                <th>Status</th>
+                <th>Decision</th>
+                <th>Proofreader Type</th>
+                <th>Return / Source</th>
+                <th>Completed</th>
+                <th>Notes / Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {taskFlow.map((task: any) => {
+                const notes = [task.correction_reason, task.correction_notes]
+                  .filter(Boolean)
+                  .join(": ");
+
+                return (
+                  <tr key={task.id}>
+                    <td>{formatDateTime(task.created_at)}</td>
+                    <td>{phaseLabel(task.phase)}</td>
+                    <td>{displayProfile(task.assigned_profile)}</td>
+                    <td>{statusLabel(task.status)}</td>
+                    <td>{decisionLabel(task.decision)}</td>
+                    <td>{displayText(task.proofreader_type)}</td>
+                    <td>{taskRelationshipText(task)}</td>
+                    <td>{formatDateTime(task.completed_at)}</td>
+                    <td dir="auto">{displayText(notes)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="muted">No task flow recorded for this artwork yet.</p>
       )}
     </div>
   );
@@ -526,6 +730,10 @@ function SubmissionModal({
               </button>
             </div>
           </form>
+
+          <WorkflowComments submission={submission} />
+
+          <TaskFlow submission={submission} />
         </div>
       </div>
     </div>

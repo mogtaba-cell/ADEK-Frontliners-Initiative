@@ -36,6 +36,8 @@ const allAssignmentStatuses = [
   "sent_for_review",
 ];
 
+const WORKSPACE_PAGE_SIZE = 1000;
+
 const correctionReasonLabels: Record<string, string> = {
   adek_file_quality: "Artwork File Quality / Clarity Issue",
   artwork_mismatch: "Artwork Mismatch",
@@ -88,29 +90,46 @@ function matchesSchoolOptionValue(submission: any, value: string) {
   return schoolName.toLowerCase().includes(value.toLowerCase());
 }
 
+async function fetchCoordinatorSchoolAssignmentRows(userId: string) {
+  const rows: any[] = [];
+
+  for (let from = 0; ; from += WORKSPACE_PAGE_SIZE) {
+    const to = from + WORKSPACE_PAGE_SIZE - 1;
+
+    const { data, error } = await supabaseAdmin
+      .from("assignments")
+      .select(
+        `
+        submission_id,
+        submissions!inner(
+          institution_name,
+          institution_ref_number
+        )
+        `,
+      )
+      .eq("assigned_to", userId)
+      .eq("phase", "coordinator_check")
+      .in("status", allAssignmentStatuses)
+      .range(from, to);
+
+    if (error) throw error;
+
+    const page = data ?? [];
+    rows.push(...page);
+
+    if (page.length < WORKSPACE_PAGE_SIZE) break;
+  }
+
+  return rows;
+}
+
 async function getCoordinatorSchoolOptions(
   userId: string,
 ): Promise<SchoolOption[]> {
-  const { data, error } = await supabaseAdmin
-    .from("assignments")
-    .select(
-      `
-      submission_id,
-      submissions!inner(
-        institution_name,
-        institution_ref_number
-      )
-      `,
-    )
-    .eq("assigned_to", userId)
-    .eq("phase", "coordinator_check")
-    .in("status", allAssignmentStatuses);
-
-  if (error) throw error;
-
+  const rows = await fetchCoordinatorSchoolAssignmentRows(userId);
   const schools = new Map<string, SchoolOption>();
 
-  for (const row of data ?? []) {
+  for (const row of rows) {
     const submission = Array.isArray((row as any).submissions)
       ? (row as any).submissions[0]
       : (row as any).submissions;
@@ -124,37 +143,25 @@ async function getCoordinatorSchoolOptions(
   );
 }
 
-async function getCoordinatorSchoolSubmissionIds(
-  userId: string,
-  schoolValue: string,
-) {
-  const { data, error } = await supabaseAdmin
-    .from("assignments")
-    .select(
-      `
-      submission_id,
-      submissions!inner(
-        institution_name,
-        institution_ref_number
-      )
-      `,
-    )
-    .eq("assigned_to", userId)
-    .eq("phase", "coordinator_check")
-    .in("status", allAssignmentStatuses);
+function applySchoolGate(query: any, schoolValue: string) {
+  if (!schoolValue) return query;
 
-  if (error) throw error;
+  if (schoolValue === "unknown") {
+    return query
+      .is("submissions.institution_name", null)
+      .is("submissions.institution_ref_number", null);
+  }
 
-  return (data ?? [])
-    .filter((row: any) => {
-      const submission = Array.isArray(row.submissions)
-        ? row.submissions[0]
-        : row.submissions;
+  if (schoolValue.startsWith("ref:")) {
+    return query.eq("submissions.institution_ref_number", schoolValue.slice(4));
+  }
 
-      return matchesSchoolOptionValue(submission, schoolValue);
-    })
-    .map((row: any) => row.submission_id)
-    .filter(Boolean);
+  if (schoolValue.startsWith("name:")) {
+    return query.eq("submissions.institution_name", schoolValue.slice(5));
+  }
+
+  // Backward compatibility for older URLs that still hold free-text school filters.
+  return query.ilike("submissions.institution_name", `%${schoolValue}%`);
 }
 
 function safeFirstParam(
@@ -162,6 +169,16 @@ function safeFirstParam(
   fallback = "",
 ): string {
   return firstParam(value) || fallback;
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+
+  return chunks;
 }
 
 function pathForWorkspaceRole(role: Role) {
@@ -297,6 +314,167 @@ function applyProofreaderTypeGate(
   }
 
   return query;
+}
+
+function buildAssignmentRowsQuery({
+  userId,
+  phase,
+  view,
+  statuses,
+  correctionSourcePhase,
+  proofreaderType,
+  correctionReason,
+  pathway,
+  school,
+  search,
+  from,
+  to,
+}: {
+  userId: string;
+  phase: WorkflowPhase;
+  view: string;
+  statuses: string[];
+  correctionSourcePhase?: string;
+  proofreaderType?: string | null;
+  correctionReason?: string;
+  pathway?: string;
+  school?: string;
+  search?: string;
+  from: number;
+  to: number;
+}) {
+  let query = supabaseAdmin
+    .from("assignments")
+    .select(
+      `
+      id,
+      phase,
+      status,
+      decision,
+      created_at,
+      started_at,
+      completed_at,
+      submission_id,
+      requested_by_user_id,
+      return_to_user_id,
+      correction_reason,
+      correction_notes,
+      correction_source_phase,
+      correction_source_assignment_id,
+      proofreader_type,
+      coordinator_comment,
+      coordinator_waiting_for_response,
+      coordinator_waiting_for_response_at,
+      submissions!inner(*)
+      `,
+      { count: "exact" },
+    )
+    .eq("assigned_to", userId)
+    .eq("phase", phase)
+    .in("status", statuses)
+    .order("created_at", { ascending: true })
+    .range(from, to);
+
+  query = applySubmissionWorkflowGate(query, phase, view);
+  query = applyDecisionGate(query, phase, view);
+  query = applySourceGate(query, correctionSourcePhase);
+  query = applyCoordinatorWaitingGate(query, phase, view);
+  query = applyCoordinatorCorrectionSafetyGate(query, phase);
+  query = applyProofreaderTypeGate(query, phase, proofreaderType);
+
+  if (correctionReason) {
+    query = query.eq("correction_reason", correctionReason);
+  }
+
+  if (pathway) {
+    query = query.eq("submissions.art_pathway_name_en", pathway);
+  }
+
+  if (school) {
+    query = applySchoolGate(query, school);
+  }
+
+  if (search && search.trim().length >= 2) {
+    const q = search.trim().replaceAll("%", "");
+
+    query = query.or(
+      `reference_id.ilike.%${q}%,institution_name.ilike.%${q}%,artwork_title_en.ilike.%${q}%,artwork_title_ar.ilike.%${q}%`,
+      { foreignTable: "submissions" },
+    );
+  }
+
+  return query;
+}
+
+async function fetchAllAssignmentRows({
+  userId,
+  phase,
+  view,
+  statuses,
+  correctionSourcePhase,
+  proofreaderType,
+  correctionReason,
+  pathway,
+  school,
+  search,
+}: {
+  userId: string;
+  phase: WorkflowPhase;
+  view: string;
+  statuses: string[];
+  correctionSourcePhase?: string;
+  proofreaderType?: string | null;
+  correctionReason?: string;
+  pathway?: string;
+  school?: string;
+  search?: string;
+}) {
+  const rows: any[] = [];
+  let totalResults = 0;
+
+  for (let from = 0; ; from += WORKSPACE_PAGE_SIZE) {
+    const to = from + WORKSPACE_PAGE_SIZE - 1;
+
+    const { data, count, error } = await buildAssignmentRowsQuery({
+      userId,
+      phase,
+      view,
+      statuses,
+      correctionSourcePhase,
+      proofreaderType,
+      correctionReason,
+      pathway,
+      school,
+      search,
+      from,
+      to,
+    });
+
+    if (error) {
+      return {
+        rows,
+        count: totalResults,
+        error,
+      };
+    }
+
+    const page = data ?? [];
+
+    if (from === 0) {
+      totalResults = count ?? page.length;
+    }
+
+    rows.push(...page);
+
+    if (page.length < WORKSPACE_PAGE_SIZE) break;
+    if (totalResults > 0 && rows.length >= totalResults) break;
+  }
+
+  return {
+    rows,
+    count: totalResults || rows.length,
+    error: null,
+  };
 }
 
 function buildAssignmentCountQuery({
@@ -673,12 +851,7 @@ export async function WorkQueuePage({
   const isCoordinator = phase === "coordinator_check";
   const statuses = statusesForView(phase, view);
 
-  const [
-    options,
-    kpiCards,
-    coordinatorSchoolOptions,
-    schoolFilteredSubmissionIds,
-  ] = await Promise.all([
+  const [options, kpiCards, coordinatorSchoolOptions] = await Promise.all([
     getSubmissionFilterOptions(),
     getKpiCards({
       userId: user.id,
@@ -686,81 +859,24 @@ export async function WorkQueuePage({
       proofreaderType: user.proofreader_type ?? null,
     }),
     isCoordinator ? getCoordinatorSchoolOptions(user.id) : Promise.resolve([]),
-    isCoordinator && school
-      ? getCoordinatorSchoolSubmissionIds(user.id, school)
-      : Promise.resolve(null),
   ]);
 
-  let query = supabaseAdmin
-    .from("assignments")
-    .select(
-      `
-      id,
-      phase,
-      status,
-      decision,
-      created_at,
-      started_at,
-      completed_at,
-      submission_id,
-      requested_by_user_id,
-      return_to_user_id,
-      correction_reason,
-      correction_notes,
-      correction_source_phase,
-      correction_source_assignment_id,
-      proofreader_type,
-      coordinator_comment,
-      coordinator_waiting_for_response,
-      coordinator_waiting_for_response_at,
-      submissions!inner(*)
-      `,
-      { count: "exact" },
-    )
-    .eq("assigned_to", user.id)
-    .eq("phase", phase)
-    .in("status", statuses)
-    .order("created_at", { ascending: true })
-    .limit(250);
-
-  query = applySubmissionWorkflowGate(query, phase, view);
-  query = applyDecisionGate(query, phase, view);
-  query = applySourceGate(query, correctionSourcePhase);
-  query = applyCoordinatorWaitingGate(query, phase, view);
-  query = applyCoordinatorCorrectionSafetyGate(query, phase);
-  query = applyProofreaderTypeGate(query, phase, user.proofreader_type ?? null);
-
-  if (correctionReason) {
-    query = query.eq("correction_reason", correctionReason);
-  }
-
-  // Filter through the joined submissions table instead of first fetching thousands
-  // of submission IDs and sending them back through .in(...). Large .in(...)
-  // filters can create oversized PostgREST URLs and return Bad Request.
-  if (pathway) {
-    query = query.eq("submissions.art_pathway_name_en", pathway);
-  }
-
-  if (search && search.trim().length >= 2) {
-    const q = search.trim().replaceAll("%", "");
-    query = query.or(
-      `reference_id.ilike.%${q}%,institution_name.ilike.%${q}%,artwork_title_en.ilike.%${q}%,artwork_title_ar.ilike.%${q}%`,
-      { foreignTable: "submissions" },
-    );
-  }
-
-  const effectiveSubmissionIds = (schoolFilteredSubmissionIds ?? null) as
-    | string[]
-    | null;
-
-  if (effectiveSubmissionIds && effectiveSubmissionIds.length === 0) {
-    query = query.eq("submission_id", "00000000-0000-0000-0000-000000000000");
-  } else if (effectiveSubmissionIds) {
-    query = query.in("submission_id", effectiveSubmissionIds);
-  }
-
-  const { data: assignmentData, count, error } = await query;
-  const assignments = assignmentData ?? [];
+  const {
+    rows: assignments,
+    count,
+    error,
+  } = await fetchAllAssignmentRows({
+    userId: user.id,
+    phase,
+    view,
+    statuses,
+    correctionSourcePhase,
+    proofreaderType: user.proofreader_type ?? null,
+    correctionReason,
+    pathway,
+    school: isCoordinator ? school : "",
+    search,
+  });
 
   const submissionIds = Array.from(
     new Set(assignments.map((row: any) => row.submission_id).filter(Boolean)),
@@ -769,17 +885,31 @@ export async function WorkQueuePage({
   const historyBySubmission: Record<string, any[]> = {};
 
   if (submissionIds.length) {
-    const { data: historyRows } = await supabaseAdmin
-      .from("assignments")
-      .select(
-        "id,submission_id,phase,status,decision,assigned_to,requested_by_user_id,return_to_user_id,correction_reason,correction_source_phase,created_at,completed_at,proofreader_type",
-      )
-      .in("submission_id", submissionIds)
-      .order("created_at", { ascending: true });
+    const historyRows: any[] = [];
+
+    // Keep each .in(...) request small. Large arrays create very long
+    // PostgREST URLs and can trigger HeadersOverflowError / Bad Request.
+    for (const submissionIdChunk of chunkArray(submissionIds, 200)) {
+      const { data: chunkHistoryRows, error: historyError } =
+        await supabaseAdmin
+          .from("assignments")
+          .select(
+            "id,submission_id,phase,status,decision,assigned_to,requested_by_user_id,return_to_user_id,correction_reason,correction_source_phase,created_at,completed_at,proofreader_type",
+          )
+          .in("submission_id", submissionIdChunk)
+          .order("created_at", { ascending: true });
+
+      if (historyError) {
+        console.error("Workspace history query failed:", historyError.message);
+        continue;
+      }
+
+      historyRows.push(...(chunkHistoryRows ?? []));
+    }
 
     const profileIds = Array.from(
       new Set(
-        (historyRows ?? [])
+        historyRows
           .flatMap((row: any) => [
             row.assigned_to,
             row.requested_by_user_id,
@@ -791,18 +921,23 @@ export async function WorkQueuePage({
 
     const profileById: Record<string, any> = {};
 
-    if (profileIds.length) {
-      const { data: profiles } = await supabaseAdmin
+    for (const profileIdChunk of chunkArray(profileIds, 200)) {
+      const { data: profiles, error: profileError } = await supabaseAdmin
         .from("profiles")
         .select("id,full_name,role,proofreader_type")
-        .in("id", profileIds);
+        .in("id", profileIdChunk);
+
+      if (profileError) {
+        console.error("Workspace profile query failed:", profileError.message);
+        continue;
+      }
 
       for (const profile of profiles ?? []) {
         profileById[profile.id] = profile;
       }
     }
 
-    for (const row of historyRows ?? []) {
+    for (const row of historyRows) {
       const enriched = {
         ...row,
         assigned_user: profileById[row.assigned_to] ?? null,

@@ -22,6 +22,7 @@ type Assignment = {
   coordinator_waiting_for_response_at?: string | null;
   submissions?: any;
   task_history?: any[];
+  comment_history?: any[];
 };
 
 const correctionReasonLabels: Record<string, string> = {
@@ -440,6 +441,51 @@ function TaskHistory({ history }: { history: any[] }) {
     </div>
   );
 }
+
+function WorkflowComments({ comments }: { comments: any[] }) {
+  if (!comments?.length) return null;
+
+  return (
+    <div className="card">
+      <h3>Workflow Comments</h3>
+
+      <div className="grid">
+        {comments.map((comment) => {
+          const authorName =
+            comment.profiles?.full_name ??
+            comment.profile?.full_name ??
+            "User";
+
+          const authorRole =
+            comment.profiles?.role ??
+            comment.profile?.role ??
+            "";
+
+          return (
+            <div
+              className="card"
+              style={{ boxShadow: "none" }}
+              key={comment.id ?? `${comment.created_at}-${comment.comment_text}`}
+            >
+              <strong>{authorName}</strong>
+
+              <span className="muted small">
+                {authorRole ? ` — ${authorRole}` : ""}
+                {comment.phase ? ` — ${labelPhase(comment.phase)}` : ""}
+                {comment.created_at
+                  ? ` — ${new Date(comment.created_at).toLocaleString()}`
+                  : ""}
+              </span>
+
+              <p dir="auto">{comment.comment_text}</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 
 function SourceButtons({ submission }: { submission: any }) {
   const hasSource = Boolean(submission?.art_link);
@@ -1418,12 +1464,34 @@ export function WorkspaceClient({
                     )}
                   </div>
 
+                  <label style={{ display: "block", marginTop: 12 }}>
+                    <span className="small">
+                      <strong>Literary Proofreader Comment</strong>
+                      <br />
+                      ملاحظات المدقق اللغوي
+                    </span>
+
+                    <textarea
+                      className="input"
+                      key={`literary-comment-${selectedSubmission.id}`}
+                      name="literary_proofreader_comment"
+                      rows={5}
+                      dir="auto"
+                      placeholder="Add literary proofreading notes, publication suitability notes, or correction comments..."
+                      defaultValue={displayText(
+                        selectedSubmission.literary_proofreader_comment,
+                        ""
+                      )}
+                    />
+                  </label>
+
                   {literaryPublicationSuitable === "yes" && (
                     <>
                       <label style={{ display: "block", marginTop: 12 }}>
                         <span className="small">Updated Content</span>
 
                         <textarea
+                          className="input"
                           key={`literary-content-${selectedSubmission.id}`}
                           name="literary_updated_content"
                           rows={10}
@@ -1608,6 +1676,7 @@ export function WorkspaceClient({
             </form>
 
             <TaskHistory history={selectedAssignment.task_history ?? []} />
+            <WorkflowComments comments={selectedAssignment.comment_history ?? []} />
           </>
         )}
       </section>

@@ -80,6 +80,141 @@ function ErrorBox({
   );
 }
 
+function chunkArray<T>(values: T[], size: number) {
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+
+  return chunks;
+}
+
+async function loadSubmissionWorkflowData(submissionIds: string[]) {
+  if (!submissionIds.length) {
+    return {
+      commentsBySubmissionId: new Map<string, any[]>(),
+      assignmentsBySubmissionId: new Map<string, any[]>(),
+    };
+  }
+
+  const comments: any[] = [];
+  const assignments: any[] = [];
+
+  for (const chunk of chunkArray(submissionIds, 100)) {
+    const { data: commentRows, error: commentsError } = await supabaseAdmin
+      .from("comments")
+      .select("id,submission_id,author_id,phase,comment_text,created_at")
+      .in("submission_id", chunk)
+      .order("created_at", { ascending: false });
+
+    if (commentsError) throw commentsError;
+    comments.push(...(commentRows ?? []));
+
+    const { data: assignmentRows, error: assignmentsError } = await supabaseAdmin
+      .from("assignments")
+      .select(
+        [
+          "id",
+          "submission_id",
+          "assigned_to",
+          "assigned_by",
+          "requested_by_user_id",
+          "return_to_user_id",
+          "correction_source_phase",
+          "correction_source_assignment_id",
+          "phase",
+          "status",
+          "decision",
+          "proofreader_type",
+          "correction_reason",
+          "correction_notes",
+          "created_at",
+          "started_at",
+          "completed_at",
+          "updated_at",
+        ].join(",")
+      )
+      .in("submission_id", chunk)
+      .order("created_at", { ascending: true });
+
+    if (assignmentsError) throw assignmentsError;
+    assignments.push(...(assignmentRows ?? []));
+  }
+
+  const profileIds = Array.from(
+    new Set(
+      [
+        ...comments.map((comment) => comment.author_id),
+        ...assignments.map((assignment) => assignment.assigned_to),
+        ...assignments.map((assignment) => assignment.assigned_by),
+        ...assignments.map((assignment) => assignment.requested_by_user_id),
+        ...assignments.map((assignment) => assignment.return_to_user_id),
+      ]
+        .filter(Boolean)
+        .map(String)
+    )
+  );
+
+  const profileMap = new Map<string, any>();
+
+  for (const chunk of chunkArray(profileIds, 200)) {
+    const { data: profiles, error: profilesError } = await supabaseAdmin
+      .from("profiles")
+      .select("id,full_name,email,role")
+      .in("id", chunk);
+
+    if (profilesError) throw profilesError;
+
+    for (const profile of profiles ?? []) {
+      profileMap.set(profile.id, profile);
+    }
+  }
+
+  const commentsBySubmissionId = new Map<string, any[]>();
+
+  for (const comment of comments) {
+    const submissionId = String(comment.submission_id);
+
+    if (!commentsBySubmissionId.has(submissionId)) {
+      commentsBySubmissionId.set(submissionId, []);
+    }
+
+    commentsBySubmissionId.get(submissionId)?.push({
+      ...comment,
+      author_profile: comment.author_id ? profileMap.get(comment.author_id) ?? null : null,
+    });
+  }
+
+  const assignmentsBySubmissionId = new Map<string, any[]>();
+
+  for (const assignment of assignments) {
+    const submissionId = String(assignment.submission_id);
+
+    if (!assignmentsBySubmissionId.has(submissionId)) {
+      assignmentsBySubmissionId.set(submissionId, []);
+    }
+
+    assignmentsBySubmissionId.get(submissionId)?.push({
+      ...assignment,
+      assigned_profile: assignment.assigned_to
+        ? profileMap.get(assignment.assigned_to) ?? null
+        : null,
+      assigned_by_profile: assignment.assigned_by
+        ? profileMap.get(assignment.assigned_by) ?? null
+        : null,
+      requested_by_profile: assignment.requested_by_user_id
+        ? profileMap.get(assignment.requested_by_user_id) ?? null
+        : null,
+      return_to_profile: assignment.return_to_user_id
+        ? profileMap.get(assignment.return_to_user_id) ?? null
+        : null,
+    });
+  }
+
+  return { commentsBySubmissionId, assignmentsBySubmissionId };
+}
+
 export default async function SubmissionsPage({
   searchParams,
 }: {
@@ -189,7 +324,27 @@ export default async function SubmissionsPage({
     );
   }
 
-  const submissions = data ?? [];
+  const submissionRows = data ?? [];
+  const submissionIds = submissionRows.map((submission: any) => String(submission.id));
+
+  let commentsBySubmissionId = new Map<string, any[]>();
+  let assignmentsBySubmissionId = new Map<string, any[]>();
+  let workflowDataError: string | null = null;
+
+  try {
+    const workflowData = await loadSubmissionWorkflowData(submissionIds);
+    commentsBySubmissionId = workflowData.commentsBySubmissionId;
+    assignmentsBySubmissionId = workflowData.assignmentsBySubmissionId;
+  } catch (error: any) {
+    workflowDataError = error?.message ?? "Failed to load comments and task flow.";
+  }
+
+  const submissions = submissionRows.map((submission: any) => ({
+    ...submission,
+    __comments: commentsBySubmissionId.get(String(submission.id)) ?? [],
+    __taskFlow: assignmentsBySubmissionId.get(String(submission.id)) ?? [],
+  }));
+
   const totalResults = count ?? 0;
   const redirectTo = `/submissions?${currentQuery.toString()}&page=${page}`;
 
@@ -335,6 +490,14 @@ export default async function SubmissionsPage({
         basePath="/submissions"
         query={currentQuery}
       />
+
+      {workflowDataError && (
+        <ErrorBox
+          title="Workflow history warning:"
+          message={workflowDataError}
+          details="The submissions list loaded, but comments or task flow may be missing until this query is fixed."
+        />
+      )}
 
       <SubmissionsClient submissions={submissions} redirectTo={redirectTo} />
 
