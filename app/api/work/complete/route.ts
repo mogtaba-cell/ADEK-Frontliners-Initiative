@@ -8,7 +8,7 @@ import {
   maybeAssignReviewerAfterProofreading,
   reactivateAssignmentForReturn,
 } from "@/lib/assignment";
-import type { WorkflowPhase } from "@/lib/types";
+import type { ProofreaderType, WorkflowPhase } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,6 +32,33 @@ function calculateAdekDecision(a: boolean, b: boolean, c: boolean) {
   if (!a || !c) return "disqualified";
   return "needs_review";
 }
+
+function isLiteraryExpressionsSubmission(submission: any) {
+  const pathwayEn = String(submission?.art_pathway_name_en ?? "")
+    .trim()
+    .toLowerCase();
+  const pathwayAr = String(submission?.art_pathway_name_ar ?? "")
+    .trim()
+    .toLowerCase();
+
+  return (
+    pathwayEn === "literary expressions" ||
+    pathwayAr === "التعبيرات الأدبية" ||
+    pathwayAr === "التعبيرات الادبية"
+  );
+}
+
+function literaryProofreaderTypeForSubmission(submission: any): ProofreaderType {
+  const language = String(submission?.literary_language ?? "").trim();
+
+  if (language === "arabic") return "literary_arabic";
+  if (language === "english_or_others") return "literary_english_or_others";
+
+  throw new Error(
+    `${submission?.reference_id ?? submission?.id}: Literary language is not classified yet. Admin must set Arabic or English/Others before moving this artwork to Literary Proofreading.`
+  );
+}
+
 
 function redirectWithRefresh(req: Request, redirectTo: string) {
   const url = new URL(redirectTo || "/", req.url);
@@ -803,6 +830,7 @@ export async function POST(req: Request) {
       );
       const managementComment = textValue(form, "management_comment");
       const timestamp = nowIso();
+      const isLiteraryExpression = isLiteraryExpressionsSubmission(submissionBefore);
 
       await addWorkflowComment({
         submissionId,
@@ -835,7 +863,10 @@ export async function POST(req: Request) {
           "id",
           submissionId,
         );
-      } else if (managementDecision === "disqualified") {
+      } else if (
+        managementAction === "disqualify" ||
+        managementDecision === "disqualified"
+      ) {
         await markAssignmentCompleted(assignmentId, {
           decision: "disqualified",
           correction_notes: managementComment,
@@ -861,7 +892,16 @@ export async function POST(req: Request) {
           completedAt: timestamp,
           coordinatorAssignment: assignment,
         });
-      } else {
+      } else if (
+        managementAction === "send_to_literary_proofreading" ||
+        (isLiteraryExpression && managementDecision === "approved")
+      ) {
+        if (!isLiteraryExpression) {
+          throw new Error(
+            "Only Literary Expressions submissions can be sent to Literary Proofreading from Management.",
+          );
+        }
+
         await markAssignmentCompleted(assignmentId, {
           decision: "approved",
           correction_notes: managementComment,
@@ -894,9 +934,27 @@ export async function POST(req: Request) {
                 managementComment ?? assignment.correction_notes ?? null,
             });
           }
-        } else {
-          await assignProofreadingAfterApproval(submissionId, user.id);
         }
+      } else {
+        await markAssignmentCompleted(assignmentId, {
+          decision: "approved",
+          correction_notes: managementComment,
+          completed_at: timestamp,
+        });
+
+        await safeUpdate(
+          "submissions",
+          {
+            workflow_status: "selected_for_proofreading",
+            management_decision: "approved",
+            management_artistic_rating: managementArtisticRating,
+            updated_at: timestamp,
+          },
+          "id",
+          submissionId,
+        );
+
+        await assignProofreadingAfterApproval(submissionId, user.id);
       }
     }
 

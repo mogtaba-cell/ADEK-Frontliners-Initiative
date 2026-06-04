@@ -22,7 +22,6 @@ type Assignment = {
   coordinator_waiting_for_response_at?: string | null;
   submissions?: any;
   task_history?: any[];
-  comment_history?: any[];
 };
 
 const correctionReasonLabels: Record<string, string> = {
@@ -134,6 +133,21 @@ function calculateAdekDecisionLabel(a: string, b: string, c: string) {
 function getCorrectionSourceLabel(value: string | null | undefined) {
   if (!value) return "Unknown phase";
   return correctionSourceLabels[value] ?? labelPhase(value) ?? value;
+}
+
+function isLiteraryExpressionsSubmission(submission: any) {
+  const pathwayEn = String(submission?.art_pathway_name_en ?? "")
+    .trim()
+    .toLowerCase();
+  const pathwayAr = String(submission?.art_pathway_name_ar ?? "")
+    .trim()
+    .toLowerCase();
+
+  return (
+    pathwayEn === "literary expressions" ||
+    pathwayAr === "التعبيرات الأدبية" ||
+    pathwayAr === "التعبيرات الادبية"
+  );
 }
 
 function getDerivedFields(submission: any) {
@@ -442,51 +456,6 @@ function TaskHistory({ history }: { history: any[] }) {
   );
 }
 
-function WorkflowComments({ comments }: { comments: any[] }) {
-  if (!comments?.length) return null;
-
-  return (
-    <div className="card">
-      <h3>Workflow Comments</h3>
-
-      <div className="grid">
-        {comments.map((comment) => {
-          const authorName =
-            comment.profiles?.full_name ??
-            comment.profile?.full_name ??
-            "User";
-
-          const authorRole =
-            comment.profiles?.role ??
-            comment.profile?.role ??
-            "";
-
-          return (
-            <div
-              className="card"
-              style={{ boxShadow: "none" }}
-              key={comment.id ?? `${comment.created_at}-${comment.comment_text}`}
-            >
-              <strong>{authorName}</strong>
-
-              <span className="muted small">
-                {authorRole ? ` — ${authorRole}` : ""}
-                {comment.phase ? ` — ${labelPhase(comment.phase)}` : ""}
-                {comment.created_at
-                  ? ` — ${new Date(comment.created_at).toLocaleString()}`
-                  : ""}
-              </span>
-
-              <p dir="auto">{comment.comment_text}</p>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-
 function SourceButtons({ submission }: { submission: any }) {
   const hasSource = Boolean(submission?.art_link);
   const hasUpdated = Boolean(submission?.updated_artwork_file_url);
@@ -732,6 +701,7 @@ export function WorkspaceClient({
 
   const selectedSubmission = selectedAssignment?.submissions ?? null;
   const derived = selectedSubmission ? getDerivedFields(selectedSubmission) : null;
+  const selectedIsLiteraryExpression = isLiteraryExpressionsSubmission(selectedSubmission);
 
   useEffect(() => {
     if (!assignments.length) {
@@ -1464,34 +1434,12 @@ export function WorkspaceClient({
                     )}
                   </div>
 
-                  <label style={{ display: "block", marginTop: 12 }}>
-                    <span className="small">
-                      <strong>Literary Proofreader Comment</strong>
-                      <br />
-                      ملاحظات المدقق اللغوي
-                    </span>
-
-                    <textarea
-                      className="input"
-                      key={`literary-comment-${selectedSubmission.id}`}
-                      name="literary_proofreader_comment"
-                      rows={5}
-                      dir="auto"
-                      placeholder="Add literary proofreading notes, publication suitability notes, or correction comments..."
-                      defaultValue={displayText(
-                        selectedSubmission.literary_proofreader_comment,
-                        ""
-                      )}
-                    />
-                  </label>
-
                   {literaryPublicationSuitable === "yes" && (
                     <>
                       <label style={{ display: "block", marginTop: 12 }}>
                         <span className="small">Updated Content</span>
 
                         <textarea
-                          className="input"
                           key={`literary-content-${selectedSubmission.id}`}
                           name="literary_updated_content"
                           rows={10}
@@ -1515,14 +1463,19 @@ export function WorkspaceClient({
 
               {phase === "management_review" && (
                 <>
-                  <label>
-                    <span className="small">Management Decision</span>
+                  {selectedIsLiteraryExpression ? (
+                    <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
+                    </div>
+                  ) : (
+                    <label>
+                      <span className="small">Management Decision</span>
 
-                    <select className="input" name="management_decision">
-                      <option value="approved">Approve</option>
-                      <option value="disqualified">Disqualify</option>
-                    </select>
-                  </label>
+                      <select className="input" name="management_decision">
+                        <option value="approved">Approve</option>
+                        <option value="disqualified">Disqualify</option>
+                      </select>
+                    </label>
+                  )}
 
                   <label style={{ display: "block", marginTop: 12 }}>
                     <span className="small">
@@ -1634,25 +1587,56 @@ export function WorkspaceClient({
                     </>
                   )
                 ) : phase === "management_review" ? (
-                  <>
-                    <button
-                      className="btn"
-                      type="submit"
-                      name="management_action"
-                      value="complete"
-                    >
-                      Mark Done & Open Next
-                    </button>
+                  selectedIsLiteraryExpression ? (
+                    <>
+                      <button
+                        className="btn"
+                        type="submit"
+                        name="management_action"
+                        value="send_to_literary_proofreading"
+                      >
+                        Send to Literary Proofreading
+                      </button>
 
-                    <button
-                      className="btn secondary"
-                      type="submit"
-                      name="management_action"
-                      value="pending"
-                    >
-                      Save as Pending
-                    </button>
-                  </>
+                      <button
+                        className="btn secondary"
+                        type="submit"
+                        name="management_action"
+                        value="pending"
+                      >
+                        Save as Pending
+                      </button>
+
+                      <button
+                        className="btn secondary"
+                        type="submit"
+                        name="management_action"
+                        value="disqualify"
+                      >
+                        Disqualify
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="btn"
+                        type="submit"
+                        name="management_action"
+                        value="complete"
+                      >
+                        Mark Done & Open Next
+                      </button>
+
+                      <button
+                        className="btn secondary"
+                        type="submit"
+                        name="management_action"
+                        value="pending"
+                      >
+                        Save as Pending
+                      </button>
+                    </>
+                  )
                 ) : (
                   <button
                     className="btn"
@@ -1676,7 +1660,6 @@ export function WorkspaceClient({
             </form>
 
             <TaskHistory history={selectedAssignment.task_history ?? []} />
-            <WorkflowComments comments={selectedAssignment.comment_history ?? []} />
           </>
         )}
       </section>
