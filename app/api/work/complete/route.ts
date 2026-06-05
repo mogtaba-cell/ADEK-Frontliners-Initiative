@@ -8,7 +8,7 @@ import {
   maybeAssignReviewerAfterProofreading,
   reactivateAssignmentForReturn,
 } from "@/lib/assignment";
-import type { ProofreaderType, WorkflowPhase } from "@/lib/types";
+import type { WorkflowPhase } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,33 +33,6 @@ function calculateAdekDecision(a: boolean, b: boolean, c: boolean) {
   return "needs_review";
 }
 
-function isLiteraryExpressionsSubmission(submission: any) {
-  const pathwayEn = String(submission?.art_pathway_name_en ?? "")
-    .trim()
-    .toLowerCase();
-  const pathwayAr = String(submission?.art_pathway_name_ar ?? "")
-    .trim()
-    .toLowerCase();
-
-  return (
-    pathwayEn === "literary expressions" ||
-    pathwayAr === "التعبيرات الأدبية" ||
-    pathwayAr === "التعبيرات الادبية"
-  );
-}
-
-function literaryProofreaderTypeForSubmission(submission: any): ProofreaderType {
-  const language = String(submission?.literary_language ?? "").trim();
-
-  if (language === "arabic") return "literary_arabic";
-  if (language === "english_or_others") return "literary_english_or_others";
-
-  throw new Error(
-    `${submission?.reference_id ?? submission?.id}: Literary language is not classified yet. Admin must set Arabic or English/Others before moving this artwork to Literary Proofreading.`
-  );
-}
-
-
 function redirectWithRefresh(req: Request, redirectTo: string) {
   const url = new URL(redirectTo || "/", req.url);
   url.searchParams.set("refresh", Date.now().toString());
@@ -70,7 +43,7 @@ async function safeUpdate(
   table: string,
   values: Record<string, any>,
   column: string,
-  value: string,
+  value: string
 ) {
   const { error } = await supabaseAdmin
     .from(table)
@@ -148,7 +121,7 @@ async function updateEditableContent(submissionId: string, form: FormData) {
   const values = editableContentFromForm(form);
 
   const hasAnyValue = Object.entries(values).some(
-    ([key, value]) => key !== "updated_at" && value !== null,
+    ([key, value]) => key !== "updated_at" && value !== null
   );
 
   if (!hasAnyValue) return;
@@ -158,7 +131,7 @@ async function updateEditableContent(submissionId: string, form: FormData) {
 
 async function markAssignmentCompleted(
   assignmentId: string,
-  values: Record<string, any> = {},
+  values: Record<string, any> = {}
 ) {
   const completedAt = values.completed_at ?? nowIso();
 
@@ -171,7 +144,7 @@ async function markAssignmentCompleted(
       ...values,
     },
     "id",
-    assignmentId,
+    assignmentId
   );
 }
 
@@ -188,18 +161,14 @@ async function getCompletedGeneralProofreaderId(submissionId: string) {
     .limit(1)
     .maybeSingle();
 
-  if (error)
-    throw new Error(`General proofreader lookup failed: ${error.message}`);
+  if (error) throw new Error(`General proofreader lookup failed: ${error.message}`);
   return data?.assigned_to ?? null;
 }
 
 function workflowStatusForReturnedSource(sourcePhase: WorkflowPhase) {
   if (sourcePhase === "adek_evaluation") return "ready_for_adek";
   if (sourcePhase === "management_review") return "needs_management_review";
-  if (
-    sourcePhase === "proofreading" ||
-    sourcePhase === "literary_proofreading"
-  ) {
+  if (sourcePhase === "proofreading" || sourcePhase === "literary_proofreading") {
     return "selected_for_proofreading";
   }
   if (sourcePhase === "final_review") return "proofreading_done";
@@ -236,7 +205,7 @@ async function sendToCoordinatorForCorrection({
       correction_notes: correctionNotes ?? null,
     },
     "id",
-    assignmentId,
+    assignmentId
   );
 
   await safeUpdate(
@@ -246,7 +215,7 @@ async function sendToCoordinatorForCorrection({
       updated_at: timestamp,
     },
     "id",
-    submissionId,
+    submissionId
   );
 
   return autoAssignOne(submissionId, "coordinator_check", actorId, {
@@ -269,17 +238,13 @@ async function returnCorrectedSubmission({
   actorId: string;
 }) {
   const coordinatorAssignment = await getAssignment(assignmentId);
-  const sourcePhase =
-    coordinatorAssignment.correction_source_phase as WorkflowPhase | null;
+  const sourcePhase = coordinatorAssignment.correction_source_phase as WorkflowPhase | null;
 
   if (!sourcePhase) {
-    throw new Error(
-      "Missing correction source phase. Cannot return correction.",
-    );
+    throw new Error("Missing correction source phase. Cannot return correction.");
   }
 
-  const sourceAssignmentId =
-    coordinatorAssignment.correction_source_assignment_id as string | null;
+  const sourceAssignmentId = coordinatorAssignment.correction_source_assignment_id as string | null;
   if (!sourceAssignmentId) {
     throw new Error("Missing source assignment. Cannot return correction.");
   }
@@ -312,21 +277,87 @@ async function returnCorrectedSubmission({
       updated_at: nowIso(),
     },
     "id",
-    submissionId,
+    submissionId
   );
 }
 
-async function closeOpenAssignmentsAfterDisqualification({
+
+async function reflectManagementDecisionToEvaluatorAssignments({
   submissionId,
-  currentAssignmentId,
-  completedAt,
-  coordinatorAssignment,
+  managementDecision,
+  timestamp,
 }: {
   submissionId: string;
-  currentAssignmentId: string;
-  completedAt: string;
-  coordinatorAssignment?: any;
+  managementDecision: "approved" | "disqualified";
+  timestamp: string;
 }) {
+  const { error } = await supabaseAdmin
+    .from("assignments")
+    .update({
+      decision: managementDecision,
+      updated_at: timestamp,
+    })
+    .eq("submission_id", submissionId)
+    .eq("phase", "adek_evaluation")
+    .eq("status", "completed")
+    .eq("decision", "needs_review");
+
+  if (error) {
+    throw new Error(
+      `Evaluator management decision reflection failed: ${error.message}`
+    );
+  }
+}
+
+async function resolveManagementSourceAssignment({
+  managementAssignment,
+  managementDecision,
+  actorId,
+  timestamp,
+  comment,
+}: {
+  managementAssignment: any;
+  managementDecision: "approved" | "disqualified";
+  actorId: string;
+  timestamp: string;
+  comment?: string | null;
+}) {
+  const sourceAssignmentId =
+    managementAssignment?.correction_source_assignment_id as string | null;
+
+  if (!sourceAssignmentId) return;
+
+  const sourcePhase =
+    managementAssignment?.correction_source_phase as WorkflowPhase | null;
+
+  if (managementDecision === "approved" && sourcePhase === "literary_proofreading") {
+    const returnToUserId =
+      managementAssignment.return_to_user_id ??
+      managementAssignment.requested_by_user_id;
+
+    if (returnToUserId) {
+      await reactivateAssignmentForReturn(sourceAssignmentId, actorId, {
+        assignedTo: returnToUserId,
+        requestedByUserId: actorId,
+        correctionNotes: comment ?? managementAssignment.correction_notes ?? null,
+      });
+    }
+
+    return;
+  }
+
+  const { data: sourceAssignment, error: sourceError } = await supabaseAdmin
+    .from("assignments")
+    .select("id,phase,status,decision")
+    .eq("id", sourceAssignmentId)
+    .maybeSingle();
+
+  if (sourceError) {
+    throw new Error(`Management source lookup failed: ${sourceError.message}`);
+  }
+
+  if (!sourceAssignment) return;
+
   const activeStatuses = [
     "assigned",
     "in_progress",
@@ -334,11 +365,67 @@ async function closeOpenAssignmentsAfterDisqualification({
     "sent_for_review",
   ];
 
-  const sourceAssignmentId =
-    coordinatorAssignment?.correction_source_assignment_id as
-      | string
-      | null
-      | undefined;
+  if (!activeStatuses.includes(String(sourceAssignment.status))) return;
+
+  if (sourceAssignment.phase === "adek_evaluation") {
+    await safeUpdate(
+      "assignments",
+      {
+        status: "completed",
+        decision: managementDecision,
+        completed_at: timestamp,
+        updated_at: timestamp,
+      },
+      "id",
+      sourceAssignment.id
+    );
+    return;
+  }
+
+  if (managementDecision === "approved") {
+    await safeUpdate(
+      "assignments",
+      {
+        status: "completed",
+        decision: "approved",
+        completed_at: timestamp,
+        updated_at: timestamp,
+      },
+      "id",
+      sourceAssignment.id
+    );
+  } else {
+    await safeUpdate(
+      "assignments",
+      {
+        status: "cancelled",
+        decision: "cancelled_after_management_disqualification",
+        completed_at: timestamp,
+        updated_at: timestamp,
+      },
+      "id",
+      sourceAssignment.id
+    );
+  }
+}
+
+async function closeOpenAssignmentsAfterDisqualification({
+  submissionId,
+  currentAssignmentId,
+  completedAt,
+  sourceAssignmentId,
+}: {
+  submissionId: string;
+  currentAssignmentId: string;
+  completedAt: string;
+  sourceAssignmentId?: string | null;
+}) {
+  const activeStatuses = [
+    "assigned",
+    "in_progress",
+    "returned_for_correction",
+    "sent_for_review",
+  ];
 
   if (sourceAssignmentId) {
     const { data: sourceAssignment, error: sourceError } = await supabaseAdmin
@@ -348,9 +435,7 @@ async function closeOpenAssignmentsAfterDisqualification({
       .maybeSingle();
 
     if (sourceError) {
-      throw new Error(
-        `Source assignment lookup failed: ${sourceError.message}`,
-      );
+      throw new Error(`Source assignment lookup failed: ${sourceError.message}`);
     }
 
     if (
@@ -358,8 +443,6 @@ async function closeOpenAssignmentsAfterDisqualification({
       activeStatuses.includes(String(sourceAssignment.status))
     ) {
       if (sourceAssignment.phase === "adek_evaluation") {
-        // Evaluators should keep a completed/disqualified history item when
-        // Coordinator disqualifies after an evaluator correction request.
         await safeUpdate(
           "assignments",
           {
@@ -369,11 +452,9 @@ async function closeOpenAssignmentsAfterDisqualification({
             updated_at: completedAt,
           },
           "id",
-          sourceAssignment.id,
+          sourceAssignment.id
         );
       } else {
-        // Proofreaders/reviewers/management should not keep disqualified
-        // artwork in their active or sent-for-correction queues.
         await safeUpdate(
           "assignments",
           {
@@ -383,15 +464,12 @@ async function closeOpenAssignmentsAfterDisqualification({
             updated_at: completedAt,
           },
           "id",
-          sourceAssignment.id,
+          sourceAssignment.id
         );
       }
     }
   }
 
-  // Defensive cleanup: once a submission is disqualified, no workflow task
-  // should remain active for proofreaders, reviewers, management, or duplicate
-  // coordinator checks. ADEK evaluator tasks are closed as disqualified history.
   const { error: evaluatorCloseError } = await supabaseAdmin
     .from("assignments")
     .update({
@@ -407,7 +485,7 @@ async function closeOpenAssignmentsAfterDisqualification({
 
   if (evaluatorCloseError) {
     throw new Error(
-      `ADEK assignment disqualification cleanup failed: ${evaluatorCloseError.message}`,
+      `ADEK assignment disqualification cleanup failed: ${evaluatorCloseError.message}`
     );
   }
 
@@ -432,10 +510,11 @@ async function closeOpenAssignmentsAfterDisqualification({
 
   if (activeCloseError) {
     throw new Error(
-      `Active assignment disqualification cleanup failed: ${activeCloseError.message}`,
+      `Active assignment disqualification cleanup failed: ${activeCloseError.message}`
     );
   }
 }
+
 
 async function disqualifyFromCoordinator({
   submissionId,
@@ -467,14 +546,14 @@ async function disqualifyFromCoordinator({
       updated_at: completedAt,
     },
     "id",
-    submissionId,
+    submissionId
   );
 
   await closeOpenAssignmentsAfterDisqualification({
     submissionId,
     currentAssignmentId: assignmentId,
     completedAt,
-    coordinatorAssignment,
+    sourceAssignmentId: coordinatorAssignment.correction_source_assignment_id ?? null,
   });
 }
 
@@ -489,11 +568,8 @@ async function saveCoordinatorProgress({
 }) {
   const timestamp = nowIso();
   const comment = textValue(form, "coordinator_comment");
-  const waitingForResponse = yesNo(
-    form.get("coordinator_waiting_for_response"),
-  );
-  const previousWaitingAt =
-    assignment?.coordinator_waiting_for_response_at ?? null;
+  const waitingForResponse = yesNo(form.get("coordinator_waiting_for_response"));
+  const previousWaitingAt = assignment?.coordinator_waiting_for_response_at ?? null;
 
   await safeUpdate(
     "assignments",
@@ -501,12 +577,12 @@ async function saveCoordinatorProgress({
       coordinator_comment: comment,
       coordinator_waiting_for_response: waitingForResponse,
       coordinator_waiting_for_response_at: waitingForResponse
-        ? (previousWaitingAt ?? timestamp)
+        ? previousWaitingAt ?? timestamp
         : null,
       updated_at: timestamp,
     },
     "id",
-    assignmentId,
+    assignmentId
   );
 }
 
@@ -535,7 +611,7 @@ async function sendLiteraryToManagementReview({
       updated_at: timestamp,
     },
     "id",
-    assignmentId,
+    assignmentId
   );
 
   await safeUpdate(
@@ -545,7 +621,7 @@ async function sendLiteraryToManagementReview({
       updated_at: timestamp,
     },
     "id",
-    submissionId,
+    submissionId
   );
 
   await autoAssignOne(submissionId, "management_review", actorId, {
@@ -598,7 +674,7 @@ export async function POST(req: Request) {
             updated_at: nowIso(),
           },
           "id",
-          submissionId,
+          submissionId
         );
 
         await sendToCoordinatorForCorrection({
@@ -638,7 +714,7 @@ export async function POST(req: Request) {
             updated_at: completedAt,
           },
           "id",
-          submissionId,
+          submissionId
         );
 
         await markAssignmentCompleted(assignmentId, {
@@ -663,7 +739,7 @@ export async function POST(req: Request) {
       await saveCoordinatorProgress({ assignment, assignmentId, form });
 
       const coordinatorAction = String(
-        form.get("coordinator_action") ?? "return_corrected",
+        form.get("coordinator_action") ?? "return_corrected"
       );
 
       if (coordinatorAction === "save_progress") {
@@ -692,9 +768,7 @@ export async function POST(req: Request) {
     if (phase === "proofreading") {
       await updateEditableContent(submissionId, form);
 
-      const decision = String(
-        form.get("general_proofreader_decision") ?? "ready",
-      );
+      const decision = String(form.get("general_proofreader_decision") ?? "ready");
 
       if (decision === "needs_correction") {
         await sendToCoordinatorForCorrection({
@@ -703,9 +777,7 @@ export async function POST(req: Request) {
           actorId: user.id,
           requesterId: assignment.assigned_to ?? user.id,
           sourcePhase: "proofreading",
-          correctionReason: String(
-            form.get("correction_reason") ?? "incomplete_narrative",
-          ),
+          correctionReason: String(form.get("correction_reason") ?? "incomplete_narrative"),
           correctionNotes: null,
         });
       } else {
@@ -718,7 +790,7 @@ export async function POST(req: Request) {
             updated_at: completedAt,
           },
           "id",
-          submissionId,
+          submissionId
         );
 
         await markAssignmentCompleted(assignmentId, {
@@ -730,24 +802,16 @@ export async function POST(req: Request) {
         await maybeAssignReviewerAfterProofreading(
           submissionId,
           generalProofreaderId,
-          user.id,
+          user.id
         );
       }
     }
 
     if (phase === "literary_proofreading") {
       const literaryAction = String(form.get("literary_action") ?? "completed");
-      const publicationSuitable = yesNo(
-        form.get("literary_publication_suitable"),
-      );
-      const literaryUpdatedContent = textValue(
-        form,
-        "literary_updated_content",
-      );
-      const literaryProofreaderComment = textValue(
-        form,
-        "literary_proofreader_comment",
-      );
+      const publicationSuitable = yesNo(form.get("literary_publication_suitable"));
+      const literaryUpdatedContent = textValue(form, "literary_updated_content");
+      const literaryProofreaderComment = textValue(form, "literary_proofreader_comment");
 
       await safeUpdate(
         "submissions",
@@ -758,15 +822,8 @@ export async function POST(req: Request) {
           updated_at: nowIso(),
         },
         "id",
-        submissionId,
+        submissionId
       );
-
-      await addWorkflowComment({
-        submissionId,
-        authorId: user.id,
-        phase,
-        comment: literaryProofreaderComment,
-      });
 
       if (literaryAction === "needs_review" || !publicationSuitable) {
         await sendLiteraryToManagementReview({
@@ -796,7 +853,7 @@ export async function POST(req: Request) {
             updated_at: completedAt,
           },
           "id",
-          submissionId,
+          submissionId
         );
 
         await markAssignmentCompleted(assignmentId, {
@@ -804,33 +861,29 @@ export async function POST(req: Request) {
           completed_at: completedAt,
         });
 
-        const generalProofreaderId =
-          await getCompletedGeneralProofreaderId(submissionId);
+        const generalProofreaderId = await getCompletedGeneralProofreaderId(
+          submissionId
+        );
 
         if (generalProofreaderId) {
           await maybeAssignReviewerAfterProofreading(
             submissionId,
             generalProofreaderId,
-            user.id,
+            user.id
           );
         }
       }
     }
 
     if (phase === "management_review") {
-      const managementAction = String(
-        form.get("management_action") ?? "complete",
-      );
-      const managementDecision = String(
-        form.get("management_decision") ?? "approved",
-      );
+      const managementAction = String(form.get("management_action") ?? "complete");
+      const managementDecision = String(form.get("management_decision") ?? "approved");
       const managementArtisticRating = textValue(
         form,
-        "management_artistic_rating",
+        "management_artistic_rating"
       );
       const managementComment = textValue(form, "management_comment");
       const timestamp = nowIso();
-      const isLiteraryExpression = isLiteraryExpressionsSubmission(submissionBefore);
 
       await addWorkflowComment({
         submissionId,
@@ -850,7 +903,7 @@ export async function POST(req: Request) {
             updated_at: timestamp,
           },
           "id",
-          assignmentId,
+          assignmentId
         );
 
         await safeUpdate(
@@ -861,12 +914,9 @@ export async function POST(req: Request) {
             updated_at: timestamp,
           },
           "id",
-          submissionId,
+          submissionId
         );
-      } else if (
-        managementAction === "disqualify" ||
-        managementDecision === "disqualified"
-      ) {
+      } else if (managementDecision === "disqualified") {
         await markAssignmentCompleted(assignmentId, {
           decision: "disqualified",
           correction_notes: managementComment,
@@ -883,25 +933,30 @@ export async function POST(req: Request) {
             updated_at: timestamp,
           },
           "id",
-          submissionId,
+          submissionId
         );
+
+        await reflectManagementDecisionToEvaluatorAssignments({
+          submissionId,
+          managementDecision: "disqualified",
+          timestamp,
+        });
+
+        await resolveManagementSourceAssignment({
+          managementAssignment: assignment,
+          managementDecision: "disqualified",
+          actorId: user.id,
+          timestamp,
+          comment: managementComment,
+        });
 
         await closeOpenAssignmentsAfterDisqualification({
           submissionId,
           currentAssignmentId: assignmentId,
           completedAt: timestamp,
-          coordinatorAssignment: assignment,
+          sourceAssignmentId: assignment.correction_source_assignment_id ?? null,
         });
-      } else if (
-        managementAction === "send_to_literary_proofreading" ||
-        (isLiteraryExpression && managementDecision === "approved")
-      ) {
-        if (!isLiteraryExpression) {
-          throw new Error(
-            "Only Literary Expressions submissions can be sent to Literary Proofreading from Management.",
-          );
-        }
-
+      } else {
         await markAssignmentCompleted(assignmentId, {
           decision: "approved",
           correction_notes: managementComment,
@@ -918,43 +973,26 @@ export async function POST(req: Request) {
             updated_at: timestamp,
           },
           "id",
-          submissionId,
+          submissionId
         );
 
-        if (assignment.correction_source_phase === "literary_proofreading") {
-          const sourceAssignmentId = assignment.correction_source_assignment_id;
-          const returnToUserId =
-            assignment.return_to_user_id ?? assignment.requested_by_user_id;
-
-          if (sourceAssignmentId && returnToUserId) {
-            await reactivateAssignmentForReturn(sourceAssignmentId, user.id, {
-              assignedTo: returnToUserId,
-              requestedByUserId: user.id,
-              correctionNotes:
-                managementComment ?? assignment.correction_notes ?? null,
-            });
-          }
-        }
-      } else {
-        await markAssignmentCompleted(assignmentId, {
-          decision: "approved",
-          correction_notes: managementComment,
-          completed_at: timestamp,
+        await reflectManagementDecisionToEvaluatorAssignments({
+          submissionId,
+          managementDecision: "approved",
+          timestamp,
         });
 
-        await safeUpdate(
-          "submissions",
-          {
-            workflow_status: "selected_for_proofreading",
-            management_decision: "approved",
-            management_artistic_rating: managementArtisticRating,
-            updated_at: timestamp,
-          },
-          "id",
-          submissionId,
-        );
-
-        await assignProofreadingAfterApproval(submissionId, user.id);
+        if (assignment.correction_source_phase) {
+          await resolveManagementSourceAssignment({
+            managementAssignment: assignment,
+            managementDecision: "approved",
+            actorId: user.id,
+            timestamp,
+            comment: managementComment,
+          });
+        } else {
+          await assignProofreadingAfterApproval(submissionId, user.id);
+        }
       }
     }
 
@@ -976,7 +1014,7 @@ export async function POST(req: Request) {
           updated_at: completedAt,
         },
         "id",
-        submissionId,
+        submissionId
       );
     }
 
@@ -1015,7 +1053,7 @@ export async function POST(req: Request) {
         {
           error: error.message ?? "Work completion failed.",
         },
-        { status: 500 },
+        { status: 500 }
       );
     }
 
@@ -1023,7 +1061,7 @@ export async function POST(req: Request) {
       {
         error: error.message ?? "Work completion failed.",
       },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
