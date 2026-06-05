@@ -751,6 +751,8 @@ export function WorkspaceClient({
     phase === "proofreading" ||
     phase === "literary_proofreading";
 
+  const shouldShowSchoolNameInLimitedView = phase === "adek_evaluation";
+
   return (
     <div className="workspace-shell original-workspace-layout">
       <aside className="workspace-sidebar">
@@ -780,7 +782,8 @@ export function WorkspaceClient({
                   {fields?.artworkName ?? submission?.reference_id ?? "Unknown"}
                 </strong>
 
-                {!isLimitedSubmissionDetailsView && (
+                {(!isLimitedSubmissionDetailsView ||
+                  shouldShowSchoolNameInLimitedView) && (
                   <span>{submission?.institution_name ?? "Unknown school"}</span>
                 )}
 
@@ -859,6 +862,13 @@ export function WorkspaceClient({
                 <dl className="detail-grid" style={{ marginTop: 18 }}>
                   {isLimitedSubmissionDetailsView ? (
                     <>
+                      {shouldShowSchoolNameInLimitedView && (
+                        <DetailField
+                          label="School"
+                          value={selectedSubmission.institution_name}
+                        />
+                      )}
+
                       <DetailField
                         label="Pathway"
                         value={selectedSubmission.art_pathway_name_en}
