@@ -1434,6 +1434,22 @@ export function WorkspaceClient({
                     )}
                   </div>
 
+                  <label style={{ display: "block", marginTop: 12 }}>
+                    <span className="small">Literary Proofreader Comment</span>
+
+                    <textarea
+                      key={`literary-comment-${selectedSubmission.id}`}
+                      name="literary_proofreader_comment"
+                      rows={5}
+                      dir="auto"
+                      placeholder="Write any comments for the Coordinator, Management, Admin, or later workflow users."
+                      defaultValue={displayText(
+                        selectedSubmission.literary_proofreader_comment,
+                        ""
+                      )}
+                    />
+                  </label>
+
                   {literaryPublicationSuitable === "yes" && (
                     <>
                       <label style={{ display: "block", marginTop: 12 }}>
