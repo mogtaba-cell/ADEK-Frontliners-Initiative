@@ -201,15 +201,24 @@ function taskRelationshipText(task: any) {
 function buildStoredSubmissionComments(submission: Submission) {
   const comments: Array<{ label: string; text: string }> = [];
 
-  const evaluatorComment = String(submission.evaluator_comment ?? "").trim();
-  const literaryComment = String(submission.literary_proofreader_comment ?? "").trim();
+  const storedCommentFields: Array<{ key: string; label: string }> = [
+    { key: "evaluator_comment", label: "ADEK Evaluator Comment" },
+    { key: "general_proofreader_comment", label: "General Proofreader Comment" },
+    { key: "literary_proofreader_comment", label: "Literary Proofreader Comment" },
+    { key: "management_comment", label: "Management Comment" },
+    { key: "reviewer_comment", label: "Final Reviewer Comment" },
+    { key: "coordinator_comment", label: "Coordinator Comment" },
+    { key: "coordinator_correction_comment", label: "Coordinator Correction Comment" },
+    { key: "coordinator_disqualification_reason", label: "Coordinator Disqualification Reason" },
+    { key: "disqualification_reason", label: "Disqualification Reason" },
+  ];
 
-  if (evaluatorComment) {
-    comments.push({ label: "ADEK Evaluator Comment", text: evaluatorComment });
-  }
+  for (const field of storedCommentFields) {
+    const text = String(submission[field.key] ?? "").trim();
 
-  if (literaryComment) {
-    comments.push({ label: "Literary Proofreader Comment", text: literaryComment });
+    if (text) {
+      comments.push({ label: field.label, text });
+    }
   }
 
   return comments;
