@@ -311,7 +311,7 @@ async function cancelDuplicateActiveAssignmentsForSource(
     .eq("submission_id", sourceAssignment.submission_id)
     .eq("phase", sourceAssignment.phase)
     .neq("id", sourceAssignment.id)
-    .in("status", ["assigned", "in_progress"]);
+    .in("status", activeAssignmentStatuses);
 
   if (sourceAssignment.phase === "proofreading") {
     query = query.eq("proofreader_type", sourceAssignment.proofreader_type ?? "general");
@@ -340,6 +340,59 @@ function activeAssignmentMatchDescription(
   return "";
 }
 
+async function cancelStaleCoordinatorTasksForSource(
+  submissionId: string,
+  sourceAssignmentId: string,
+  actorId?: string
+) {
+  const timestamp = new Date().toISOString();
+  const updateValues = {
+    status: "cancelled",
+    decision: "cancelled_replaced_by_new_correction_source",
+    completed_at: timestamp,
+    updated_at: timestamp,
+    assigned_by: actorId ?? null,
+  };
+
+  const { error } = await supabaseAdmin
+    .from("assignments")
+    .update(updateValues)
+    .eq("submission_id", submissionId)
+    .eq("phase", "coordinator_check")
+    .in("status", ["assigned", "in_progress"])
+    .neq("correction_source_assignment_id", sourceAssignmentId);
+
+  if (error) throw error;
+
+  const { error: nullSourceError } = await supabaseAdmin
+    .from("assignments")
+    .update(updateValues)
+    .eq("submission_id", submissionId)
+    .eq("phase", "coordinator_check")
+    .in("status", ["assigned", "in_progress"])
+    .is("correction_source_assignment_id", null);
+
+  if (nullSourceError) throw nullSourceError;
+}
+
+async function getActiveCorrectionSourceForSubmission(submissionId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("assignments")
+    .select(
+      "id,submission_id,phase,status,decision,assigned_to,correction_reason,correction_notes"
+    )
+    .eq("submission_id", submissionId)
+    .eq("status", "returned_for_correction")
+    .eq("decision", "needs_correction")
+    .neq("phase", "coordinator_check")
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
 export async function autoAssignOne(
   submissionId: string,
   phase: WorkflowPhase,
@@ -355,6 +408,14 @@ export async function autoAssignOne(
     correctionSourceAssignmentId?: string | null;
   }
 ) {
+  if (phase === "coordinator_check" && options?.correctionSourceAssignmentId) {
+    await cancelStaleCoordinatorTasksForSource(
+      submissionId,
+      options.correctionSourceAssignmentId,
+      actorId
+    );
+  }
+
   let existingQuery = supabaseAdmin
     .from("assignments")
     .select("id,status,assigned_to,proofreader_type,correction_source_assignment_id")
@@ -373,6 +434,13 @@ export async function autoAssignOne(
 
   if (phase === "literary_proofreading" && options?.proofreaderType) {
     existingQuery = existingQuery.eq("proofreader_type", options.proofreaderType);
+  }
+
+  if (phase === "coordinator_check" && options?.correctionSourceAssignmentId) {
+    existingQuery = existingQuery.eq(
+      "correction_source_assignment_id",
+      options.correctionSourceAssignmentId
+    );
   }
 
   const existing = await existingQuery.maybeSingle();
@@ -836,8 +904,30 @@ export async function autoAssignPending(
   for (const submission of limitedSubmissions) {
     try {
       let proofreaderType: ProofreaderType | undefined;
+      let assignmentOptions: Parameters<typeof autoAssignOne>[3] = {};
 
-      if (await hasActivePhaseAssignment(submission.id, phase)) {
+      if (phase === "coordinator_check") {
+        const sourceAssignment = await getActiveCorrectionSourceForSubmission(
+          submission.id
+        );
+
+        if (!sourceAssignment) {
+          skipped++;
+          errors.push(
+            `${submission.reference_id ?? submission.id}: Returned for correction but no active source assignment was found.`
+          );
+          continue;
+        }
+
+        assignmentOptions = {
+          requestedByUserId: sourceAssignment.assigned_to ?? null,
+          returnToUserId: sourceAssignment.assigned_to ?? null,
+          correctionReason: sourceAssignment.correction_reason ?? null,
+          correctionNotes: sourceAssignment.correction_notes ?? null,
+          correctionSourcePhase: sourceAssignment.phase as WorkflowPhase,
+          correctionSourceAssignmentId: sourceAssignment.id,
+        };
+      } else if (await hasActivePhaseAssignment(submission.id, phase)) {
         skipped++;
         continue;
       }
@@ -886,7 +976,7 @@ export async function autoAssignPending(
       }
 
       if (phase === "management_review") {
-        if (await hasAnyPhaseAssignment(submission.id, "management_review")) {
+        if (await hasActivePhaseAssignment(submission.id, "management_review")) {
           skipped++;
           continue;
         }
@@ -905,6 +995,7 @@ export async function autoAssignPending(
       }
 
       const result = await autoAssignOne(submission.id, phase, actorId, {
+        ...assignmentOptions,
         proofreaderType,
       });
 

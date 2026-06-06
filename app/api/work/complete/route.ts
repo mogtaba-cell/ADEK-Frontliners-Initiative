@@ -10,6 +10,13 @@ import {
 } from "@/lib/assignment";
 import type { WorkflowPhase } from "@/lib/types";
 
+const ACTIVE_ASSIGNMENT_STATUSES = [
+  "assigned",
+  "in_progress",
+  "returned_for_correction",
+  "sent_for_review",
+];
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -148,6 +155,87 @@ async function markAssignmentCompleted(
   );
 }
 
+async function cancelActiveCoordinatorTasks({
+  submissionId,
+  keepAssignmentId,
+  keepSourceAssignmentId,
+  decision = "cancelled_stale_coordinator_task",
+  completedAt = nowIso(),
+}: {
+  submissionId: string;
+  keepAssignmentId?: string | null;
+  keepSourceAssignmentId?: string | null;
+  decision?: string;
+  completedAt?: string;
+}) {
+  const baseUpdate = {
+    status: "cancelled",
+    decision,
+    completed_at: completedAt,
+    updated_at: completedAt,
+  };
+
+  let query = supabaseAdmin
+    .from("assignments")
+    .update(baseUpdate)
+    .eq("submission_id", submissionId)
+    .eq("phase", "coordinator_check")
+    .in("status", ["assigned", "in_progress"]);
+
+  if (keepAssignmentId) query = query.neq("id", keepAssignmentId);
+  if (keepSourceAssignmentId) {
+    query = query.neq("correction_source_assignment_id", keepSourceAssignmentId);
+  }
+
+  const { error } = await query;
+  if (error) {
+    throw new Error(`Coordinator cleanup failed: ${error.message}`);
+  }
+
+  if (keepSourceAssignmentId) {
+    let nullSourceQuery = supabaseAdmin
+      .from("assignments")
+      .update(baseUpdate)
+      .eq("submission_id", submissionId)
+      .eq("phase", "coordinator_check")
+      .is("correction_source_assignment_id", null)
+      .in("status", ["assigned", "in_progress"]);
+
+    if (keepAssignmentId) nullSourceQuery = nullSourceQuery.neq("id", keepAssignmentId);
+
+    const { error: nullSourceError } = await nullSourceQuery;
+    if (nullSourceError) {
+      throw new Error(`Coordinator null-source cleanup failed: ${nullSourceError.message}`);
+    }
+  }
+}
+
+async function cancelActiveAssignmentsForCompletedWorkflow({
+  submissionId,
+  keepAssignmentId,
+  completedAt,
+}: {
+  submissionId: string;
+  keepAssignmentId: string;
+  completedAt: string;
+}) {
+  const { error } = await supabaseAdmin
+    .from("assignments")
+    .update({
+      status: "cancelled",
+      decision: "cancelled_workflow_completed",
+      completed_at: completedAt,
+      updated_at: completedAt,
+    })
+    .eq("submission_id", submissionId)
+    .neq("id", keepAssignmentId)
+    .in("status", ACTIVE_ASSIGNMENT_STATUSES);
+
+  if (error) {
+    throw new Error(`Completed workflow cleanup failed: ${error.message}`);
+  }
+}
+
 async function getCompletedGeneralProofreaderId(submissionId: string) {
   const { data, error } = await supabaseAdmin
     .from("assignments")
@@ -218,6 +306,13 @@ async function sendToCoordinatorForCorrection({
     submissionId
   );
 
+  await cancelActiveCoordinatorTasks({
+    submissionId,
+    keepSourceAssignmentId: assignmentId,
+    decision: "cancelled_replaced_by_new_correction_source",
+    completedAt: timestamp,
+  });
+
   return autoAssignOne(submissionId, "coordinator_check", actorId, {
     requestedByUserId: requesterId,
     returnToUserId: requesterId,
@@ -279,6 +374,12 @@ async function returnCorrectedSubmission({
     "id",
     submissionId
   );
+
+  await cancelActiveCoordinatorTasks({
+    submissionId,
+    keepAssignmentId: assignmentId,
+    decision: "cancelled_after_correction_returned",
+  });
 }
 
 
@@ -358,14 +459,7 @@ async function resolveManagementSourceAssignment({
 
   if (!sourceAssignment) return;
 
-  const activeStatuses = [
-    "assigned",
-    "in_progress",
-    "returned_for_correction",
-    "sent_for_review",
-  ];
-
-  if (!activeStatuses.includes(String(sourceAssignment.status))) return;
+  if (!ACTIVE_ASSIGNMENT_STATUSES.includes(String(sourceAssignment.status))) return;
 
   if (sourceAssignment.phase === "adek_evaluation") {
     await safeUpdate(
@@ -420,13 +514,6 @@ async function closeOpenAssignmentsAfterDisqualification({
   completedAt: string;
   sourceAssignmentId?: string | null;
 }) {
-  const activeStatuses = [
-    "assigned",
-    "in_progress",
-    "returned_for_correction",
-    "sent_for_review",
-  ];
-
   if (sourceAssignmentId) {
     const { data: sourceAssignment, error: sourceError } = await supabaseAdmin
       .from("assignments")
@@ -440,7 +527,7 @@ async function closeOpenAssignmentsAfterDisqualification({
 
     if (
       sourceAssignment &&
-      activeStatuses.includes(String(sourceAssignment.status))
+      ACTIVE_ASSIGNMENT_STATUSES.includes(String(sourceAssignment.status))
     ) {
       if (sourceAssignment.phase === "adek_evaluation") {
         await safeUpdate(
@@ -481,7 +568,7 @@ async function closeOpenAssignmentsAfterDisqualification({
     .eq("submission_id", submissionId)
     .eq("phase", "adek_evaluation")
     .neq("id", currentAssignmentId)
-    .in("status", activeStatuses);
+    .in("status", ACTIVE_ASSIGNMENT_STATUSES);
 
   if (evaluatorCloseError) {
     throw new Error(
@@ -506,7 +593,7 @@ async function closeOpenAssignmentsAfterDisqualification({
       "literary_proofreading",
       "final_review",
     ])
-    .in("status", activeStatuses);
+    .in("status", ACTIVE_ASSIGNMENT_STATUSES);
 
   if (activeCloseError) {
     throw new Error(
@@ -721,6 +808,14 @@ export async function POST(req: Request) {
           decision,
           completed_at: completedAt,
         });
+
+        if (decision === "disqualified") {
+          await closeOpenAssignmentsAfterDisqualification({
+            submissionId,
+            currentAssignmentId: assignmentId,
+            completedAt,
+          });
+        }
 
         if (decision === "approved") {
           await assignProofreadingAfterApproval(submissionId, user.id);
@@ -1016,6 +1111,12 @@ export async function POST(req: Request) {
         "id",
         submissionId
       );
+
+      await cancelActiveAssignmentsForCompletedWorkflow({
+        submissionId,
+        keepAssignmentId: assignmentId,
+        completedAt,
+      });
     }
 
     await audit({
