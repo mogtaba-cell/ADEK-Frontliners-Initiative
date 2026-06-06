@@ -217,6 +217,7 @@ function formatViewLabel(view: string) {
   if (view === "sent_for_correction") return "sent for correction";
   if (view === "sent_for_review") return "sent for review";
   if (view === "needs_review") return "needs review";
+  if (view === "pending") return "pending";
   if (view === "waiting_for_response") return "waiting for response";
 
   return view.replaceAll("_", " ");
@@ -236,9 +237,13 @@ function statusesForView(phase: WorkflowPhase, view: string) {
   }
 
   if (view === "needs_review") {
+    return phase === "management_review" ? ["assigned"] : ["completed"];
+  }
+
+  if (view === "pending") {
     return phase === "management_review"
-      ? ["assigned", "in_progress"]
-      : ["completed"];
+      ? ["in_progress"]
+      : ["assigned", "in_progress"];
   }
 
   if (view === "sent_for_review") return ["sent_for_review"];
@@ -271,7 +276,12 @@ function applyDecisionGate(query: any, phase: WorkflowPhase, view: string) {
   if (view === "approved") return query.eq("decision", "approved");
   if (view === "disqualified") return query.eq("decision", "disqualified");
 
-  if (view === "needs_review" && phase !== "management_review") {
+  if (phase === "management_review") {
+    if (view === "needs_review") return query.is("decision", null);
+    if (view === "pending") return query.eq("decision", "pending");
+  }
+
+  if (view === "needs_review") {
     return query.eq("decision", "needs_review");
   }
 
@@ -570,14 +580,16 @@ async function getKpiCards({
   }
 
   if (phase === "management_review") {
-    const [remaining, approved, disqualified] = await Promise.all([
+    const [needsReview, pending, approved, disqualified] = await Promise.all([
       getAssignmentCount({ userId, phase, view: "needs_review" }),
+      getAssignmentCount({ userId, phase, view: "pending" }),
       getAssignmentCount({ userId, phase, view: "approved" }),
       getAssignmentCount({ userId, phase, view: "disqualified" }),
     ]);
 
     return [
-      { label: "Needs Review", value: remaining },
+      { label: "Needs Review", value: needsReview },
+      { label: "Pending", value: pending },
       { label: "Approved by Me", value: approved },
       { label: "Disqualified by Me", value: disqualified },
     ];
@@ -730,6 +742,7 @@ function ViewOptions({
     return (
       <>
         <option value="needs_review">Needs Review</option>
+        <option value="pending">Pending</option>
         <option value="approved">Approved</option>
         <option value="disqualified">Disqualified</option>
         <option value="all">All</option>
