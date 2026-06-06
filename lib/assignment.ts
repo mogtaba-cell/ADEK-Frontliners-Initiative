@@ -636,7 +636,13 @@ export async function getEvaluatorAssignmentWorkloads() {
       .range(from, to)
   );
 
-  const evaluatorIds = evaluators.map((evaluator) => evaluator.id);
+  const evaluatorEmails = Array.from(
+    new Set(
+      evaluators
+        .map((evaluator) => String(evaluator.email ?? "").trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
 
   const workload = new Map<
     string,
@@ -648,8 +654,8 @@ export async function getEvaluatorAssignmentWorkloads() {
     }
   >();
 
-  for (const id of evaluatorIds) {
-    workload.set(id, {
+  for (const email of evaluatorEmails) {
+    workload.set(email, {
       total: new Set(),
       remaining: new Set(),
       sent_for_correction: new Set(),
@@ -658,35 +664,39 @@ export async function getEvaluatorAssignmentWorkloads() {
   }
 
   for (const chunk of chunkArray(
-    evaluatorIds,
+    evaluatorEmails,
     SUPABASE_IN_FILTER_CHUNK_SIZE
   )) {
     if (!chunk.length) continue;
 
     const assignments = await fetchAllRows<{
-      assigned_to: string | null;
       submission_id: string | null;
       status: string | null;
       completed_at: string | null;
+      profiles: { email: string | null } | null;
     }>((from, to) =>
       supabaseAdmin
         .from("assignments")
-        .select("assigned_to,submission_id,status,completed_at")
+        .select("submission_id,status,completed_at,profiles!assignments_assigned_to_fkey(email)")
         .eq("phase", "adek_evaluation")
-        .in("assigned_to", chunk)
+        .in("profiles.email", chunk)
         .range(from, to)
     );
 
     for (const assignment of assignments) {
+      const email = String(assignment.profiles?.email ?? "")
+        .trim()
+        .toLowerCase();
+
       if (
-        !assignment.assigned_to ||
+        !email ||
         !assignment.submission_id ||
         isCancelledStatus(assignment.status)
       ) {
         continue;
       }
 
-      const row = workload.get(assignment.assigned_to);
+      const row = workload.get(email);
       if (!row) continue;
 
       row.total.add(assignment.submission_id);
@@ -706,7 +716,8 @@ export async function getEvaluatorAssignmentWorkloads() {
   }
 
   return evaluators.map((evaluator) => {
-    const row = workload.get(evaluator.id);
+    const email = String(evaluator.email ?? "").trim().toLowerCase();
+    const row = workload.get(email);
 
     return {
       ...evaluator,
