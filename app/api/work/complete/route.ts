@@ -920,13 +920,77 @@ export async function POST(req: Request) {
         submissionId
       );
 
-      if (literaryAction === "needs_review" || !publicationSuitable) {
-        await sendLiteraryToManagementReview({
+      if (literaryAction === "disqualify") {
+        const completedAt = nowIso();
+
+        await addWorkflowComment({
           submissionId,
-          assignmentId,
-          actorId: user.id,
-          requesterId: assignment.assigned_to ?? user.id,
+          authorId: user.id,
+          phase,
           comment: literaryProofreaderComment,
+        });
+
+        await markAssignmentCompleted(assignmentId, {
+          decision: "disqualified",
+          correction_notes: literaryProofreaderComment,
+          completed_at: completedAt,
+        });
+
+        await safeUpdate(
+          "submissions",
+          {
+            workflow_status: "disqualified",
+            literary_publication_suitable: false,
+            literary_proofreader_comment: literaryProofreaderComment,
+            completed_at: completedAt,
+            updated_at: completedAt,
+          },
+          "id",
+          submissionId
+        );
+
+        await closeOpenAssignmentsAfterDisqualification({
+          submissionId,
+          currentAssignmentId: assignmentId,
+          completedAt,
+          sourceAssignmentId: assignment.correction_source_assignment_id ?? null,
+        });
+      } else if (literaryAction === "needs_review" || !publicationSuitable) {
+        // Literary proofreaders now make the final publication suitability decision themselves.
+        // Keep needs_review here only as backward compatibility for any stale/open browser tab.
+        const completedAt = nowIso();
+
+        await addWorkflowComment({
+          submissionId,
+          authorId: user.id,
+          phase,
+          comment: literaryProofreaderComment,
+        });
+
+        await markAssignmentCompleted(assignmentId, {
+          decision: "disqualified",
+          correction_notes: literaryProofreaderComment,
+          completed_at: completedAt,
+        });
+
+        await safeUpdate(
+          "submissions",
+          {
+            workflow_status: "disqualified",
+            literary_publication_suitable: false,
+            literary_proofreader_comment: literaryProofreaderComment,
+            completed_at: completedAt,
+            updated_at: completedAt,
+          },
+          "id",
+          submissionId
+        );
+
+        await closeOpenAssignmentsAfterDisqualification({
+          submissionId,
+          currentAssignmentId: assignmentId,
+          completedAt,
+          sourceAssignmentId: assignment.correction_source_assignment_id ?? null,
         });
       } else if (literaryAction === "needs_correction") {
         await sendToCoordinatorForCorrection({

@@ -1583,14 +1583,34 @@ export function WorkspaceClient({
                   </button>
                 ) : phase === "literary_proofreading" ? (
                   literaryPublicationSuitable === "no" ? (
-                    <button
-                      className="btn"
-                      type="submit"
-                      name="literary_action"
-                      value="needs_review"
-                    >
-                      Needs Review
-                    </button>
+                    <>
+                      <button
+                        className="btn"
+                        type="submit"
+                        name="literary_action"
+                        value="disqualify"
+                        onClick={(event) => {
+                          if (
+                            !window.confirm(
+                              "Are you sure you want to disqualify this artwork? This will remove it from the workflow."
+                            )
+                          ) {
+                            event.preventDefault();
+                          }
+                        }}
+                      >
+                        Disqualify Artwork
+                      </button>
+
+                      <button
+                        className="btn secondary"
+                        type="submit"
+                        name="literary_action"
+                        value="needs_correction"
+                      >
+                        Send for Correction
+                      </button>
+                    </>
                   ) : (
                     <>
                       <button
@@ -1609,6 +1629,24 @@ export function WorkspaceClient({
                         value="needs_correction"
                       >
                         Send for Correction
+                      </button>
+
+                      <button
+                        className="btn secondary"
+                        type="submit"
+                        name="literary_action"
+                        value="disqualify"
+                        onClick={(event) => {
+                          if (
+                            !window.confirm(
+                              "Are you sure you want to disqualify this artwork? This will remove it from the workflow."
+                            )
+                          ) {
+                            event.preventDefault();
+                          }
+                        }}
+                      >
+                        Disqualify Artwork
                       </button>
                     </>
                   )
