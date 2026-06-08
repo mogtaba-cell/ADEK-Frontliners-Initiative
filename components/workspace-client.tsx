@@ -677,13 +677,13 @@ export function WorkspaceClient({
   pageSize?: number;
 }) {
   const [loadedAssignments, setLoadedAssignments] = useState<Assignment[]>(assignments);
-  const [hasMore, setHasMore] = useState(initialHasMore);
-  const [nextPage, setNextPage] = useState(Math.max(1, initialPage) + 1);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(
     assignments[0]?.id ?? null
   );
+  const [hasMoreAssignments, setHasMoreAssignments] = useState(initialHasMore);
+  const [nextPageToLoad, setNextPageToLoad] = useState(initialPage + 1);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
 
   const [adekFileQualityClear, setAdekFileQualityClear] = useState("yes");
   const [culturalAuthenticity, setCulturalAuthenticity] = useState("yes");
@@ -706,53 +706,21 @@ export function WorkspaceClient({
 
   useEffect(() => {
     setLoadedAssignments(assignments);
-    setHasMore(initialHasMore);
-    setNextPage(Math.max(1, initialPage) + 1);
-    setLoadMoreError(null);
-    setSelectedId(assignments[0]?.id ?? null);
-  }, [assignments, initialHasMore, initialPage]);
-
-  async function loadMoreAssignments() {
-    if (!loadMoreUrl || isLoadingMore || !hasMore) return;
-
-    setIsLoadingMore(true);
+    setHasMoreAssignments(initialHasMore);
+    setNextPageToLoad(initialPage + 1);
     setLoadMoreError(null);
 
-    try {
-      const separator = loadMoreUrl.includes("?") ? "&" : "?";
-      const response = await fetch(`${loadMoreUrl}${separator}page=${nextPage}`, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.error || "Could not load more artworks.");
-      }
-
-      const payload = await response.json();
-      const nextAssignments = Array.isArray(payload.assignments)
-        ? (payload.assignments as Assignment[])
-        : [];
-
-      setLoadedAssignments((current) => {
-        const seen = new Set(current.map((assignment) => assignment.id));
-        const uniqueNext = nextAssignments.filter(
-          (assignment) => !seen.has(assignment.id),
-        );
-        return [...current, ...uniqueNext];
-      });
-      setHasMore(Boolean(payload.hasNextPage));
-      setNextPage((page) => page + 1);
-    } catch (error) {
-      setLoadMoreError(
-        error instanceof Error ? error.message : "Could not load more artworks.",
-      );
-    } finally {
-      setIsLoadingMore(false);
+    if (!assignments.length) {
+      setSelectedId(null);
+      return;
     }
-  }
+
+    setSelectedId((currentSelectedId) =>
+      currentSelectedId && assignments.some((assignment) => assignment.id === currentSelectedId)
+        ? currentSelectedId
+        : assignments[0].id,
+    );
+  }, [assignments, initialHasMore, initialPage]);
 
   const selectedAssignment = useMemo(
     () =>
@@ -766,16 +734,6 @@ export function WorkspaceClient({
   const derived = selectedSubmission ? getDerivedFields(selectedSubmission) : null;
   const selectedIsLiteraryExpression = isLiteraryExpressionsSubmission(selectedSubmission);
 
-  useEffect(() => {
-    if (!loadedAssignments.length) {
-      setSelectedId(null);
-      return;
-    }
-
-    if (!selectedId || !loadedAssignments.some((assignment) => assignment.id === selectedId)) {
-      setSelectedId(loadedAssignments[0].id);
-    }
-  }, [loadedAssignments, selectedId]);
 
   useEffect(() => {
     if (!selectedSubmission) return;
@@ -802,6 +760,49 @@ export function WorkspaceClient({
       selectedSubmission.literary_publication_suitable === false ? "no" : "yes"
     );
   }, [selectedSubmission?.id]);
+
+  async function handleLoadMore() {
+    if (!loadMoreUrl || isLoadingMore || !hasMoreAssignments) return;
+
+    setIsLoadingMore(true);
+    setLoadMoreError(null);
+
+    try {
+      const separator = loadMoreUrl.includes("?") ? "&" : "?";
+      const response = await fetch(`${loadMoreUrl}${separator}page=${nextPageToLoad}`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
+
+      if (!response.ok) {
+        throw new Error("Could not load more artworks. Please try again.");
+      }
+
+      const payload = (await response.json()) as {
+        assignments?: Assignment[];
+        hasNextPage?: boolean;
+        page?: number;
+      };
+
+      const nextAssignments = payload.assignments ?? [];
+
+      setLoadedAssignments((currentAssignments) => {
+        const existingIds = new Set(currentAssignments.map((assignment) => assignment.id));
+        const uniqueNextAssignments = nextAssignments.filter(
+          (assignment) => !existingIds.has(assignment.id),
+        );
+
+        return [...currentAssignments, ...uniqueNextAssignments];
+      });
+
+      setHasMoreAssignments(Boolean(payload.hasNextPage));
+      setNextPageToLoad((payload.page ?? nextPageToLoad) + 1);
+    } catch (error) {
+      setLoadMoreError(error instanceof Error ? error.message : "Could not load more artworks.");
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }
 
   const liveAdekDecision = calculateAdekDecisionLabel(
     culturalAuthenticity,
@@ -883,19 +884,18 @@ export function WorkspaceClient({
           )}
 
           {loadMoreError && (
-            <div className="workspace-empty" style={{ color: "#8a1f11" }}>
-              {loadMoreError}
+            <div className="workspace-empty">
+              <p className="muted small">{loadMoreError}</p>
             </div>
           )}
 
-          {hasMore && (
-            <div style={{ padding: "12px" }}>
+          {loadMoreUrl && hasMoreAssignments && (
+            <div className="actions" style={{ padding: "0.75rem" }}>
               <button
-                className="btn"
+                className="btn secondary"
                 type="button"
-                onClick={loadMoreAssignments}
+                onClick={handleLoadMore}
                 disabled={isLoadingMore}
-                style={{ width: "100%" }}
               >
                 {isLoadingMore ? "Loading..." : `Load next ${pageSize}`}
               </button>
@@ -1666,34 +1666,14 @@ export function WorkspaceClient({
                   </button>
                 ) : phase === "literary_proofreading" ? (
                   literaryPublicationSuitable === "no" ? (
-                    <>
-                      <button
-                        className="btn"
-                        type="submit"
-                        name="literary_action"
-                        value="disqualify"
-                        onClick={(event) => {
-                          if (
-                            !window.confirm(
-                              "Are you sure you want to disqualify this artwork? This will remove it from the workflow."
-                            )
-                          ) {
-                            event.preventDefault();
-                          }
-                        }}
-                      >
-                        Disqualify Artwork
-                      </button>
-
-                      <button
-                        className="btn secondary"
-                        type="submit"
-                        name="literary_action"
-                        value="needs_correction"
-                      >
-                        Send for Correction
-                      </button>
-                    </>
+                    <button
+                      className="btn"
+                      type="submit"
+                      name="literary_action"
+                      value="needs_review"
+                    >
+                      Needs Review
+                    </button>
                   ) : (
                     <>
                       <button
@@ -1712,24 +1692,6 @@ export function WorkspaceClient({
                         value="needs_correction"
                       >
                         Send for Correction
-                      </button>
-
-                      <button
-                        className="btn secondary"
-                        type="submit"
-                        name="literary_action"
-                        value="disqualify"
-                        onClick={(event) => {
-                          if (
-                            !window.confirm(
-                              "Are you sure you want to disqualify this artwork? This will remove it from the workflow."
-                            )
-                          ) {
-                            event.preventDefault();
-                          }
-                        }}
-                      >
-                        Disqualify Artwork
                       </button>
                     </>
                   )

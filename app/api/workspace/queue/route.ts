@@ -38,6 +38,13 @@ function getPositiveIntegerParam(value: string | null, fallback: number) {
 }
 
 function statusesForView(phase: WorkflowPhase, view: string) {
+  // Coordinator workspace "All" should list active queue items only.
+  // Completed coordinator rows are task-flow history and should not appear as
+  // duplicate artwork cards in the left workspace list or API load-more results.
+  if (phase === "coordinator_check" && view === "all") {
+    return ["assigned", "in_progress"];
+  }
+
   if (view === "all") return allAssignmentStatuses;
   if (view === "completed") return ["completed"];
 

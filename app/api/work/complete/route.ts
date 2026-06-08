@@ -323,6 +323,58 @@ async function sendToCoordinatorForCorrection({
   });
 }
 
+async function ensureUpdatedArtworkIsSavedForFileCorrection(submissionId: string) {
+  const { data: submission, error: submissionError } = await supabaseAdmin
+    .from("submissions")
+    .select("updated_artwork_file_id,updated_artwork_file_url,updated_artwork_file_name")
+    .eq("id", submissionId)
+    .single();
+
+  if (submissionError) {
+    throw new Error(`Submission updated artwork lookup failed: ${submissionError.message}`);
+  }
+
+  if (
+    submission?.updated_artwork_file_id ||
+    submission?.updated_artwork_file_url ||
+    submission?.updated_artwork_file_name
+  ) {
+    return;
+  }
+
+  const { data: latestFile, error: latestFileError } = await supabaseAdmin
+    .from("updated_artwork_files")
+    .select("google_file_id,google_file_url,file_name,created_at")
+    .eq("submission_id", submissionId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (latestFileError) {
+    throw new Error(`Updated artwork file lookup failed: ${latestFileError.message}`);
+  }
+
+  if (!latestFile?.google_file_url) {
+    throw new Error(
+      "This correction was requested because the artwork file could not be evaluated clearly. Upload the corrected artwork attachment first, then return it to the evaluator/proofreader."
+    );
+  }
+
+  const { error: updateError } = await supabaseAdmin
+    .from("submissions")
+    .update({
+      updated_artwork_file_id: latestFile.google_file_id ?? null,
+      updated_artwork_file_url: latestFile.google_file_url,
+      updated_artwork_file_name: latestFile.file_name ?? "Updated artwork file",
+      updated_at: nowIso(),
+    })
+    .eq("id", submissionId);
+
+  if (updateError) {
+    throw new Error(`Submission updated artwork link failed: ${updateError.message}`);
+  }
+}
+
 async function returnCorrectedSubmission({
   submissionId,
   assignmentId,
@@ -337,6 +389,10 @@ async function returnCorrectedSubmission({
 
   if (!sourcePhase) {
     throw new Error("Missing correction source phase. Cannot return correction.");
+  }
+
+  if (coordinatorAssignment.correction_reason === "adek_file_quality") {
+    await ensureUpdatedArtworkIsSavedForFileCorrection(submissionId);
   }
 
   const sourceAssignmentId = coordinatorAssignment.correction_source_assignment_id as string | null;
@@ -920,77 +976,13 @@ export async function POST(req: Request) {
         submissionId
       );
 
-      if (literaryAction === "disqualify") {
-        const completedAt = nowIso();
-
-        await addWorkflowComment({
+      if (literaryAction === "needs_review" || !publicationSuitable) {
+        await sendLiteraryToManagementReview({
           submissionId,
-          authorId: user.id,
-          phase,
+          assignmentId,
+          actorId: user.id,
+          requesterId: assignment.assigned_to ?? user.id,
           comment: literaryProofreaderComment,
-        });
-
-        await markAssignmentCompleted(assignmentId, {
-          decision: "disqualified",
-          correction_notes: literaryProofreaderComment,
-          completed_at: completedAt,
-        });
-
-        await safeUpdate(
-          "submissions",
-          {
-            workflow_status: "disqualified",
-            literary_publication_suitable: false,
-            literary_proofreader_comment: literaryProofreaderComment,
-            completed_at: completedAt,
-            updated_at: completedAt,
-          },
-          "id",
-          submissionId
-        );
-
-        await closeOpenAssignmentsAfterDisqualification({
-          submissionId,
-          currentAssignmentId: assignmentId,
-          completedAt,
-          sourceAssignmentId: assignment.correction_source_assignment_id ?? null,
-        });
-      } else if (literaryAction === "needs_review" || !publicationSuitable) {
-        // Literary proofreaders now make the final publication suitability decision themselves.
-        // Keep needs_review here only as backward compatibility for any stale/open browser tab.
-        const completedAt = nowIso();
-
-        await addWorkflowComment({
-          submissionId,
-          authorId: user.id,
-          phase,
-          comment: literaryProofreaderComment,
-        });
-
-        await markAssignmentCompleted(assignmentId, {
-          decision: "disqualified",
-          correction_notes: literaryProofreaderComment,
-          completed_at: completedAt,
-        });
-
-        await safeUpdate(
-          "submissions",
-          {
-            workflow_status: "disqualified",
-            literary_publication_suitable: false,
-            literary_proofreader_comment: literaryProofreaderComment,
-            completed_at: completedAt,
-            updated_at: completedAt,
-          },
-          "id",
-          submissionId
-        );
-
-        await closeOpenAssignmentsAfterDisqualification({
-          submissionId,
-          currentAssignmentId: assignmentId,
-          completedAt,
-          sourceAssignmentId: assignment.correction_source_assignment_id ?? null,
         });
       } else if (literaryAction === "needs_correction") {
         await sendToCoordinatorForCorrection({

@@ -286,6 +286,13 @@ function isProofreadingPhase(phase: WorkflowPhase) {
 }
 
 function statusesForView(phase: WorkflowPhase, view: string) {
+  // Coordinator queue should list active assigned artwork tasks only.
+  // Completed coordinator correction rows remain visible in Task Flow/history,
+  // but should not create duplicate artwork cards in the left workspace list.
+  if (phase === "coordinator_check" && view === "all") {
+    return ["assigned", "in_progress"];
+  }
+
   if (view === "all") return allAssignmentStatuses;
 
   if (view === "completed") return ["completed"];

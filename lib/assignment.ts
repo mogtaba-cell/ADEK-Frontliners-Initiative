@@ -93,15 +93,24 @@ function eligibleStatusForPhase(phase: WorkflowPhase) {
   return [];
 }
 
+function normalizeSchoolName(value: string | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
 function schoolKeyFromSubmission(submission: {
   institution_ref_number?: string | null;
   institution_name?: string | null;
 }) {
-  return (
-    String(submission?.institution_ref_number ?? "").trim() ||
-    String(submission?.institution_name ?? "").trim() ||
-    "Unknown School"
-  );
+  const institutionRef = String(submission?.institution_ref_number ?? "").trim();
+  if (institutionRef) return `ref:${institutionRef.toLowerCase()}`;
+
+  const institutionName = normalizeSchoolName(submission?.institution_name);
+  if (institutionName) return `name:${institutionName}`;
+
+  return "unknown_school";
 }
 
 function isLiteraryPathway(
@@ -253,7 +262,7 @@ async function getCoordinatorForSchool(submissionId: string) {
         `
       )
       .eq("phase", "coordinator_check")
-      .in("status", workloadAssignmentStatuses)
+      .in("status", activeAssignmentStatuses)
       .order("created_at", { ascending: false })
       .range(from, to)
   );
@@ -582,29 +591,11 @@ async function hasActivePhaseAssignment(
 }
 
 export async function countUnassignedAdekSubmissions() {
-  // Count directly in PostgREST instead of downloading every submitted
-  // submission and every assignment. This is used on the Admin dashboard
-  // and was one of the highest-traffic REST patterns in Supabase logs.
-  const { count, error } = await supabaseAdmin
-    .from("submissions")
-    .select("id,assignments!left(id)", { count: "exact", head: true })
-    .eq("workflow_status", "ready_for_adek")
-    .eq("assignments.phase", "adek_evaluation")
-    .in("assignments.status", activeAssignmentStatuses)
-    .is("assignments.id", null);
-
-  if (!error) return count ?? 0;
-
-  console.error(
-    "Optimized unassigned ADEK count failed, falling back to paged count:",
-    error.message
-  );
-
   const submissions = await fetchAllRows<{ id: string }>((from, to) =>
     supabaseAdmin
       .from("submissions")
       .select("id")
-      .eq("workflow_status", "ready_for_adek")
+      .eq("registration_status", "Submitted")
       .range(from, to)
   );
 
@@ -626,7 +617,6 @@ export async function countUnassignedAdekSubmissions() {
         .select("submission_id,status")
         .eq("phase", "adek_evaluation")
         .in("submission_id", chunk)
-        .in("status", activeAssignmentStatuses)
         .range(from, to)
     );
 
@@ -655,13 +645,7 @@ export async function getEvaluatorAssignmentWorkloads() {
       .range(from, to)
   );
 
-  const evaluatorEmails = Array.from(
-    new Set(
-      evaluators
-        .map((evaluator) => String(evaluator.email ?? "").trim().toLowerCase())
-        .filter(Boolean)
-    )
-  );
+  const evaluatorIds = evaluators.map((evaluator) => evaluator.id);
 
   const workload = new Map<
     string,
@@ -673,8 +657,8 @@ export async function getEvaluatorAssignmentWorkloads() {
     }
   >();
 
-  for (const email of evaluatorEmails) {
-    workload.set(email, {
+  for (const id of evaluatorIds) {
+    workload.set(id, {
       total: new Set(),
       remaining: new Set(),
       sent_for_correction: new Set(),
@@ -683,40 +667,35 @@ export async function getEvaluatorAssignmentWorkloads() {
   }
 
   for (const chunk of chunkArray(
-    evaluatorEmails,
+    evaluatorIds,
     SUPABASE_IN_FILTER_CHUNK_SIZE
   )) {
     if (!chunk.length) continue;
 
     const assignments = await fetchAllRows<{
+      assigned_to: string | null;
       submission_id: string | null;
       status: string | null;
-      decision: string | null;
       completed_at: string | null;
-      profiles: { email: string | null } | null;
     }>((from, to) =>
       supabaseAdmin
         .from("assignments")
-        .select("submission_id,status,decision,completed_at,profiles!assignments_assigned_to_fkey(email)")
+        .select("assigned_to,submission_id,status,completed_at")
         .eq("phase", "adek_evaluation")
-        .in("profiles.email", chunk)
+        .in("assigned_to", chunk)
         .range(from, to)
     );
 
     for (const assignment of assignments) {
-      const email = String(assignment.profiles?.email ?? "")
-        .trim()
-        .toLowerCase();
-
       if (
-        !email ||
+        !assignment.assigned_to ||
         !assignment.submission_id ||
         isCancelledStatus(assignment.status)
       ) {
         continue;
       }
 
-      const row = workload.get(email);
+      const row = workload.get(assignment.assigned_to);
       if (!row) continue;
 
       row.total.add(assignment.submission_id);
@@ -725,27 +704,18 @@ export async function getEvaluatorAssignmentWorkloads() {
         row.completed.add(assignment.submission_id);
       }
 
-      if (
-        (assignment.status === "returned_for_correction" &&
-          assignment.decision === "needs_correction") ||
-        (assignment.status === "assigned" &&
-          assignment.decision === "needs_correction")
-      ) {
+      if (assignment.status === "returned_for_correction") {
         row.sent_for_correction.add(assignment.submission_id);
       }
 
-      if (
-        (assignment.status === "assigned" || assignment.status === "in_progress") &&
-        (!assignment.decision || assignment.decision === "pending")
-      ) {
+      if (isRemainingAssignmentStatus(assignment.status)) {
         row.remaining.add(assignment.submission_id);
       }
     }
   }
 
   return evaluators.map((evaluator) => {
-    const email = String(evaluator.email ?? "").trim().toLowerCase();
-    const row = workload.get(email);
+    const row = workload.get(evaluator.id);
 
     return {
       ...evaluator,
