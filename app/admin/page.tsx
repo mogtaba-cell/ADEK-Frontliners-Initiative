@@ -99,7 +99,7 @@ async function getDashboardCounts() {
     ),
     supabaseAdmin
       .from("export_batches")
-      .select("*")
+      .select("id,status,mode,destination_folder_id,error_message,created_at,completed_at")
       .order("created_at", { ascending: false })
       .limit(1),
     countAssignments((query) =>

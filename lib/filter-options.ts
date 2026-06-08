@@ -22,6 +22,8 @@ const empty: FilterOptions = {
 };
 
 const PAGE_SIZE = 1000;
+const FILTER_OPTIONS_CACHE_TTL_MS = 5 * 60 * 1000;
+let cachedFilterOptions: { expiresAt: number; value: FilterOptions } | null = null;
 
 const OFFICIAL_ARTISTIC_RATINGS = ["excellent", "good", "medium", "weak"];
 
@@ -99,6 +101,12 @@ async function fetchAllSubmissionFilterRows() {
 }
 
 export async function getSubmissionFilterOptions(): Promise<FilterOptions> {
+  const now = Date.now();
+
+  if (cachedFilterOptions && cachedFilterOptions.expiresAt > now) {
+    return cachedFilterOptions.value;
+  }
+
   const rows = await fetchAllSubmissionFilterRows();
 
   const liveArtisticRatings = sortUnique(
@@ -157,7 +165,7 @@ export async function getSubmissionFilterOptions(): Promise<FilterOptions> {
       }
     );
 
-    return {
+    const value = {
       pathways: sortUnique(options.pathways),
       subpathways: sortUnique(options.subpathways),
       schoolTypes: sortUnique(options.schoolTypes),
@@ -166,9 +174,13 @@ export async function getSubmissionFilterOptions(): Promise<FilterOptions> {
       workflowStatuses: sortUnique(options.workflowStatuses),
       artisticRatings,
     };
+
+    cachedFilterOptions = { expiresAt: now + FILTER_OPTIONS_CACHE_TTL_MS, value };
+
+    return value;
   }
 
-  return {
+  const value = {
     pathways: sortUnique(
       rows.map((submission: any) => submission.art_pathway_name_en)
     ),
@@ -189,4 +201,8 @@ export async function getSubmissionFilterOptions(): Promise<FilterOptions> {
     ),
     artisticRatings,
   };
+
+  cachedFilterOptions = { expiresAt: now + FILTER_OPTIONS_CACHE_TTL_MS, value };
+
+  return value;
 }

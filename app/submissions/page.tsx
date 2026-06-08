@@ -29,6 +29,45 @@ const emptyOptions: FilterOptions = {
   artisticRatings: [],
 };
 
+
+const SUBMISSION_LIST_SELECT = [
+  "id",
+  "reference_id",
+  "registration_id",
+  "registration_status",
+  "workflow_status",
+  "institution_name",
+  "institution_type",
+  "school_region",
+  "group_name",
+  "art_pathway_name_en",
+  "art_pathway_name_ar",
+  "art_sub_pathway_name_en",
+  "art_sub_pathway_name_ar",
+  "artwork_title_en",
+  "artwork_title_ar",
+  "description_en",
+  "description_ar",
+  "influence_idea_source",
+  "most_enjoyable_part",
+  "focused_elements",
+  "participating_students_names",
+  "participating_students_esis_numbers",
+  "participating_students_genders",
+  "participating_students_grades",
+  "participating_students_nationalities",
+  "submission_date",
+  "submission_date_value",
+  "artistic_rating",
+  "management_artistic_rating",
+  "art_link",
+  "updated_artwork_file_name",
+  "updated_artwork_file_url",
+  "raw_data",
+  "created_at",
+  "updated_at",
+].join(",");
+
 const artisticRatingLabels: Record<string, string> = {
   weak: "ضعيف / Weak",
   medium: "متوسط / Medium",
@@ -256,7 +295,7 @@ export default async function SubmissionsPage({
 
   let query = supabaseAdmin
     .from("submissions")
-    .select("*", { count: "exact" })
+    .select(SUBMISSION_LIST_SELECT, { count: "exact" })
     .order("updated_at", { ascending: false })
     .range(from, to);
 

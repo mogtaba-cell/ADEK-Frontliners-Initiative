@@ -4,6 +4,25 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type KpiResponse = {
+  ok: true;
+  data: {
+    totalSubmissions: number;
+    completedAdekEvaluations: number;
+    totalSelected: number;
+    needsManagementReview: number;
+    totalDisqualified: number;
+    activeCoordinatorCorrections: number;
+    generalProofread: number;
+    literaryProofread: number;
+    finalReady: number;
+    totalClosed: number;
+  };
+};
+
+const KPI_CACHE_TTL_MS = 60_000;
+let cachedKpis: { expiresAt: number; payload: KpiResponse } | null = null;
+
 async function countRows(table: string, filters?: (query: any) => any) {
   let query = supabaseAdmin.from(table).select("id", { count: "exact", head: true });
   if (filters) query = filters(query);
@@ -28,6 +47,17 @@ async function countAssignments(filters: (query: any) => any) {
 
 export async function GET() {
   try {
+    const now = Date.now();
+
+    if (cachedKpis && cachedKpis.expiresAt > now) {
+      return NextResponse.json(cachedKpis.payload, {
+        headers: {
+          "Cache-Control": "private, max-age=30, stale-while-revalidate=60",
+          "X-KPI-Cache": "hit",
+        },
+      });
+    }
+
     const [
       totalSubmissions,
       completedAdekEvaluations,
@@ -52,24 +82,33 @@ export async function GET() {
 
     const totalClosed = finalReady + totalDisqualified;
 
-    return NextResponse.json(
-      {
-        ok: true,
-        data: {
-          totalSubmissions,
-          completedAdekEvaluations,
-          totalSelected,
-          needsManagementReview,
-          totalDisqualified,
-          activeCoordinatorCorrections,
-          generalProofread,
-          literaryProofread,
-          finalReady,
-          totalClosed,
-        },
+    const payload: KpiResponse = {
+      ok: true,
+      data: {
+        totalSubmissions,
+        completedAdekEvaluations,
+        totalSelected,
+        needsManagementReview,
+        totalDisqualified,
+        activeCoordinatorCorrections,
+        generalProofread,
+        literaryProofread,
+        finalReady,
+        totalClosed,
       },
-      { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
-    );
+    };
+
+    cachedKpis = {
+      expiresAt: now + KPI_CACHE_TTL_MS,
+      payload,
+    };
+
+    return NextResponse.json(payload, {
+      headers: {
+        "Cache-Control": "private, max-age=30, stale-while-revalidate=60",
+        "X-KPI-Cache": "miss",
+      },
+    });
   } catch (error: any) {
     console.error("KPI route failed:", error);
     return NextResponse.json(

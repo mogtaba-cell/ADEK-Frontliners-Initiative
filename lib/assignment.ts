@@ -582,11 +582,29 @@ async function hasActivePhaseAssignment(
 }
 
 export async function countUnassignedAdekSubmissions() {
+  // Count directly in PostgREST instead of downloading every submitted
+  // submission and every assignment. This is used on the Admin dashboard
+  // and was one of the highest-traffic REST patterns in Supabase logs.
+  const { count, error } = await supabaseAdmin
+    .from("submissions")
+    .select("id,assignments!left(id)", { count: "exact", head: true })
+    .eq("workflow_status", "ready_for_adek")
+    .eq("assignments.phase", "adek_evaluation")
+    .in("assignments.status", activeAssignmentStatuses)
+    .is("assignments.id", null);
+
+  if (!error) return count ?? 0;
+
+  console.error(
+    "Optimized unassigned ADEK count failed, falling back to paged count:",
+    error.message
+  );
+
   const submissions = await fetchAllRows<{ id: string }>((from, to) =>
     supabaseAdmin
       .from("submissions")
       .select("id")
-      .eq("registration_status", "Submitted")
+      .eq("workflow_status", "ready_for_adek")
       .range(from, to)
   );
 
@@ -608,6 +626,7 @@ export async function countUnassignedAdekSubmissions() {
         .select("submission_id,status")
         .eq("phase", "adek_evaluation")
         .in("submission_id", chunk)
+        .in("status", activeAssignmentStatuses)
         .range(from, to)
     );
 
@@ -672,12 +691,13 @@ export async function getEvaluatorAssignmentWorkloads() {
     const assignments = await fetchAllRows<{
       submission_id: string | null;
       status: string | null;
+      decision: string | null;
       completed_at: string | null;
       profiles: { email: string | null } | null;
     }>((from, to) =>
       supabaseAdmin
         .from("assignments")
-        .select("submission_id,status,completed_at,profiles!assignments_assigned_to_fkey(email)")
+        .select("submission_id,status,decision,completed_at,profiles!assignments_assigned_to_fkey(email)")
         .eq("phase", "adek_evaluation")
         .in("profiles.email", chunk)
         .range(from, to)
@@ -705,11 +725,19 @@ export async function getEvaluatorAssignmentWorkloads() {
         row.completed.add(assignment.submission_id);
       }
 
-      if (assignment.status === "returned_for_correction") {
+      if (
+        (assignment.status === "returned_for_correction" &&
+          assignment.decision === "needs_correction") ||
+        (assignment.status === "assigned" &&
+          assignment.decision === "needs_correction")
+      ) {
         row.sent_for_correction.add(assignment.submission_id);
       }
 
-      if (isRemainingAssignmentStatus(assignment.status)) {
+      if (
+        (assignment.status === "assigned" || assignment.status === "in_progress") &&
+        (!assignment.decision || assignment.decision === "pending")
+      ) {
         row.remaining.add(assignment.submission_id);
       }
     }

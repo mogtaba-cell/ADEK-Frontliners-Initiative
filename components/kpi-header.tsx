@@ -57,9 +57,19 @@ export function KpiHeader() {
 
   useEffect(() => {
     let cancelled = false;
-    async function loadKpis() {
+    let lastLoadedAt = 0;
+
+    async function loadKpis(force = false) {
+      const now = Date.now();
+
+      // Avoid refetching the same global KPI payload on every tab focus.
+      // This keeps active users working while reducing Supabase REST egress.
+      if (!force && now - lastLoadedAt < 60_000) return;
+
+      lastLoadedAt = now;
+
       try {
-        const response = await fetch(`/api/kpis?t=${Date.now()}`, { cache: "no-store" });
+        const response = await fetch("/api/kpis", { cache: "no-store" });
         const payload = await response.json();
         if (!cancelled) setKpis(normalizeKpis(payload));
       } catch (error) {
@@ -69,13 +79,16 @@ export function KpiHeader() {
         if (!cancelled) setIsLoading(false);
       }
     }
-    loadKpis();
-    const interval = window.setInterval(loadKpis, 30000);
-    window.addEventListener("focus", loadKpis);
+
+    loadKpis(true);
+    const interval = window.setInterval(() => loadKpis(), 120000);
+    const onFocus = () => loadKpis();
+    window.addEventListener("focus", onFocus);
+
     return () => {
       cancelled = true;
       window.clearInterval(interval);
-      window.removeEventListener("focus", loadKpis);
+      window.removeEventListener("focus", onFocus);
     };
   }, [pathname]);
 
