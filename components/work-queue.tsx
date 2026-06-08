@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Nav } from "@/components/nav";
-import { PaginationControls } from "@/components/pagination-controls";
 import { getCurrentUser, homeForRole } from "@/lib/auth";
 import { getSubmissionFilterOptions } from "@/lib/filter-options";
-import { firstParam, getPage, getPageSize, getRange } from "@/lib/pagination";
+import { firstParam } from "@/lib/pagination";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import type { Role, WorkflowPhase } from "@/lib/types";
 import { phaseLabels } from "@/lib/workflow";
@@ -37,8 +36,7 @@ const allAssignmentStatuses = [
   "sent_for_review",
 ];
 
-const WORKSPACE_PAGE_SIZE = 1000;
-const WORKSPACE_DEFAULT_PAGE_SIZE = 50;
+const WORKSPACE_PAGE_SIZE = 50;
 
 const correctionReasonLabels: Record<string, string> = {
   adek_file_quality: "Artwork File Quality / Clarity Issue",
@@ -173,6 +171,41 @@ function safeFirstParam(
   return firstParam(value) || fallback;
 }
 
+function getPositiveIntegerParam(
+  value: string | string[] | undefined,
+  fallback: number,
+) {
+  const parsed = Number.parseInt(firstParam(value) || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function buildWorkspacePagePath(
+  role: Role,
+  searchParams: Record<string, string | string[] | undefined>,
+  page: number,
+) {
+  const params = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(searchParams)) {
+    if (key === "refresh") continue;
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item !== undefined && item !== "") params.append(key, item);
+      }
+      continue;
+    }
+
+    if (value !== undefined && value !== "") params.set(key, value);
+  }
+
+  params.set("page", String(Math.max(1, page)));
+
+  const query = params.toString();
+  const path = pathForWorkspaceRole(role);
+  return query ? `${path}?${query}` : path;
+}
+
 function chunkArray<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
 
@@ -219,7 +252,6 @@ function formatViewLabel(view: string) {
   if (view === "sent_for_correction") return "sent for correction";
   if (view === "sent_for_review") return "sent for review";
   if (view === "needs_review") return "needs review";
-  if (view === "pending") return "pending";
   if (view === "waiting_for_response") return "waiting for response";
 
   return view.replaceAll("_", " ");
@@ -239,13 +271,9 @@ function statusesForView(phase: WorkflowPhase, view: string) {
   }
 
   if (view === "needs_review") {
-    return phase === "management_review" ? ["assigned"] : ["completed"];
-  }
-
-  if (view === "pending") {
     return phase === "management_review"
-      ? ["in_progress"]
-      : ["assigned", "in_progress"];
+      ? ["assigned", "in_progress"]
+      : ["completed"];
   }
 
   if (view === "sent_for_review") return ["sent_for_review"];
@@ -278,12 +306,7 @@ function applyDecisionGate(query: any, phase: WorkflowPhase, view: string) {
   if (view === "approved") return query.eq("decision", "approved");
   if (view === "disqualified") return query.eq("decision", "disqualified");
 
-  if (phase === "management_review") {
-    if (view === "needs_review") return query.is("decision", null);
-    if (view === "pending") return query.eq("decision", "pending");
-  }
-
-  if (view === "needs_review") {
+  if (view === "needs_review" && phase !== "management_review") {
     return query.eq("decision", "needs_review");
   }
 
@@ -377,49 +400,8 @@ function buildAssignmentRowsQuery({
       coordinator_comment,
       coordinator_waiting_for_response,
       coordinator_waiting_for_response_at,
-      submissions!inner(
-        id,
-        reference_id,
-        registration_id,
-        registration_status,
-        workflow_status,
-        institution_name,
-        institution_ref_number,
-        institution_type,
-        school_region,
-        group_name,
-        art_pathway_name_en,
-        art_pathway_name_ar,
-        art_sub_pathway_name_en,
-        art_sub_pathway_name_ar,
-        artwork_title_en,
-        artwork_title_ar,
-        description_en,
-        description_ar,
-        influence_idea_source,
-        most_enjoyable_part,
-        focused_elements,
-        participating_students_names,
-        participating_students_esis_numbers,
-        participating_students_genders,
-        participating_students_grades,
-        participating_students_nationalities,
-        art_link,
-        updated_artwork_file_name,
-        updated_artwork_file_url,
-        submission_date,
-        submission_date_value,
-        artistic_rating,
-        management_artistic_rating,
-        evaluator_comment,
-        evaluator_file_quality_clear,
-        literary_publication_suitable,
-        literary_proofreader_comment,
-        literary_updated_content,
-        raw_data
-      )
-      `,
-      { count: "exact" },
+      submissions!inner(*)
+      `
     )
     .eq("assigned_to", userId)
     .eq("phase", phase)
@@ -469,8 +451,8 @@ async function fetchAssignmentRowsPage({
   pathway,
   school,
   search,
-  from,
-  to,
+  page,
+  pageSize,
 }: {
   userId: string;
   phase: WorkflowPhase;
@@ -482,10 +464,15 @@ async function fetchAssignmentRowsPage({
   pathway?: string;
   school?: string;
   search?: string;
-  from: number;
-  to: number;
+  page: number;
+  pageSize: number;
 }) {
-  const { data, count, error } = await buildAssignmentRowsQuery({
+  const from = (page - 1) * pageSize;
+  // Fetch one extra row to know whether there is a next page without running
+  // an expensive exact count query on every workspace page change.
+  const to = from + pageSize;
+
+  const { data, error } = await buildAssignmentRowsQuery({
     userId,
     phase,
     view,
@@ -500,10 +487,21 @@ async function fetchAssignmentRowsPage({
     to,
   });
 
+  if (error) {
+    return {
+      rows: [],
+      hasNextPage: false,
+      error,
+    };
+  }
+
+  const pageRows = data ?? [];
+  const hasNextPage = pageRows.length > pageSize;
+
   return {
-    rows: data ?? [],
-    count: count ?? 0,
-    error,
+    rows: hasNextPage ? pageRows.slice(0, pageSize) : pageRows,
+    hasNextPage,
+    error: null,
   };
 }
 
@@ -600,16 +598,14 @@ async function getKpiCards({
   }
 
   if (phase === "management_review") {
-    const [needsReview, pending, approved, disqualified] = await Promise.all([
+    const [remaining, approved, disqualified] = await Promise.all([
       getAssignmentCount({ userId, phase, view: "needs_review" }),
-      getAssignmentCount({ userId, phase, view: "pending" }),
       getAssignmentCount({ userId, phase, view: "approved" }),
       getAssignmentCount({ userId, phase, view: "disqualified" }),
     ]);
 
     return [
-      { label: "Needs Review", value: needsReview },
-      { label: "Pending", value: pending },
+      { label: "Needs Review", value: remaining },
       { label: "Approved by Me", value: approved },
       { label: "Disqualified by Me", value: disqualified },
     ];
@@ -762,7 +758,6 @@ function ViewOptions({
     return (
       <>
         <option value="needs_review">Needs Review</option>
-        <option value="pending">Pending</option>
         <option value="approved">Approved</option>
         <option value="disqualified">Disqualified</option>
         <option value="all">All</option>
@@ -869,9 +864,6 @@ export async function WorkQueuePage({
   );
   const school = safeFirstParam(searchParams.school);
   const search = safeFirstParam(searchParams.search);
-  const page = getPage(searchParams.page);
-  const pageSize = getPageSize(searchParams.page_size, WORKSPACE_DEFAULT_PAGE_SIZE);
-  const { from, to } = getRange(page, pageSize);
 
   const isGeneralProofreader =
     phase === "proofreading" &&
@@ -897,9 +889,12 @@ export async function WorkQueuePage({
     isCoordinator ? getCoordinatorSchoolOptions(user.id) : Promise.resolve([]),
   ]);
 
+  const currentPage = getPositiveIntegerParam(searchParams?.page, 1);
+  const pageSize = WORKSPACE_PAGE_SIZE;
+
   const {
     rows: assignments,
-    count,
+    hasNextPage,
     error,
   } = await fetchAssignmentRowsPage({
     userId: user.id,
@@ -912,8 +907,8 @@ export async function WorkQueuePage({
     pathway,
     school: isCoordinator ? school : "",
     search,
-    from,
-    to,
+    page: currentPage,
+    pageSize,
   });
 
   const submissionIds = Array.from(
@@ -996,7 +991,8 @@ export async function WorkQueuePage({
     task_history: historyBySubmission[assignment.submission_id] ?? [],
   }));
 
-  const totalResults = count ?? 0;
+  const pageStart = assignments.length ? (currentPage - 1) * pageSize + 1 : 0;
+  const pageEnd = (currentPage - 1) * pageSize + assignments.length;
 
   const kpiGridClass =
     kpiCards.length >= 5
@@ -1029,6 +1025,7 @@ export async function WorkQueuePage({
         <h2>Workspace Filters</h2>
 
         <form className="grid grid-4" action="" method="get">
+          <input type="hidden" name="page" value="1" />
           <label>
             <span className="small">Pathway</span>
             <select className="input" name="pathway" defaultValue={pathway}>
@@ -1132,7 +1129,41 @@ export async function WorkQueuePage({
               )?.label ?? school}
             </span>
           )}
-          <span className="pill">Results: {totalResults}</span>
+          <span className="pill">
+            Results:{" "}
+            {assignments.length
+              ? `${pageStart}-${pageEnd}${hasNextPage ? "+" : ""}`
+              : "0"}
+          </span>
+        </div>
+      </div>
+
+      <div className="actions" style={{ justifyContent: "space-between", margin: "16px 0" }}>
+        <div className="muted small">
+          Page {currentPage}
+          {assignments.length
+            ? ` · Showing ${pageStart}-${pageEnd}${hasNextPage ? "+" : ""}`
+            : " · No results"}
+        </div>
+
+        <div className="actions">
+          {currentPage > 1 && (
+            <Link
+              className="btn secondary"
+              href={buildWorkspacePagePath(role, searchParams, currentPage - 1)}
+            >
+              Previous page
+            </Link>
+          )}
+
+          {hasNextPage && (
+            <Link
+              className="btn secondary"
+              href={buildWorkspacePagePath(role, searchParams, currentPage + 1)}
+            >
+              Next page
+            </Link>
+          )}
         </div>
       </div>
 
@@ -1142,29 +1173,13 @@ export async function WorkQueuePage({
           <p className="muted">{error.message}</p>
         </div>
       ) : (
-        <>
-          <PaginationControls
-            page={page}
-            pageSize={pageSize}
-            total={totalResults}
-            searchParams={searchParams}
-          />
-
-          <WorkspaceClient
-            phase={phase}
-            role={role}
-            assignments={enrichedAssignments}
-            currentPath={buildReturnPath(role, searchParams)}
-            proofreaderType={user.proofreader_type ?? null}
-          />
-
-          <PaginationControls
-            page={page}
-            pageSize={pageSize}
-            total={totalResults}
-            searchParams={searchParams}
-          />
-        </>
+        <WorkspaceClient
+          phase={phase}
+          role={role}
+          assignments={enrichedAssignments}
+          currentPath={buildReturnPath(role, searchParams)}
+          proofreaderType={user.proofreader_type ?? null}
+        />
       )}
     </main>
   );
