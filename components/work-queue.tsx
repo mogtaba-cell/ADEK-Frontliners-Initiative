@@ -271,9 +271,13 @@ function statusesForView(phase: WorkflowPhase, view: string) {
   }
 
   if (view === "needs_review") {
+    return phase === "management_review" ? ["assigned"] : ["completed"];
+  }
+
+  if (view === "pending") {
     return phase === "management_review"
-      ? ["assigned", "in_progress"]
-      : ["completed"];
+      ? ["in_progress"]
+      : ["assigned", "in_progress"];
   }
 
   if (view === "sent_for_review") return ["sent_for_review"];
@@ -306,7 +310,12 @@ function applyDecisionGate(query: any, phase: WorkflowPhase, view: string) {
   if (view === "approved") return query.eq("decision", "approved");
   if (view === "disqualified") return query.eq("decision", "disqualified");
 
-  if (view === "needs_review" && phase !== "management_review") {
+  if (phase === "management_review") {
+    if (view === "needs_review") return query.is("decision", null);
+    if (view === "pending") return query.eq("decision", "pending");
+  }
+
+  if (view === "needs_review") {
     return query.eq("decision", "needs_review");
   }
 
@@ -400,8 +409,48 @@ function buildAssignmentRowsQuery({
       coordinator_comment,
       coordinator_waiting_for_response,
       coordinator_waiting_for_response_at,
-      submissions!inner(*)
-      `
+      submissions!inner(
+        id,
+        reference_id,
+        registration_id,
+        registration_status,
+        workflow_status,
+        institution_name,
+        institution_ref_number,
+        institution_type,
+        school_region,
+        group_name,
+        art_pathway_name_en,
+        art_pathway_name_ar,
+        art_sub_pathway_name_en,
+        art_sub_pathway_name_ar,
+        artwork_title_en,
+        artwork_title_ar,
+        description_en,
+        description_ar,
+        influence_idea_source,
+        most_enjoyable_part,
+        focused_elements,
+        participating_students_names,
+        participating_students_esis_numbers,
+        participating_students_genders,
+        participating_students_grades,
+        participating_students_nationalities,
+        art_link,
+        updated_artwork_file_name,
+        updated_artwork_file_url,
+        submission_date,
+        submission_date_value,
+        artistic_rating,
+        management_artistic_rating,
+        evaluator_comment,
+        evaluator_file_quality_clear,
+        literary_publication_suitable,
+        literary_proofreader_comment,
+        literary_updated_content,
+        raw_data
+      )
+      `,
     )
     .eq("assigned_to", userId)
     .eq("phase", phase)
@@ -452,7 +501,6 @@ async function fetchAssignmentRowsPage({
   school,
   search,
   page,
-  pageSize,
 }: {
   userId: string;
   phase: WorkflowPhase;
@@ -465,12 +513,11 @@ async function fetchAssignmentRowsPage({
   school?: string;
   search?: string;
   page: number;
-  pageSize: number;
 }) {
-  const from = (page - 1) * pageSize;
-  // Fetch one extra row to know whether there is a next page without running
-  // an expensive exact count query on every workspace page change.
-  const to = from + pageSize;
+  // Fetch one extra row so the workspace can show a fast Next button
+  // without asking Postgres/Supabase for an expensive exact count.
+  const from = (Math.max(1, page) - 1) * WORKSPACE_PAGE_SIZE;
+  const to = from + WORKSPACE_PAGE_SIZE;
 
   const { data, error } = await buildAssignmentRowsQuery({
     userId,
@@ -495,11 +542,11 @@ async function fetchAssignmentRowsPage({
     };
   }
 
-  const pageRows = data ?? [];
-  const hasNextPage = pageRows.length > pageSize;
+  const rows = data ?? [];
+  const hasNextPage = rows.length > WORKSPACE_PAGE_SIZE;
 
   return {
-    rows: hasNextPage ? pageRows.slice(0, pageSize) : pageRows,
+    rows: hasNextPage ? rows.slice(0, WORKSPACE_PAGE_SIZE) : rows,
     hasNextPage,
     error: null,
   };
@@ -758,6 +805,7 @@ function ViewOptions({
     return (
       <>
         <option value="needs_review">Needs Review</option>
+        <option value="pending">Pending</option>
         <option value="approved">Approved</option>
         <option value="disqualified">Disqualified</option>
         <option value="all">All</option>
@@ -864,6 +912,7 @@ export async function WorkQueuePage({
   );
   const school = safeFirstParam(searchParams.school);
   const search = safeFirstParam(searchParams.search);
+  const currentPage = getPositiveIntegerParam(searchParams.page, 1);
 
   const isGeneralProofreader =
     phase === "proofreading" &&
@@ -889,9 +938,6 @@ export async function WorkQueuePage({
     isCoordinator ? getCoordinatorSchoolOptions(user.id) : Promise.resolve([]),
   ]);
 
-  const currentPage = getPositiveIntegerParam(searchParams?.page, 1);
-  const pageSize = WORKSPACE_PAGE_SIZE;
-
   const {
     rows: assignments,
     hasNextPage,
@@ -908,7 +954,6 @@ export async function WorkQueuePage({
     school: isCoordinator ? school : "",
     search,
     page: currentPage,
-    pageSize,
   });
 
   const submissionIds = Array.from(
@@ -991,8 +1036,9 @@ export async function WorkQueuePage({
     task_history: historyBySubmission[assignment.submission_id] ?? [],
   }));
 
-  const pageStart = assignments.length ? (currentPage - 1) * pageSize + 1 : 0;
-  const pageEnd = (currentPage - 1) * pageSize + assignments.length;
+  const totalResultsLabel = hasNextPage
+    ? `${assignments.length} shown on page ${currentPage}+`
+    : `${assignments.length} shown on page ${currentPage}`;
 
   const kpiGridClass =
     kpiCards.length >= 5
@@ -1025,7 +1071,6 @@ export async function WorkQueuePage({
         <h2>Workspace Filters</h2>
 
         <form className="grid grid-4" action="" method="get">
-          <input type="hidden" name="page" value="1" />
           <label>
             <span className="small">Pathway</span>
             <select className="input" name="pathway" defaultValue={pathway}>
@@ -1129,42 +1174,28 @@ export async function WorkQueuePage({
               )?.label ?? school}
             </span>
           )}
-          <span className="pill">
-            Results:{" "}
-            {assignments.length
-              ? `${pageStart}-${pageEnd}${hasNextPage ? "+" : ""}`
-              : "0"}
-          </span>
+          <span className="pill">Results: {totalResultsLabel}</span>
         </div>
       </div>
 
-      <div className="actions" style={{ justifyContent: "space-between", margin: "16px 0" }}>
-        <div className="muted small">
-          Page {currentPage}
-          {assignments.length
-            ? ` · Showing ${pageStart}-${pageEnd}${hasNextPage ? "+" : ""}`
-            : " · No results"}
-        </div>
+      <div className="actions" style={{ marginBottom: 16 }}>
+        {currentPage > 1 && (
+          <Link
+            className="btn secondary"
+            href={buildWorkspacePagePath(role, searchParams, currentPage - 1)}
+          >
+            Previous page
+          </Link>
+        )}
 
-        <div className="actions">
-          {currentPage > 1 && (
-            <Link
-              className="btn secondary"
-              href={buildWorkspacePagePath(role, searchParams, currentPage - 1)}
-            >
-              Previous page
-            </Link>
-          )}
-
-          {hasNextPage && (
-            <Link
-              className="btn secondary"
-              href={buildWorkspacePagePath(role, searchParams, currentPage + 1)}
-            >
-              Next page
-            </Link>
-          )}
-        </div>
+        {hasNextPage && (
+          <Link
+            className="btn"
+            href={buildWorkspacePagePath(role, searchParams, currentPage + 1)}
+          >
+            Load next {WORKSPACE_PAGE_SIZE}
+          </Link>
+        )}
       </div>
 
       {error ? (
