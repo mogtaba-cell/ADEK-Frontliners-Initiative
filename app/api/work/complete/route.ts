@@ -355,9 +355,10 @@ async function ensureUpdatedArtworkIsSavedForFileCorrection(submissionId: string
   }
 
   if (!latestFile?.google_file_url) {
-    throw new Error(
-      "This correction was requested because the artwork file could not be evaluated clearly. Upload the corrected artwork attachment first, then return it to the evaluator/proofreader."
-    );
+    // No updated artwork file was uploaded. This can be valid when the coordinator
+    // confirms that no replacement attachment is required, so allow the correction
+    // return to continue. If a file exists, it is linked to the submission below.
+    return;
   }
 
   const { error: updateError } = await supabaseAdmin
