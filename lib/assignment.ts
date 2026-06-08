@@ -591,18 +591,23 @@ async function hasActivePhaseAssignment(
 }
 
 export async function countUnassignedAdekSubmissions() {
+  // This count is used by the Admin workflow maintenance card labeled
+  // "Unassigned artworks waiting for ADEK evaluation". It must count only
+  // submissions that are actually ready for ADEK and have no active ADEK
+  // evaluator assignment. Do not include completed, disqualified,
+  // proofreading, management-review, or returned-for-correction submissions.
   const submissions = await fetchAllRows<{ id: string }>((from, to) =>
     supabaseAdmin
       .from("submissions")
       .select("id")
-      .eq("registration_status", "Submitted")
+      .eq("workflow_status", "ready_for_adek")
       .range(from, to)
   );
 
   const submissionIds = submissions.map((row) => row.id).filter(Boolean);
   if (!submissionIds.length) return 0;
 
-  const assignedIds = new Set<string>();
+  const activeAssignmentSubmissionIds = new Set<string>();
 
   for (const chunk of chunkArray(
     submissionIds,
@@ -610,24 +615,25 @@ export async function countUnassignedAdekSubmissions() {
   )) {
     const assignments = await fetchAllRows<{
       submission_id: string | null;
-      status: string | null;
     }>((from, to) =>
       supabaseAdmin
         .from("assignments")
-        .select("submission_id,status")
+        .select("submission_id")
         .eq("phase", "adek_evaluation")
         .in("submission_id", chunk)
+        .in("status", activeAssignmentStatuses)
         .range(from, to)
     );
 
     for (const row of assignments) {
-      if (row.submission_id && !isCancelledStatus(row.status)) {
-        assignedIds.add(row.submission_id);
+      if (row.submission_id) {
+        activeAssignmentSubmissionIds.add(row.submission_id);
       }
     }
   }
 
-  return submissionIds.filter((id) => !assignedIds.has(id)).length;
+  return submissionIds.filter((id) => !activeAssignmentSubmissionIds.has(id))
+    .length;
 }
 
 export async function getEvaluatorAssignmentWorkloads() {
