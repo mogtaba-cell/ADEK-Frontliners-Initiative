@@ -661,13 +661,26 @@ export function WorkspaceClient({
   assignments,
   currentPath,
   proofreaderType,
+  loadMoreUrl,
+  initialHasMore = false,
+  initialPage = 1,
+  pageSize = 50,
 }: {
   phase: WorkflowPhase;
   role: Role;
   assignments: Assignment[];
   currentPath: string;
   proofreaderType?: ProofreaderType | null;
+  loadMoreUrl?: string;
+  initialHasMore?: boolean;
+  initialPage?: number;
+  pageSize?: number;
 }) {
+  const [loadedAssignments, setLoadedAssignments] = useState<Assignment[]>(assignments);
+  const [hasMore, setHasMore] = useState(initialHasMore);
+  const [nextPage, setNextPage] = useState(Math.max(1, initialPage) + 1);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(
     assignments[0]?.id ?? null
   );
@@ -691,12 +704,62 @@ export function WorkspaceClient({
     setReturnPath(`${window.location.pathname}${window.location.search}`);
   }, [currentPath]);
 
+  useEffect(() => {
+    setLoadedAssignments(assignments);
+    setHasMore(initialHasMore);
+    setNextPage(Math.max(1, initialPage) + 1);
+    setLoadMoreError(null);
+    setSelectedId(assignments[0]?.id ?? null);
+  }, [assignments, initialHasMore, initialPage]);
+
+  async function loadMoreAssignments() {
+    if (!loadMoreUrl || isLoadingMore || !hasMore) return;
+
+    setIsLoadingMore(true);
+    setLoadMoreError(null);
+
+    try {
+      const separator = loadMoreUrl.includes("?") ? "&" : "?";
+      const response = await fetch(`${loadMoreUrl}${separator}page=${nextPage}`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error || "Could not load more artworks.");
+      }
+
+      const payload = await response.json();
+      const nextAssignments = Array.isArray(payload.assignments)
+        ? (payload.assignments as Assignment[])
+        : [];
+
+      setLoadedAssignments((current) => {
+        const seen = new Set(current.map((assignment) => assignment.id));
+        const uniqueNext = nextAssignments.filter(
+          (assignment) => !seen.has(assignment.id),
+        );
+        return [...current, ...uniqueNext];
+      });
+      setHasMore(Boolean(payload.hasNextPage));
+      setNextPage((page) => page + 1);
+    } catch (error) {
+      setLoadMoreError(
+        error instanceof Error ? error.message : "Could not load more artworks.",
+      );
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }
+
   const selectedAssignment = useMemo(
     () =>
-      assignments.find((assignment) => assignment.id === selectedId) ??
-      assignments[0] ??
+      loadedAssignments.find((assignment) => assignment.id === selectedId) ??
+      loadedAssignments[0] ??
       null,
-    [assignments, selectedId]
+    [loadedAssignments, selectedId]
   );
 
   const selectedSubmission = selectedAssignment?.submissions ?? null;
@@ -704,15 +767,15 @@ export function WorkspaceClient({
   const selectedIsLiteraryExpression = isLiteraryExpressionsSubmission(selectedSubmission);
 
   useEffect(() => {
-    if (!assignments.length) {
+    if (!loadedAssignments.length) {
       setSelectedId(null);
       return;
     }
 
-    if (!selectedId || !assignments.some((assignment) => assignment.id === selectedId)) {
-      setSelectedId(assignments[0].id);
+    if (!selectedId || !loadedAssignments.some((assignment) => assignment.id === selectedId)) {
+      setSelectedId(loadedAssignments[0].id);
     }
-  }, [assignments, selectedId]);
+  }, [loadedAssignments, selectedId]);
 
   useEffect(() => {
     if (!selectedSubmission) return;
@@ -759,13 +822,13 @@ export function WorkspaceClient({
         <div className="workspace-sidebar-header">
           <h2>Assigned Artworks</h2>
           <p className="muted small">
-            {assignments.length} artwork{assignments.length === 1 ? "" : "s"} in
-            this view.
+            {loadedAssignments.length} artwork{loadedAssignments.length === 1 ? "" : "s"} loaded
+            in this view.
           </p>
         </div>
 
         <div className="workspace-list">
-          {assignments.map((assignment, index) => {
+          {loadedAssignments.map((assignment, index) => {
             const submission = assignment.submissions;
             const fields = submission ? getDerivedFields(submission) : null;
             const isSelected = assignment.id === selectedAssignment?.id;
@@ -813,9 +876,29 @@ export function WorkspaceClient({
             );
           })}
 
-          {assignments.length === 0 && (
+          {loadedAssignments.length === 0 && (
             <div className="workspace-empty">
               No artworks match the selected filters.
+            </div>
+          )}
+
+          {loadMoreError && (
+            <div className="workspace-empty" style={{ color: "#8a1f11" }}>
+              {loadMoreError}
+            </div>
+          )}
+
+          {hasMore && (
+            <div style={{ padding: "12px" }}>
+              <button
+                className="btn"
+                type="button"
+                onClick={loadMoreAssignments}
+                disabled={isLoadingMore}
+                style={{ width: "100%" }}
+              >
+                {isLoadingMore ? "Loading..." : `Load next ${pageSize}`}
+              </button>
             </div>
           )}
         </div>

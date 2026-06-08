@@ -246,6 +246,30 @@ function buildReturnPath(
   return query ? `${path}?${query}` : path;
 }
 
+function buildWorkspaceQueueApiPath(
+  phase: WorkflowPhase,
+  searchParams: Record<string, string | string[] | undefined>,
+) {
+  const params = new URLSearchParams();
+  params.set("phase", phase);
+
+  for (const [key, value] of Object.entries(searchParams)) {
+    if (key === "refresh" || key === "page") continue;
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item !== undefined && item !== "") params.append(key, item);
+      }
+      continue;
+    }
+
+    if (value !== undefined && value !== "") params.set(key, value);
+  }
+
+  return `/api/workspace/queue?${params.toString()}`;
+}
+
+
 function formatViewLabel(view: string) {
   if (view === "not_completed") return "not completed";
   if (view === "returned_for_correction") return "returned for correction";
@@ -1178,26 +1202,6 @@ export async function WorkQueuePage({
         </div>
       </div>
 
-      <div className="actions" style={{ marginBottom: 16 }}>
-        {currentPage > 1 && (
-          <Link
-            className="btn secondary"
-            href={buildWorkspacePagePath(role, searchParams, currentPage - 1)}
-          >
-            Previous page
-          </Link>
-        )}
-
-        {hasNextPage && (
-          <Link
-            className="btn"
-            href={buildWorkspacePagePath(role, searchParams, currentPage + 1)}
-          >
-            Load next {WORKSPACE_PAGE_SIZE}
-          </Link>
-        )}
-      </div>
-
       {error ? (
         <div className="card">
           <h2>Workspace Error</h2>
@@ -1210,6 +1214,10 @@ export async function WorkQueuePage({
           assignments={enrichedAssignments}
           currentPath={buildReturnPath(role, searchParams)}
           proofreaderType={user.proofreader_type ?? null}
+          loadMoreUrl={buildWorkspaceQueueApiPath(phase, searchParams)}
+          initialHasMore={hasNextPage}
+          initialPage={currentPage}
+          pageSize={WORKSPACE_PAGE_SIZE}
         />
       )}
     </main>
