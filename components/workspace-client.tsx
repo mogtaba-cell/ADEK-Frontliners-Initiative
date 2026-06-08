@@ -1572,9 +1572,15 @@ export function WorkspaceClient({
 
               {phase === "management_review" && (
                 <>
+                  {selectedIsLiteraryExpression && (
+                    <input type="hidden" name="management_decision" value="approved" />
+                  )}
+
                   {selectedIsLiteraryExpression ? (
-                    <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
-                    </div>
+                    <p className="muted small" style={{ marginTop: 0 }}>
+                      Choose whether to send this Literary Expressions submission to
+                      literary proofreading, save it as pending, or disqualify it.
+                    </p>
                   ) : (
                     <label>
                       <span className="small">Management Decision</span>
@@ -1666,14 +1672,25 @@ export function WorkspaceClient({
                   </button>
                 ) : phase === "literary_proofreading" ? (
                   literaryPublicationSuitable === "no" ? (
-                    <button
-                      className="btn"
-                      type="submit"
-                      name="literary_action"
-                      value="needs_review"
-                    >
-                      Needs Review
-                    </button>
+                    <>
+                      <button
+                        className="btn"
+                        type="submit"
+                        name="literary_action"
+                        value="disqualify"
+                      >
+                        Disqualify Artwork
+                      </button>
+
+                      <button
+                        className="btn secondary"
+                        type="submit"
+                        name="literary_action"
+                        value="needs_correction"
+                      >
+                        Send for Correction
+                      </button>
+                    </>
                   ) : (
                     <>
                       <button
