@@ -330,10 +330,25 @@ function defaultViewForPhase(phase: WorkflowPhase) {
 function applySubmissionWorkflowGate(
   query: any,
   _phase: WorkflowPhase,
-  _view: string,
+  view: string,
 ) {
-  // Workspaces intentionally do not hide valid assignments based on submission.workflow_status.
-  // The assignment row is the source of truth for ownership and user-visible tasks.
+  // Once a coordinator disqualifies a submission, it must not remain in any
+  // active/pending queue. Completed/disqualified history remains available
+  // through the Disqualified/Completed views and Task Flow.
+  const activeQueueViews = new Set([
+    "not_completed",
+    "pending",
+    "sent_for_correction",
+    "returned_for_correction",
+    "sent_for_review",
+    "needs_review",
+    "waiting_for_response",
+  ]);
+
+  if (activeQueueViews.has(view)) {
+    return query.neq("submissions.workflow_status", "disqualified");
+  }
+
   return query;
 }
 

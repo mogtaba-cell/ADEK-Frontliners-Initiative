@@ -355,10 +355,9 @@ async function ensureUpdatedArtworkIsSavedForFileCorrection(submissionId: string
   }
 
   if (!latestFile?.google_file_url) {
-    // No updated artwork file was uploaded. This can be valid when the coordinator
-    // confirms that no replacement attachment is required, so allow the correction
-    // return to continue. If a file exists, it is linked to the submission below.
-    return;
+    throw new Error(
+      "This correction was requested because the artwork file could not be evaluated clearly. Upload the corrected artwork attachment first, then return it to the evaluator/proofreader."
+    );
   }
 
   const { error: updateError } = await supabaseAdmin
@@ -571,50 +570,31 @@ async function closeOpenAssignmentsAfterDisqualification({
   completedAt: string;
   sourceAssignmentId?: string | null;
 }) {
+  // Coordinator disqualification is a terminal workflow decision.
+  // Any source assignment that sent the artwork to the coordinator, and any
+  // other open task for the same submission, must be closed as
+  // completed/disqualified so it does not remain in a user's pending workload
+  // or get picked again by repair/assignment jobs.
   if (sourceAssignmentId) {
-    const { data: sourceAssignment, error: sourceError } = await supabaseAdmin
+    const { error: sourceCloseError } = await supabaseAdmin
       .from("assignments")
-      .select("id,phase,status")
+      .update({
+        status: "completed",
+        decision: "disqualified",
+        completed_at: completedAt,
+        updated_at: completedAt,
+      })
       .eq("id", sourceAssignmentId)
-      .maybeSingle();
+      .in("status", ACTIVE_ASSIGNMENT_STATUSES);
 
-    if (sourceError) {
-      throw new Error(`Source assignment lookup failed: ${sourceError.message}`);
-    }
-
-    if (
-      sourceAssignment &&
-      ACTIVE_ASSIGNMENT_STATUSES.includes(String(sourceAssignment.status))
-    ) {
-      if (sourceAssignment.phase === "adek_evaluation") {
-        await safeUpdate(
-          "assignments",
-          {
-            status: "completed",
-            decision: "disqualified",
-            completed_at: completedAt,
-            updated_at: completedAt,
-          },
-          "id",
-          sourceAssignment.id
-        );
-      } else {
-        await safeUpdate(
-          "assignments",
-          {
-            status: "cancelled",
-            decision: "cancelled_after_disqualification",
-            completed_at: completedAt,
-            updated_at: completedAt,
-          },
-          "id",
-          sourceAssignment.id
-        );
-      }
+    if (sourceCloseError) {
+      throw new Error(
+        `Source assignment disqualification cleanup failed: ${sourceCloseError.message}`
+      );
     }
   }
 
-  const { error: evaluatorCloseError } = await supabaseAdmin
+  const { error: activeCloseError } = await supabaseAdmin
     .from("assignments")
     .update({
       status: "completed",
@@ -623,33 +603,7 @@ async function closeOpenAssignmentsAfterDisqualification({
       updated_at: completedAt,
     })
     .eq("submission_id", submissionId)
-    .eq("phase", "adek_evaluation")
     .neq("id", currentAssignmentId)
-    .in("status", ACTIVE_ASSIGNMENT_STATUSES);
-
-  if (evaluatorCloseError) {
-    throw new Error(
-      `ADEK assignment disqualification cleanup failed: ${evaluatorCloseError.message}`
-    );
-  }
-
-  const { error: activeCloseError } = await supabaseAdmin
-    .from("assignments")
-    .update({
-      status: "cancelled",
-      decision: "cancelled_after_disqualification",
-      completed_at: completedAt,
-      updated_at: completedAt,
-    })
-    .eq("submission_id", submissionId)
-    .neq("id", currentAssignmentId)
-    .in("phase", [
-      "coordinator_check",
-      "management_review",
-      "proofreading",
-      "literary_proofreading",
-      "final_review",
-    ])
     .in("status", ACTIVE_ASSIGNMENT_STATUSES);
 
   if (activeCloseError) {
@@ -684,6 +638,7 @@ async function disqualifyFromCoordinator({
     "submissions",
     {
       workflow_status: "disqualified",
+      evaluation_decision: "disqualified",
       disqualification_reason: reason,
       coordinator_disqualification_reason: reason,
       completed_at: completedAt,

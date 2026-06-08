@@ -77,6 +77,31 @@ function defaultViewForPhase(phase: WorkflowPhase) {
   return "not_completed";
 }
 
+function applySubmissionWorkflowGate(
+  query: any,
+  _phase: WorkflowPhase,
+  view: string,
+) {
+  // Once a coordinator disqualifies a submission, it must not remain in any
+  // active/pending queue. Completed/disqualified history remains available
+  // through the Disqualified/Completed views and Task Flow.
+  const activeQueueViews = new Set([
+    "not_completed",
+    "pending",
+    "sent_for_correction",
+    "returned_for_correction",
+    "sent_for_review",
+    "needs_review",
+    "waiting_for_response",
+  ]);
+
+  if (activeQueueViews.has(view)) {
+    return query.neq("submissions.workflow_status", "disqualified");
+  }
+
+  return query;
+}
+
 function applyDecisionGate(query: any, phase: WorkflowPhase, view: string) {
   if (view === "approved") return query.eq("decision", "approved");
   if (view === "disqualified") return query.eq("decision", "disqualified");
@@ -242,6 +267,7 @@ function buildAssignmentRowsQuery({
     .order("created_at", { ascending: true })
     .range(from, to);
 
+  query = applySubmissionWorkflowGate(query, phase, view);
   query = applyDecisionGate(query, phase, view);
   query = applySourceGate(query, correctionSourcePhase);
   query = applyCoordinatorWaitingGate(query, phase, view);

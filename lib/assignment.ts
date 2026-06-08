@@ -595,14 +595,14 @@ export async function countUnassignedAdekSubmissions() {
     supabaseAdmin
       .from("submissions")
       .select("id")
-      .eq("registration_status", "Submitted")
+      .eq("workflow_status", "ready_for_adek")
       .range(from, to)
   );
 
   const submissionIds = submissions.map((row) => row.id).filter(Boolean);
   if (!submissionIds.length) return 0;
 
-  const assignedIds = new Set<string>();
+  const activelyAssignedIds = new Set<string>();
 
   for (const chunk of chunkArray(
     submissionIds,
@@ -610,24 +610,22 @@ export async function countUnassignedAdekSubmissions() {
   )) {
     const assignments = await fetchAllRows<{
       submission_id: string | null;
-      status: string | null;
     }>((from, to) =>
       supabaseAdmin
         .from("assignments")
-        .select("submission_id,status")
+        .select("submission_id")
         .eq("phase", "adek_evaluation")
         .in("submission_id", chunk)
+        .in("status", activeAssignmentStatuses)
         .range(from, to)
     );
 
     for (const row of assignments) {
-      if (row.submission_id && !isCancelledStatus(row.status)) {
-        assignedIds.add(row.submission_id);
-      }
+      if (row.submission_id) activelyAssignedIds.add(row.submission_id);
     }
   }
 
-  return submissionIds.filter((id) => !assignedIds.has(id)).length;
+  return submissionIds.filter((id) => !activelyAssignedIds.has(id)).length;
 }
 
 export async function getEvaluatorAssignmentWorkloads() {
@@ -677,10 +675,11 @@ export async function getEvaluatorAssignmentWorkloads() {
       submission_id: string | null;
       status: string | null;
       completed_at: string | null;
+      submissions?: { workflow_status?: string | null } | null;
     }>((from, to) =>
       supabaseAdmin
         .from("assignments")
-        .select("assigned_to,submission_id,status,completed_at")
+        .select("assigned_to,submission_id,status,completed_at,submissions!inner(workflow_status)")
         .eq("phase", "adek_evaluation")
         .in("assigned_to", chunk)
         .range(from, to)
@@ -704,11 +703,14 @@ export async function getEvaluatorAssignmentWorkloads() {
         row.completed.add(assignment.submission_id);
       }
 
-      if (assignment.status === "returned_for_correction") {
+      const submissionIsDisqualified =
+        String(assignment.submissions?.workflow_status ?? "") === "disqualified";
+
+      if (!submissionIsDisqualified && assignment.status === "returned_for_correction") {
         row.sent_for_correction.add(assignment.submission_id);
       }
 
-      if (isRemainingAssignmentStatus(assignment.status)) {
+      if (!submissionIsDisqualified && isRemainingAssignmentStatus(assignment.status)) {
         row.remaining.add(assignment.submission_id);
       }
     }
@@ -778,7 +780,7 @@ export async function assignAdekToEvaluatorQuantities(
     supabaseAdmin
       .from("submissions")
       .select("id,reference_id,created_at")
-      .eq("registration_status", "Submitted")
+      .eq("workflow_status", "ready_for_adek")
       .order("created_at", { ascending: true })
       .order("reference_id", { ascending: true })
       .range(from, to)
@@ -809,7 +811,7 @@ export async function assignAdekToEvaluatorQuantities(
     );
 
     for (const row of assignments) {
-      if (row.submission_id && !isCancelledStatus(row.status)) {
+      if (row.submission_id && activeAssignmentStatuses.includes(String(row.status))) {
         alreadyAssigned.add(row.submission_id);
       }
     }
