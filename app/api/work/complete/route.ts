@@ -155,6 +155,78 @@ async function markAssignmentCompleted(
   );
 }
 
+async function linkLatestUpdatedArtworkFile(submissionId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("updated_artwork_files")
+    .select("id,google_file_id,google_file_url,file_name,original_file_name,created_at")
+    .eq("submission_id", submissionId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Updated artwork lookup failed: ${error.message}`);
+  }
+
+  if (!data) return null;
+
+  const fileId = data.google_file_id ?? data.id;
+  const fileUrl = data.google_file_url ?? null;
+  const fileName = data.file_name ?? data.original_file_name ?? null;
+
+  await safeUpdate(
+    "submissions",
+    {
+      updated_artwork_file_id: fileId,
+      updated_artwork_file_url: fileUrl,
+      updated_artwork_file_name: fileName,
+      updated_at: nowIso(),
+    },
+    "id",
+    submissionId
+  );
+
+  return data;
+}
+
+function shouldRequireUpdatedArtworkFile(assignment: any) {
+  return String(assignment?.correction_reason ?? "") === "adek_file_quality";
+}
+
+async function assertAssignmentCanBeActedOn({
+  assignment,
+  submission,
+  submissionId,
+  phase,
+  user,
+}: {
+  assignment: any;
+  submission: any;
+  submissionId: string;
+  phase: WorkflowPhase;
+  user: any;
+}) {
+  if (assignment.submission_id !== submissionId) {
+    throw new Error("Assignment does not belong to the submitted artwork.");
+  }
+
+  if (String(assignment.phase) !== String(phase)) {
+    throw new Error("Assignment phase does not match the submitted workflow phase.");
+  }
+
+  if (assignment.assigned_to && assignment.assigned_to !== user.id && user.role !== "admin") {
+    throw new Error("This assignment is not assigned to the current user.");
+  }
+
+  if (["completed", "disqualified"].includes(String(submission.workflow_status ?? ""))) {
+    throw new Error("This artwork workflow is already final.");
+  }
+
+  if (!["assigned", "in_progress"].includes(String(assignment.status ?? ""))) {
+    throw new Error("This assignment is already finalized or waiting for another action.");
+  }
+}
+
 async function cancelActiveCoordinatorTasks({
   submissionId,
   keepAssignmentId,
@@ -352,6 +424,14 @@ async function returnCorrectedSubmission({
     throw new Error("Missing return user. Cannot return corrected submission.");
   }
 
+  const linkedUpdatedFile = await linkLatestUpdatedArtworkFile(submissionId);
+
+  if (shouldRequireUpdatedArtworkFile(coordinatorAssignment) && !linkedUpdatedFile) {
+    throw new Error(
+      "A corrected artwork attachment is required before returning this file-quality correction."
+    );
+  }
+
   await markAssignmentCompleted(assignmentId, {
     decision: "corrected",
     coordinator_waiting_for_response: false,
@@ -492,8 +572,8 @@ async function resolveManagementSourceAssignment({
     await safeUpdate(
       "assignments",
       {
-        status: "cancelled",
-        decision: "cancelled_after_management_disqualification",
+        status: "completed",
+        decision: "disqualified",
         completed_at: timestamp,
         updated_at: timestamp,
       },
@@ -514,74 +594,39 @@ async function closeOpenAssignmentsAfterDisqualification({
   completedAt: string;
   sourceAssignmentId?: string | null;
 }) {
-  const completedDisqualifiedUpdate = {
-    status: "completed",
-    decision: "disqualified",
-    completed_at: completedAt,
-    updated_at: completedAt,
-  };
-
-  if (sourceAssignmentId) {
-    const { data: sourceAssignment, error: sourceError } = await supabaseAdmin
-      .from("assignments")
-      .select("id,status")
-      .eq("id", sourceAssignmentId)
-      .maybeSingle();
-
-    if (sourceError) {
-      throw new Error(`Source assignment lookup failed: ${sourceError.message}`);
-    }
-
-    if (
-      sourceAssignment &&
-      ACTIVE_ASSIGNMENT_STATUSES.includes(String(sourceAssignment.status))
-    ) {
-      await safeUpdate(
-        "assignments",
-        completedDisqualifiedUpdate,
-        "id",
-        sourceAssignment.id
-      );
-    }
-  }
-
-  const { error: userTaskCloseError } = await supabaseAdmin
-    .from("assignments")
-    .update(completedDisqualifiedUpdate)
-    .eq("submission_id", submissionId)
-    .neq("id", currentAssignmentId)
-    .in("phase", [
-      "adek_evaluation",
-      "management_review",
-      "proofreading",
-      "literary_proofreading",
-      "final_review",
-    ])
-    .in("status", ACTIVE_ASSIGNMENT_STATUSES);
-
-  if (userTaskCloseError) {
-    throw new Error(
-      `User assignment disqualification cleanup failed: ${userTaskCloseError.message}`
-    );
-  }
-
-  const { error: coordinatorCloseError } = await supabaseAdmin
+  const { error } = await supabaseAdmin
     .from("assignments")
     .update({
-      status: "cancelled",
-      decision: "cancelled_after_disqualification",
+      status: "completed",
+      decision: "disqualified",
       completed_at: completedAt,
       updated_at: completedAt,
     })
     .eq("submission_id", submissionId)
     .neq("id", currentAssignmentId)
-    .eq("phase", "coordinator_check")
     .in("status", ACTIVE_ASSIGNMENT_STATUSES);
 
-  if (coordinatorCloseError) {
+  if (error) {
     throw new Error(
-      `Coordinator assignment disqualification cleanup failed: ${coordinatorCloseError.message}`
+      `Active assignment disqualification cleanup failed: ${error.message}`
     );
+  }
+
+  if (sourceAssignmentId) {
+    const { error: sourceError } = await supabaseAdmin
+      .from("assignments")
+      .update({
+        status: "completed",
+        decision: "disqualified",
+        completed_at: completedAt,
+        updated_at: completedAt,
+      })
+      .eq("id", sourceAssignmentId)
+      .in("status", ACTIVE_ASSIGNMENT_STATUSES);
+
+    if (sourceError) {
+      throw new Error(`Source assignment disqualification cleanup failed: ${sourceError.message}`);
+    }
   }
 }
 
@@ -729,6 +774,14 @@ export async function POST(req: Request) {
 
     const assignment = await getAssignment(assignmentId);
     const submissionBefore = await getSubmission(submissionId);
+
+    await assertAssignmentCanBeActedOn({
+      assignment,
+      submission: submissionBefore,
+      submissionId,
+      phase,
+      user,
+    });
 
     if (phase === "adek_evaluation") {
       const taskAction = String(form.get("task_action") ?? "complete");
@@ -906,13 +959,12 @@ export async function POST(req: Request) {
       if (
         literaryAction === "disqualify" ||
         literaryAction === "needs_review" ||
-        (!publicationSuitable && literaryAction === "completed")
+        (!publicationSuitable && literaryAction !== "needs_correction")
       ) {
         const completedAt = nowIso();
 
         await markAssignmentCompleted(assignmentId, {
           decision: "disqualified",
-          correction_notes: literaryProofreaderComment,
           completed_at: completedAt,
         });
 
@@ -921,7 +973,6 @@ export async function POST(req: Request) {
           {
             workflow_status: "disqualified",
             disqualification_reason: "literary_publication_not_suitable",
-            completed_at: completedAt,
             updated_at: completedAt,
           },
           "id",
@@ -932,7 +983,6 @@ export async function POST(req: Request) {
           submissionId,
           currentAssignmentId: assignmentId,
           completedAt,
-          sourceAssignmentId: assignment.correction_source_assignment_id ?? null,
         });
       } else if (literaryAction === "needs_correction") {
         await sendToCoordinatorForCorrection({

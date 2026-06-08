@@ -54,12 +54,7 @@ function isCancelledStatus(status: unknown) {
 }
 
 function isRemainingAssignmentStatus(status: unknown) {
-  return [
-    "assigned",
-    "in_progress",
-    "returned_for_correction",
-    "sent_for_review",
-  ].includes(String(status ?? ""));
+  return ["assigned", "in_progress"].includes(String(status ?? ""));
 }
 
 type SubmissionForAssignment = {
@@ -521,6 +516,7 @@ export async function reactivateAssignmentForReturn(
   }
 ) {
   const sourceAssignment = await getAssignmentById(assignmentId);
+  const timestamp = new Date().toISOString();
 
   await cancelDuplicateActiveAssignmentsForSource(
     {
@@ -532,27 +528,48 @@ export async function reactivateAssignmentForReturn(
     actorId
   );
 
-  const updateValues: Record<string, any> = {
-    status: "assigned",
-    decision: null,
-    completed_at: null,
-    started_at: null,
-    locked_by: null,
-    lock_expires_at: null,
+  const returnedToUserId = options?.assignedTo ?? sourceAssignment.assigned_to;
+
+  if (!returnedToUserId) {
+    throw new Error("Cannot return correction because the original assignee is missing.");
+  }
+
+  const { error: sourceCloseError } = await supabaseAdmin
+    .from("assignments")
+    .update({
+      status: "completed",
+      decision: "needs_correction",
+      completed_at: timestamp,
+      updated_at: timestamp,
+      assigned_by: actorId,
+      correction_reason: options?.correctionReason ?? null,
+      correction_notes: options?.correctionNotes ?? null,
+    })
+    .eq("id", assignmentId);
+
+  if (sourceCloseError) throw sourceCloseError;
+
+  const insertValues: Record<string, any> = {
+    submission_id: sourceAssignment.submission_id,
+    phase: sourceAssignment.phase,
+    assigned_to: returnedToUserId,
     assigned_by: actorId,
-    requested_by_user_id: options?.requestedByUserId ?? null,
-    return_to_user_id: options?.assignedTo ?? null,
+    requested_by_user_id: options?.requestedByUserId ?? actorId,
+    return_to_user_id: returnedToUserId,
     correction_reason: options?.correctionReason ?? null,
     correction_notes: options?.correctionNotes ?? null,
-    updated_at: new Date().toISOString(),
+    correction_source_phase: sourceAssignment.phase,
+    correction_source_assignment_id: assignmentId,
+    proofreader_type: sourceAssignment.proofreader_type ?? null,
+    status: "assigned",
+    decision: null,
+    created_at: timestamp,
+    updated_at: timestamp,
   };
-
-  if (options?.assignedTo) updateValues.assigned_to = options.assignedTo;
 
   const { data, error } = await supabaseAdmin
     .from("assignments")
-    .update(updateValues)
-    .eq("id", assignmentId)
+    .insert(insertValues)
     .select("id,assigned_to,phase,status,decision,submission_id")
     .single();
 
@@ -1127,13 +1144,25 @@ export async function assignProofreadingAfterApproval(
 }
 
 async function hasCompletedPhase(submissionId: string, phase: WorkflowPhase) {
-  const { count, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("assignments")
     .select("id", { count: "exact", head: true })
     .eq("submission_id", submissionId)
     .eq("phase", phase)
     .eq("status", "completed")
     .not("completed_at", "is", null);
+
+  if (phase === "adek_evaluation") {
+    query = query.in("decision", ["approved", "approved_by_management", "needs_review"]);
+  } else if (
+    phase === "proofreading" ||
+    phase === "literary_proofreading" ||
+    phase === "final_review"
+  ) {
+    query = query.eq("decision", "completed");
+  }
+
+  const { count, error } = await query;
 
   if (error) throw error;
 

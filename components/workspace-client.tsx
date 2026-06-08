@@ -550,9 +550,16 @@ function CorrectionSourceCard({
         )}
       </dl>
 
+      {assignment.correction_reason === "adek_file_quality" && (
+        <p className="muted small" style={{ marginTop: 12 }}>
+          A corrected artwork attachment must be uploaded before this correction
+          can be returned to the evaluator.
+        </p>
+      )}
+
       <p className="muted small" style={{ marginTop: 12 }}>
         After you finish the correction, this artwork will return to the same
-        user who requested the correction.
+        user as a new follow-up task while preserving the original correction request as history.
       </p>
     </div>
   );
@@ -1521,8 +1528,8 @@ export function WorkspaceClient({
 
                     {literaryPublicationSuitable === "no" && (
                       <p className="muted small" style={{ marginTop: 12 }}>
-                        The content update field will not be shown. This artwork
-                        will be sent to Management for final review.
+                        The content update field will not be shown. You can
+                        disqualify the artwork or send it for correction.
                       </p>
                     )}
                   </div>
