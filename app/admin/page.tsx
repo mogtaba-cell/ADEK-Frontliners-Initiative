@@ -43,10 +43,126 @@ async function countAssignments(filters: (query: any) => any) {
   return count ?? 0;
 }
 
+
+const PAGE_SIZE = 1000;
+
+type AssignmentSummaryRow = {
+  submission_id: string | null;
+  phase?: string | null;
+  status?: string | null;
+  decision?: string | null;
+};
+
+async function fetchAssignmentSummaries(filters?: (query: any) => any) {
+  const rows: AssignmentSummaryRow[] = [];
+
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let query = supabaseAdmin
+      .from("assignments")
+      .select("submission_id,phase,status,decision")
+      .order("created_at", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (filters) query = filters(query);
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("Admin KPI assignment summary query failed:", error.message);
+      return rows;
+    }
+
+    rows.push(...((data ?? []) as AssignmentSummaryRow[]));
+
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+
+  return rows;
+}
+
+async function fetchSubmissionIds(filters?: (query: any) => any) {
+  const ids = new Set<string>();
+
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let query = supabaseAdmin
+      .from("submissions")
+      .select("id")
+      .order("created_at", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (filters) query = filters(query);
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("Admin KPI submission id query failed:", error.message);
+      return ids;
+    }
+
+    for (const row of data ?? []) {
+      if (row.id) ids.add(row.id);
+    }
+
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+
+  return ids;
+}
+
+function isFinalityAdekDecision(row: AssignmentSummaryRow) {
+  const status = row.status ?? "";
+  const decision = row.decision ?? "";
+
+  return (
+    (status === "completed" && Boolean(decision)) ||
+    (status === "returned_for_correction" && decision === "needs_correction")
+  );
+}
+
+async function getAdekFinalityCounts() {
+  const [readyForAdekIds, adekAssignments] = await Promise.all([
+    fetchSubmissionIds((query) => query.eq("workflow_status", "ready_for_adek")),
+    fetchAssignmentSummaries((query) => query.eq("phase", "adek_evaluation")),
+  ]);
+
+  const adekEvaluatedIds = new Set<string>();
+  const activeReadyAdekIds = new Set<string>();
+
+  for (const row of adekAssignments) {
+    if (!row.submission_id) continue;
+
+    if (isFinalityAdekDecision(row)) {
+      adekEvaluatedIds.add(row.submission_id);
+    }
+
+    if (
+      readyForAdekIds.has(row.submission_id) &&
+      (row.status === "assigned" || row.status === "in_progress")
+    ) {
+      activeReadyAdekIds.add(row.submission_id);
+    }
+  }
+
+  let heldUnassignedAdek = 0;
+
+  for (const submissionId of readyForAdekIds) {
+    if (!activeReadyAdekIds.has(submissionId) && !adekEvaluatedIds.has(submissionId)) {
+      heldUnassignedAdek += 1;
+    }
+  }
+
+  return {
+    adekEvaluated: adekEvaluatedIds.size,
+    actionableAdekRemaining: activeReadyAdekIds.size,
+    heldUnassignedAdek,
+    adekRemaining: activeReadyAdekIds.size + heldUnassignedAdek,
+  };
+}
+
 async function getDashboardCounts() {
   const [
     totalSubmissions,
-    completedAdekEvaluations,
+    adekFinalityCounts,
     totalSelected,
     totalDisqualified,
     activeCoordinatorCorrections,
@@ -58,12 +174,7 @@ async function getDashboardCounts() {
     activeAssignments,
   ] = await Promise.all([
     countSubmissions(),
-    countAssignments((query) =>
-      query
-        .eq("phase", "adek_evaluation")
-        .eq("status", "completed")
-        .not("completed_at", "is", null)
-    ),
+    getAdekFinalityCounts(),
     countSubmissions((query) =>
       query
         .eq("evaluation_decision", "approved")
@@ -103,19 +214,16 @@ async function getDashboardCounts() {
       .select("id,status,mode,destination_folder_id,error_message,created_at,completed_at")
       .order("created_at", { ascending: false })
       .limit(1),
-    countAssignments((query) =>
-      query.in("status", [
-        "assigned",
-        "in_progress",
-        "returned_for_correction",
-        "sent_for_review",
-      ])
-    ),
+    countAssignments((query) => query.in("status", ["assigned", "in_progress"])),
   ]);
 
   return {
     totalSubmissions,
-    completedAdekEvaluations,
+    completedAdekEvaluations: adekFinalityCounts.adekEvaluated,
+    adekEvaluated: adekFinalityCounts.adekEvaluated,
+    adekRemaining: adekFinalityCounts.adekRemaining,
+    actionableAdekRemaining: adekFinalityCounts.actionableAdekRemaining,
+    heldUnassignedAdek: adekFinalityCounts.heldUnassignedAdek,
     totalSelected,
     totalDisqualified,
     activeCoordinatorCorrections,
@@ -195,8 +303,25 @@ export default async function AdminPage({
           </div>
 
           <div>
-            <strong>Completed ADEK evaluations</strong>
-            <p className="stat-number">{dashboard.completedAdekEvaluations}</p>
+            <strong>ADEK Evaluated</strong>
+            <p className="stat-number">{dashboard.adekEvaluated}</p>
+            <p className="muted small">Completed decisions + correction requests waiting for coordinator.</p>
+          </div>
+
+          <div>
+            <strong>ADEK Remaining</strong>
+            <p className="stat-number">{dashboard.adekRemaining}</p>
+            <p className="muted small">Actionable evaluator work + intentionally held/unassigned.</p>
+          </div>
+
+          <div>
+            <strong>Actionable ADEK</strong>
+            <p className="stat-number">{dashboard.actionableAdekRemaining}</p>
+          </div>
+
+          <div>
+            <strong>Held Unassigned</strong>
+            <p className="stat-number">{dashboard.heldUnassignedAdek}</p>
           </div>
 
           <div>

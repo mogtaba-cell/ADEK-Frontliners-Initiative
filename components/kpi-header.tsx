@@ -5,7 +5,11 @@ import { usePathname } from "next/navigation";
 
 type KpiData = {
   totalSubmissions: number;
+  adekEvaluated: number;
   completedAdekEvaluations: number;
+  adekRemaining: number;
+  actionableAdekRemaining: number;
+  heldUnassignedAdek: number;
   totalSelected: number;
   needsManagementReview: number;
   totalDisqualified: number;
@@ -14,11 +18,16 @@ type KpiData = {
   literaryProofread: number;
   finalReady: number;
   totalClosed: number;
+  activeAssignments: number;
 };
 
 const emptyKpis: KpiData = {
   totalSubmissions: 0,
+  adekEvaluated: 0,
   completedAdekEvaluations: 0,
+  adekRemaining: 0,
+  actionableAdekRemaining: 0,
+  heldUnassignedAdek: 0,
   totalSelected: 0,
   needsManagementReview: 0,
   totalDisqualified: 0,
@@ -27,6 +36,7 @@ const emptyKpis: KpiData = {
   literaryProofread: 0,
   finalReady: 0,
   totalClosed: 0,
+  activeAssignments: 0,
 };
 
 function numberFrom(value: unknown) {
@@ -36,9 +46,15 @@ function numberFrom(value: unknown) {
 
 function normalizeKpis(payload: any): KpiData {
   const data = payload?.data ?? payload ?? {};
+  const adekEvaluated = numberFrom(data.adekEvaluated ?? data.completedAdekEvaluations);
+
   return {
     totalSubmissions: numberFrom(data.totalSubmissions),
-    completedAdekEvaluations: numberFrom(data.completedAdekEvaluations),
+    adekEvaluated,
+    completedAdekEvaluations: adekEvaluated,
+    adekRemaining: numberFrom(data.adekRemaining),
+    actionableAdekRemaining: numberFrom(data.actionableAdekRemaining),
+    heldUnassignedAdek: numberFrom(data.heldUnassignedAdek),
     totalSelected: numberFrom(data.totalSelected),
     needsManagementReview: numberFrom(data.needsManagementReview),
     totalDisqualified: numberFrom(data.totalDisqualified),
@@ -47,6 +63,7 @@ function normalizeKpis(payload: any): KpiData {
     literaryProofread: numberFrom(data.literaryProofread),
     finalReady: numberFrom(data.finalReady),
     totalClosed: numberFrom(data.totalClosed),
+    activeAssignments: numberFrom(data.activeAssignments),
   };
 }
 
@@ -94,14 +111,14 @@ export function KpiHeader() {
 
   const cards = [
     { label: "Total Submissions", value: kpis.totalSubmissions },
-    { label: "ADEK Evaluated", value: kpis.completedAdekEvaluations },
-    { label: "Selected", value: kpis.totalSelected },
+    { label: "ADEK Evaluated", value: kpis.adekEvaluated },
+    { label: "ADEK Remaining", value: kpis.adekRemaining },
+    { label: "Actionable ADEK", value: kpis.actionableAdekRemaining },
+    { label: "Held Unassigned", value: kpis.heldUnassignedAdek },
     { label: "Needs Mgmt", value: kpis.needsManagementReview },
-    { label: "Disqualified", value: kpis.totalDisqualified },
     { label: "Corrections", value: kpis.activeCoordinatorCorrections },
     { label: "General Proofread", value: kpis.generalProofread },
     { label: "Literary Proofread", value: kpis.literaryProofread },
-    { label: "Final Ready", value: kpis.finalReady },
     { label: "Closed", value: kpis.totalClosed },
   ];
 
