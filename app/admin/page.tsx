@@ -308,14 +308,13 @@ export default async function AdminPage({
           </div>
 
           <div>
-            <strong>Evaluation Remaining</strong>
-            <p className="stat-number">{dashboard.adekRemaining}</p>
-          </div>
-
-
-          <div>
             <strong>Total Selected</strong>
             <p className="stat-number">{dashboard.totalSelected}</p>
+          </div>
+
+          <div>
+            <strong>Needs Mgmt</strong>
+            <p className="stat-number">{dashboard.activeManagementReview}</p>
           </div>
 
           <div>
@@ -324,27 +323,22 @@ export default async function AdminPage({
           </div>
 
           <div>
-            <strong>Active coordinator corrections</strong>
+            <strong>Sent Corrections</strong>
             <p className="stat-number">{dashboard.activeCoordinatorCorrections}</p>
           </div>
 
           <div>
-            <strong>Active management review</strong>
-            <p className="stat-number">{dashboard.activeManagementReview}</p>
-          </div>
-
-          <div>
-            <strong>Completed general proofreading</strong>
+            <strong>General Proofread</strong>
             <p className="stat-number">{dashboard.completedGeneralProofreading}</p>
           </div>
 
           <div>
-            <strong>Completed literary proofreading</strong>
+            <strong>Literary Proofread</strong>
             <p className="stat-number">{dashboard.completedLiteraryProofreading}</p>
           </div>
 
           <div>
-            <strong>Completed final review / ready</strong>
+            <strong>Completed Final</strong>
             <p className="stat-number">{dashboard.completedFinalReady}</p>
           </div>
         </div>

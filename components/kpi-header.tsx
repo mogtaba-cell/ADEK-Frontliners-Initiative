@@ -109,13 +109,13 @@ export function KpiHeader() {
   const cards = [
     { label: "Total Submissions", value: kpis.totalSubmissions },
     { label: "ADEK Evaluated", value: kpis.adekEvaluated },
-    { label: "Evaluation Remaining", value: kpis.adekRemaining },
+    { label: "Total Selected", value: kpis.totalSelected },
     { label: "Needs Mgmt", value: kpis.needsManagementReview },
     { label: "Total Disqualified", value: kpis.totalDisqualified },
-    { label: "Corrections", value: kpis.activeCoordinatorCorrections },
+    { label: "Sent Corrections", value: kpis.activeCoordinatorCorrections },
     { label: "General Proofread", value: kpis.generalProofread },
     { label: "Literary Proofread", value: kpis.literaryProofread },
-    { label: "Completed Final Review / Ready", value: kpis.finalReady },
+    { label: "Completed Final", value: kpis.finalReady },
   ];
 
   return (
