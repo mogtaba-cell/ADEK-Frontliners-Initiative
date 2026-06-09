@@ -1,13 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
 import type { ProofreaderType, Role, WorkflowPhase } from "@/lib/types";
-import {
-  labelPhase,
-  labelWorkflowStatus,
-  statusClassName,
-} from "@/lib/workflow";
+import { labelPhase, labelWorkflowStatus, statusClassName } from "@/lib/workflow";
 
 type Assignment = {
   id: string;
@@ -28,54 +23,6 @@ type Assignment = {
   submissions?: any;
   task_history?: any[];
 };
-
-const FINAL_WORKFLOW_STATUSES = new Set(["completed", "disqualified"]);
-const ACTIONABLE_ASSIGNMENT_STATUSES = new Set(["assigned", "in_progress"]);
-
-function isAssignmentActionable(
-  assignment: Assignment | null | undefined,
-  submission: any,
-) {
-  if (!assignment || !submission) return false;
-
-  return (
-    ACTIONABLE_ASSIGNMENT_STATUSES.has(String(assignment.status ?? "")) &&
-    !FINAL_WORKFLOW_STATUSES.has(String(submission.workflow_status ?? ""))
-  );
-}
-
-function getNonActionableReason(
-  assignment: Assignment | null | undefined,
-  submission: any,
-) {
-  if (!assignment || !submission)
-    return "Select an active artwork to submit a decision.";
-
-  const workflowStatus = String(submission.workflow_status ?? "");
-  const assignmentStatus = String(assignment.status ?? "");
-
-  if (workflowStatus === "completed") {
-    return "This artwork workflow is already completed. No further action is available.";
-  }
-
-  if (workflowStatus === "disqualified") {
-    return "This artwork workflow is already disqualified. No further action is available.";
-  }
-
-  if (assignmentStatus === "returned_for_correction") {
-    return "This decision is waiting for Coordinator correction. No further action is available until it is returned.";
-  }
-
-  if (assignmentStatus === "sent_for_review") {
-    return "This decision has been sent for review. No further action is available from this task.";
-  }
-
-  if (assignmentStatus === "completed") {
-    return "This assignment is already completed. No further action is available.";
-  }
-
-  return "This assignment is no longer active. Refresh the workspace to see the latest status.";
-}
 
 const correctionReasonLabels: Record<string, string> = {
   artwork_mismatch:
@@ -130,11 +77,7 @@ function displayText(value: unknown, fallback = "—") {
   return String(value);
 }
 
-function fallbackText(
-  submission: any,
-  directValue: unknown,
-  rawKeys: string[],
-) {
+function fallbackText(submission: any, directValue: unknown, rawKeys: string[]) {
   if (
     directValue !== null &&
     directValue !== undefined &&
@@ -226,29 +169,21 @@ function getDerivedFields(submission: any) {
     "Arabic Title",
   ]);
 
-  const englishDescription = fallbackText(
-    submission,
-    submission.description_en,
-    [
-      "ArtWorkDescrEn",
-      "ArtworkDescriptionEn",
-      "DescriptionEn",
-      "NarrativeEn",
-      "English Description",
-    ],
-  );
+  const englishDescription = fallbackText(submission, submission.description_en, [
+    "ArtWorkDescrEn",
+    "ArtworkDescriptionEn",
+    "DescriptionEn",
+    "NarrativeEn",
+    "English Description",
+  ]);
 
-  const arabicDescription = fallbackText(
-    submission,
-    submission.description_ar,
-    [
-      "ArtWorkDescrAr",
-      "ArtworkDescriptionAr",
-      "DescriptionAr",
-      "NarrativeAr",
-      "Arabic Description",
-    ],
-  );
+  const arabicDescription = fallbackText(submission, submission.description_ar, [
+    "ArtWorkDescrAr",
+    "ArtworkDescriptionAr",
+    "DescriptionAr",
+    "NarrativeAr",
+    "Arabic Description",
+  ]);
 
   const studentNames = fallbackText(
     submission,
@@ -261,13 +196,13 @@ function getDerivedFields(submission: any) {
       "Student Names",
       "Student Name",
       "Student Full Name",
-    ],
+    ]
   );
 
   return {
     artworkName: displayText(
       englishTitle,
-      displayText(arabicTitle, submission.reference_id),
+      displayText(arabicTitle, submission.reference_id)
     ),
     englishTitle,
     arabicTitle,
@@ -280,7 +215,7 @@ function getDerivedFields(submission: any) {
     arabicSubpathway: fallbackText(
       submission,
       submission.art_sub_pathway_name_ar,
-      ["ArtSubPathwayNameAr"],
+      ["ArtSubPathwayNameAr"]
     ),
     influence: fallbackText(submission, submission.influence_idea_source, [
       "Did anyone or anything influence your idea (family, artist, place)?",
@@ -566,10 +501,7 @@ function CorrectionSourceCard({
   }
 
   const evaluatorComment = displayText(submission?.evaluator_comment, "");
-  const literaryComment = displayText(
-    submission?.literary_proofreader_comment,
-    "",
-  );
+  const literaryComment = displayText(submission?.literary_proofreader_comment, "");
 
   return (
     <div className="card">
@@ -601,6 +533,7 @@ function CorrectionSourceCard({
               value={literaryComment}
             />
           )}
+
 
         {assignment.coordinator_waiting_for_response && (
           <DetailField
@@ -662,7 +595,7 @@ function CoordinatorUpdatedArtworkUpload({
   submission: any;
   currentPath: string;
 }) {
-  const [returnPath, setReturnPath] = useState(currentPath);
+    const [returnPath, setReturnPath] = useState(currentPath);
 
   useEffect(() => {
     setReturnPath(`${window.location.pathname}${window.location.search}`);
@@ -736,7 +669,7 @@ export function WorkspaceClient({
   proofreaderType?: ProofreaderType | null;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(
-    assignments[0]?.id ?? null,
+    assignments[0]?.id ?? null
   );
 
   const [adekFileQualityClear, setAdekFileQualityClear] = useState("yes");
@@ -750,11 +683,6 @@ export function WorkspaceClient({
     useState("ready");
   const [literaryPublicationSuitable, setLiteraryPublicationSuitable] =
     useState("yes");
-  const [taskActionError, setTaskActionError] = useState<string | null>(null);
-  const [taskActionSuccess, setTaskActionSuccess] = useState<string | null>(
-    null,
-  );
-  const [isSubmittingTaskAction, setIsSubmittingTaskAction] = useState(false);
   const [returnPath, setReturnPath] = useState(currentPath);
 
   useEffect(() => {
@@ -768,29 +696,12 @@ export function WorkspaceClient({
       assignments.find((assignment) => assignment.id === selectedId) ??
       assignments[0] ??
       null,
-    [assignments, selectedId],
+    [assignments, selectedId]
   );
 
   const selectedSubmission = selectedAssignment?.submissions ?? null;
-  const derived = selectedSubmission
-    ? getDerivedFields(selectedSubmission)
-    : null;
-  const selectedIsLiteraryExpression =
-    isLiteraryExpressionsSubmission(selectedSubmission);
-  const selectedAssignmentIsActionable = isAssignmentActionable(
-    selectedAssignment,
-    selectedSubmission,
-  );
-  const selectedAssignmentNonActionableReason = getNonActionableReason(
-    selectedAssignment,
-    selectedSubmission,
-  );
-
-  useEffect(() => {
-    setTaskActionError(null);
-    setTaskActionSuccess(null);
-    setIsSubmittingTaskAction(false);
-  }, [selectedAssignment?.id]);
+  const derived = selectedSubmission ? getDerivedFields(selectedSubmission) : null;
+  const selectedIsLiteraryExpression = isLiteraryExpressionsSubmission(selectedSubmission);
 
   useEffect(() => {
     if (!assignments.length) {
@@ -798,10 +709,7 @@ export function WorkspaceClient({
       return;
     }
 
-    if (
-      !selectedId ||
-      !assignments.some((assignment) => assignment.id === selectedId)
-    ) {
+    if (!selectedId || !assignments.some((assignment) => assignment.id === selectedId)) {
       setSelectedId(assignments[0].id);
     }
   }, [assignments, selectedId]);
@@ -810,7 +718,7 @@ export function WorkspaceClient({
     if (!selectedSubmission) return;
 
     setAdekFileQualityClear(
-      selectedSubmission.evaluator_file_quality_clear === false ? "no" : "yes",
+      selectedSubmission.evaluator_file_quality_clear === false ? "no" : "yes"
     );
 
     setCulturalAuthenticity("yes");
@@ -822,79 +730,20 @@ export function WorkspaceClient({
     setManagementArtisticRating(
       selectedSubmission.management_artistic_rating ??
         selectedSubmission.artistic_rating ??
-        "good",
+        "good"
     );
 
     setGeneralProofreaderDecision("ready");
 
     setLiteraryPublicationSuitable(
-      selectedSubmission.literary_publication_suitable === false ? "no" : "yes",
+      selectedSubmission.literary_publication_suitable === false ? "no" : "yes"
     );
   }, [selectedSubmission?.id]);
-
-  async function handleTaskSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (isSubmittingTaskAction) return;
-
-    if (!selectedAssignmentIsActionable) {
-      setTaskActionError(selectedAssignmentNonActionableReason);
-      return;
-    }
-
-    const form = event.currentTarget;
-    const formData = new FormData(form);
-
-    setIsSubmittingTaskAction(true);
-    setTaskActionError(null);
-    setTaskActionSuccess(null);
-
-    try {
-      const response = await fetch(form.action, {
-        method: "POST",
-        body: formData,
-        headers: { Accept: "application/json" },
-      });
-
-      if (response.redirected) {
-        window.location.href = response.url;
-        return;
-      }
-
-      if (!response.ok) {
-        const contentType = response.headers.get("content-type") ?? "";
-        let message =
-          "This task could not be submitted. Please refresh and try again.";
-
-        if (contentType.includes("application/json")) {
-          const payload = await response.json().catch(() => null);
-          message = payload?.error || payload?.message || message;
-        } else {
-          const text = await response.text().catch(() => "");
-          message = text.trim() || message;
-        }
-
-        setTaskActionError(message);
-        setIsSubmittingTaskAction(false);
-        return;
-      }
-
-      setTaskActionSuccess("Decision submitted. Refreshing your workspace...");
-      window.location.href = returnPath || window.location.href;
-    } catch (error) {
-      setTaskActionError(
-        error instanceof Error
-          ? error.message
-          : "This task could not be submitted. Please refresh and try again.",
-      );
-      setIsSubmittingTaskAction(false);
-    }
-  }
 
   const liveAdekDecision = calculateAdekDecisionLabel(
     culturalAuthenticity,
     artisticExcellence,
-    ethicalAppropriateness,
+    ethicalAppropriateness
   );
 
   const isLimitedSubmissionDetailsView =
@@ -935,26 +784,21 @@ export function WorkspaceClient({
 
                 {(!isLimitedSubmissionDetailsView ||
                   shouldShowSchoolNameInLimitedView) && (
-                  <span>
-                    {submission?.institution_name ?? "Unknown school"}
-                  </span>
+                  <span>{submission?.institution_name ?? "Unknown school"}</span>
                 )}
 
                 {isLimitedSubmissionDetailsView && (
                   <span>
                     {submission?.art_pathway_name_en ?? "Unknown pathway"} ·{" "}
-                    {normalizeGrade(
-                      submission?.participating_students_grades,
-                    ) || "Grade unavailable"}
+                    {normalizeGrade(submission?.participating_students_grades) ||
+                      "Grade unavailable"}
                   </span>
                 )}
 
                 {assignment.correction_source_phase && (
                   <span>
                     From:{" "}
-                    {getCorrectionSourceLabel(
-                      assignment.correction_source_phase,
-                    )}
+                    {getCorrectionSourceLabel(assignment.correction_source_phase)}
                   </span>
                 )}
 
@@ -963,9 +807,7 @@ export function WorkspaceClient({
                 </span>
 
                 {assignment.coordinator_waiting_for_response && (
-                  <span className="pill pill-warning">
-                    Waiting for response
-                  </span>
+                  <span className="pill pill-warning">Waiting for response</span>
                 )}
               </button>
             );
@@ -1004,23 +846,13 @@ export function WorkspaceClient({
                     )}
 
                     <div className="actions">
-                      <span
-                        className={statusClassName(
-                          selectedSubmission.workflow_status,
-                        )}
-                      >
-                        {labelWorkflowStatus(
-                          selectedSubmission.workflow_status,
-                        )}
+                      <span className={statusClassName(selectedSubmission.workflow_status)}>
+                        {labelWorkflowStatus(selectedSubmission.workflow_status)}
                       </span>
 
-                      <span className="pill pill-info">
-                        {labelPhase(phase)}
-                      </span>
+                      <span className="pill pill-info">{labelPhase(phase)}</span>
 
-                      <span
-                        className={statusClassName(selectedAssignment.status)}
-                      >
+                      <span className={statusClassName(selectedAssignment.status)}>
                         Assignment: {selectedAssignment.status}
                       </span>
                     </div>
@@ -1045,7 +877,7 @@ export function WorkspaceClient({
                       <DetailField
                         label="Students Grades"
                         value={normalizeGrade(
-                          selectedSubmission.participating_students_grades,
+                          selectedSubmission.participating_students_grades
                         )}
                       />
                     </>
@@ -1115,14 +947,12 @@ export function WorkspaceClient({
                       <DetailField
                         label="Students Grades"
                         value={normalizeGrade(
-                          selectedSubmission.participating_students_grades,
+                          selectedSubmission.participating_students_grades
                         )}
                       />
                       <DetailField
                         label="Genders"
-                        value={
-                          selectedSubmission.participating_students_genders
-                        }
+                        value={selectedSubmission.participating_students_genders}
                       />
                       <DetailField
                         label="Nationalities"
@@ -1161,7 +991,7 @@ export function WorkspaceClient({
                     <DetailField
                       label="Correction requested from"
                       value={getCorrectionSourceLabel(
-                        selectedAssignment.correction_source_phase,
+                        selectedAssignment.correction_source_phase
                       )}
                     />
                   )}
@@ -1239,18 +1069,9 @@ export function WorkspaceClient({
               className="card workspace-task-action-box"
               action="/api/work/complete"
               method="post"
-              onSubmit={handleTaskSubmit}
             >
-              <input
-                type="hidden"
-                name="assignment_id"
-                value={selectedAssignment.id}
-              />
-              <input
-                type="hidden"
-                name="submission_id"
-                value={selectedSubmission.id}
-              />
+              <input type="hidden" name="assignment_id" value={selectedAssignment.id} />
+              <input type="hidden" name="submission_id" value={selectedSubmission.id} />
               <input type="hidden" name="phase" value={phase} />
               <input type="hidden" name="redirect_to" value={returnPath} />
               <input
@@ -1265,9 +1086,9 @@ export function WorkspaceClient({
 
                   {phase === "adek_evaluation" && (
                     <p className="muted small" style={{ marginBottom: 0 }}>
-                      First confirm whether the submitted file is clear enough
-                      to evaluate. If it is clear, the rubric will appear and
-                      the decision will be calculated automatically.
+                      First confirm whether the submitted file is clear enough to
+                      evaluate. If it is clear, the rubric will appear and the
+                      decision will be calculated automatically.
                     </p>
                   )}
 
@@ -1279,76 +1100,19 @@ export function WorkspaceClient({
                   )}
                 </div>
 
-                {phase === "adek_evaluation" &&
-                  adekFileQualityClear === "yes" && (
-                    <div
-                      className={`decision-badge ${liveAdekDecision.className}`}
-                    >
-                      <span>Decision</span>
-                      <strong>{liveAdekDecision.label}</strong>
-                    </div>
-                  )}
+                {phase === "adek_evaluation" && adekFileQualityClear === "yes" && (
+                  <div className={`decision-badge ${liveAdekDecision.className}`}>
+                    <span>Decision</span>
+                    <strong>{liveAdekDecision.label}</strong>
+                  </div>
+                )}
               </div>
 
               <SourceButtons submission={selectedSubmission} />
 
-              {!selectedAssignmentIsActionable && (
-                <div
-                  className="card"
-                  style={{
-                    marginTop: 16,
-                    boxShadow: "none",
-                    background: "#fff7ed",
-                    border: "1px solid rgba(180, 83, 9, 0.25)",
-                  }}
-                >
-                  <strong>Final decision saved</strong>
-                  <p className="muted small" style={{ marginBottom: 0 }}>
-                    {selectedAssignmentNonActionableReason}
-                  </p>
-                </div>
-              )}
-
-              {taskActionError && (
-                <div
-                  className="card"
-                  style={{
-                    marginTop: 16,
-                    boxShadow: "none",
-                    background: "#fff1f1",
-                    border: "1px solid rgba(155, 47, 47, 0.25)",
-                  }}
-                >
-                  <strong>Action not completed</strong>
-                  <p className="muted small" style={{ marginBottom: 0 }}>
-                    {taskActionError}
-                  </p>
-                </div>
-              )}
-
-              {taskActionSuccess && (
-                <div
-                  className="card"
-                  style={{
-                    marginTop: 16,
-                    boxShadow: "none",
-                    background: "#ecfdf5",
-                    border: "1px solid rgba(22, 101, 52, 0.25)",
-                  }}
-                >
-                  <strong>Decision submitted</strong>
-                  <p className="muted small" style={{ marginBottom: 0 }}>
-                    {taskActionSuccess}
-                  </p>
-                </div>
-              )}
-
               {phase === "adek_evaluation" && (
                 <>
-                  <div
-                    className="card"
-                    style={{ marginTop: 16, boxShadow: "none" }}
-                  >
+                  <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
                     <h4 style={{ marginTop: 0 }}>Artwork File Quality Check</h4>
 
                     <label>
@@ -1358,8 +1122,8 @@ export function WorkspaceClient({
                           clarity of the submitted image, video, or audio file?
                         </strong>
                         <br />
-                        هل يمكن تقييم العمل الفني بناءً على جودة ووضوح ملف
-                        الصورة أو الفيديو أو الصوت المرفق؟
+                        هل يمكن تقييم العمل الفني بناءً على جودة ووضوح ملف الصورة
+                        أو الفيديو أو الصوت المرفق؟
                       </span>
 
                       <select
@@ -1378,9 +1142,9 @@ export function WorkspaceClient({
 
                     {adekFileQualityClear === "no" && (
                       <p className="muted small" style={{ marginTop: 12 }}>
-                        The evaluation rubric will not be shown. This artwork
-                        will be sent to the Coordinator for correction, then
-                        returned to you for evaluation.
+                        The evaluation rubric will not be shown. This artwork will
+                        be sent to the Coordinator for correction, then returned to
+                        you for evaluation.
                       </p>
                     )}
                   </div>
@@ -1488,7 +1252,7 @@ export function WorkspaceClient({
                           placeholder="Add any notes or comments about this evaluation..."
                           defaultValue={displayText(
                             selectedSubmission.evaluator_comment,
-                            "",
+                            ""
                           )}
                         />
                       </label>
@@ -1501,14 +1265,10 @@ export function WorkspaceClient({
                 <>
                   <p className="muted small">
                     Revise the title, description, and student narrative fields,
-                    then send it back to the same user who requested the
-                    correction.
+                    then send it back to the same user who requested the correction.
                   </p>
 
-                  <div
-                    className="card"
-                    style={{ marginTop: 16, boxShadow: "none" }}
-                  >
+                  <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
                     <h4 style={{ marginTop: 0 }}>Coordinator Follow-up</h4>
 
                     <label style={{ display: "block" }}>
@@ -1521,7 +1281,7 @@ export function WorkspaceClient({
                         placeholder="Add school follow-up notes, response details, or internal coordinator comments..."
                         defaultValue={displayText(
                           selectedAssignment.coordinator_comment,
-                          "",
+                          ""
                         )}
                       />
                     </label>
@@ -1535,7 +1295,7 @@ export function WorkspaceClient({
                         name="coordinator_waiting_for_response"
                         value="yes"
                         defaultChecked={Boolean(
-                          selectedAssignment.coordinator_waiting_for_response,
+                          selectedAssignment.coordinator_waiting_for_response
                         )}
                       />
                       <span>Waiting for school response</span>
@@ -1543,10 +1303,7 @@ export function WorkspaceClient({
 
                     {selectedAssignment.coordinator_waiting_for_response_at && (
                       <p className="muted small" style={{ marginTop: 8 }}>
-                        Waiting since:{" "}
-                        {displayText(
-                          selectedAssignment.coordinator_waiting_for_response_at,
-                        )}
+                        Waiting since: {displayText(selectedAssignment.coordinator_waiting_for_response_at)}
                       </p>
                     )}
 
@@ -1637,9 +1394,7 @@ export function WorkspaceClient({
                       <span className="small">Correction Reason</span>
 
                       <select className="input" name="correction_reason">
-                        <option value="artwork_mismatch">
-                          Artwork Mismatch
-                        </option>
+                        <option value="artwork_mismatch">Artwork Mismatch</option>
                         <option value="incomplete_narrative">
                           Incomplete Narrative
                         </option>
@@ -1654,44 +1409,26 @@ export function WorkspaceClient({
 
               {phase === "literary_proofreading" && (
                 <>
-                  <div
-                    className="card"
-                    style={{ marginTop: 16, boxShadow: "none" }}
-                  >
+                  <input type="hidden" name="literary_publication_suitable" value="yes" />
+
+                  <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
                     <h4 style={{ marginTop: 0 }}>Literary Suitability Check</h4>
 
-                    <label>
-                      <span className="small">
-                        <strong>
-                          Is the artwork aligned with the initiative and
-                          suitable for publication?
-                        </strong>
-                        <br />
-                        هل يتوافق العمل الفني مع أهداف المبادرة، وهل هو مناسب
-                        للنشر؟
-                      </span>
+                    <p className="small" style={{ marginTop: 0 }}>
+                      <strong>
+                        First confirm whether the artwork is aligned with the
+                        initiative and suitable for publication.
+                      </strong>
+                      <br />
+                      تأكد أولاً مما إذا كان العمل الفني متوافقاً مع أهداف المبادرة
+                      ومناسباً للنشر.
+                    </p>
 
-                      <select
-                        className="input"
-                        name="literary_publication_suitable"
-                        value={literaryPublicationSuitable}
-                        onChange={(event) =>
-                          setLiteraryPublicationSuitable(event.target.value)
-                        }
-                        style={{ marginTop: 8 }}
-                      >
-                        <option value="yes">نعم / Yes</option>
-                        <option value="no">لا / No - Disqualify</option>
-                      </select>
-                    </label>
-
-                    {literaryPublicationSuitable === "no" && (
-                      <p className="muted small" style={{ marginTop: 12 }}>
-                        The content update field will not be shown. You can
-                        disqualify the artwork or send it to the Coordinator for
-                        correction.
-                      </p>
-                    )}
+                    <p className="muted small" style={{ marginBottom: 0 }}>
+                      Use <strong>Disqualify Artwork</strong> only when the literary
+                      content is not suitable for publication. This is a final
+                      literary decision and will not be sent to Management Review.
+                    </p>
                   </div>
 
                   <label style={{ display: "block", marginTop: 12 }}>
@@ -1702,48 +1439,43 @@ export function WorkspaceClient({
                       name="literary_proofreader_comment"
                       rows={5}
                       dir="auto"
-                      placeholder="Write any comments for the Coordinator, Management, Admin, or later workflow users."
+                      placeholder="Write any comments for the Coordinator, Admin, or later workflow users."
                       defaultValue={displayText(
                         selectedSubmission.literary_proofreader_comment,
-                        "",
+                        ""
                       )}
                     />
                   </label>
 
-                  {literaryPublicationSuitable === "yes" && (
-                    <>
-                      <label style={{ display: "block", marginTop: 12 }}>
-                        <span className="small">Updated Content</span>
+                  <label style={{ display: "block", marginTop: 12 }}>
+                    <span className="small">Updated Content</span>
 
-                        <textarea
-                          key={`literary-content-${selectedSubmission.id}`}
-                          name="literary_updated_content"
-                          rows={10}
-                          dir="auto"
-                          defaultValue={displayText(
-                            selectedSubmission.literary_updated_content,
-                            "",
-                          )}
-                        />
-                      </label>
+                    <textarea
+                      key={`literary-content-${selectedSubmission.id}`}
+                      name="literary_updated_content"
+                      rows={10}
+                      dir="auto"
+                      defaultValue={displayText(
+                        selectedSubmission.literary_updated_content,
+                        ""
+                      )}
+                    />
+                  </label>
 
-                      <p className="muted small" style={{ marginTop: 12 }}>
-                        Choose Mark Done if the literary content is ready, or
-                        Send for Correction if the Coordinator needs to
-                        correct/update the submission first.
-                      </p>
-                    </>
-                  )}
+                  <p className="muted small" style={{ marginTop: 12 }}>
+                    Choose Mark Done if the literary content is ready, Send for
+                    Correction if the Coordinator needs to correct/update the
+                    submission first, or Disqualify Artwork if it is not suitable
+                    for publication.
+                  </p>
                 </>
               )}
 
               {phase === "management_review" && (
                 <>
                   {selectedIsLiteraryExpression ? (
-                    <div
-                      className="card"
-                      style={{ marginTop: 16, boxShadow: "none" }}
-                    ></div>
+                    <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
+                    </div>
                   ) : (
                     <label>
                       <span className="small">Management Decision</span>
@@ -1788,7 +1520,7 @@ export function WorkspaceClient({
                       placeholder="Add Management notes, pending reason, or final decision comment..."
                       defaultValue={displayText(
                         selectedAssignment.correction_notes,
-                        "",
+                        ""
                       )}
                     />
                   </label>
@@ -1797,8 +1529,8 @@ export function WorkspaceClient({
                     selectedAssignment.decision === "pending" && (
                       <p className="muted small" style={{ marginTop: 10 }}>
                         This task is currently saved as pending. You can update
-                        the comment, approve/disqualify it, or save it as
-                        pending again.
+                        the comment, approve/disqualify it, or save it as pending
+                        again.
                       </p>
                     )}
                 </>
@@ -1829,42 +1561,39 @@ export function WorkspaceClient({
                     name="coordinator_action"
                     value="return_corrected"
                   >
-                    {selectedAssignment.correction_source_phase ===
-                    "adek_evaluation"
+                    {selectedAssignment.correction_source_phase === "adek_evaluation"
                       ? "Return to Evaluator"
                       : "Return to Proofreader"}
                   </button>
                 ) : phase === "literary_proofreading" ? (
-                  literaryPublicationSuitable === "no" ? (
+                  <>
                     <button
                       className="btn"
                       type="submit"
                       name="literary_action"
-                      value="needs_review"
+                      value="completed"
                     >
-                      Needs Review
+                      Mark Done
                     </button>
-                  ) : (
-                    <>
-                      <button
-                        className="btn"
-                        type="submit"
-                        name="literary_action"
-                        value="completed"
-                      >
-                        Mark Done
-                      </button>
 
-                      <button
-                        className="btn secondary"
-                        type="submit"
-                        name="literary_action"
-                        value="needs_correction"
-                      >
-                        Send for Correction
-                      </button>
-                    </>
-                  )
+                    <button
+                      className="btn secondary"
+                      type="submit"
+                      name="literary_action"
+                      value="needs_correction"
+                    >
+                      Send for Correction
+                    </button>
+
+                    <button
+                      className="btn secondary"
+                      type="submit"
+                      name="literary_action"
+                      value="disqualified"
+                    >
+                      Disqualify Artwork
+                    </button>
+                  </>
                 ) : phase === "management_review" ? (
                   selectedIsLiteraryExpression ? (
                     <>
@@ -1922,8 +1651,7 @@ export function WorkspaceClient({
                     type="submit"
                     name="task_action"
                     value={
-                      phase === "adek_evaluation" &&
-                      adekFileQualityClear === "no"
+                      phase === "adek_evaluation" && adekFileQualityClear === "no"
                         ? "send_correction"
                         : "complete"
                     }
