@@ -219,8 +219,8 @@ async function getDashboardCounts() {
 
   return {
     totalSubmissions,
-    completedAdekEvaluations: adekFinalityCounts.adekEvaluated,
     adekEvaluated: adekFinalityCounts.adekEvaluated,
+    completedAdekEvaluations: adekFinalityCounts.adekEvaluated,
     adekRemaining: adekFinalityCounts.adekRemaining,
     actionableAdekRemaining: adekFinalityCounts.actionableAdekRemaining,
     heldUnassignedAdek: adekFinalityCounts.heldUnassignedAdek,
@@ -305,24 +305,13 @@ export default async function AdminPage({
           <div>
             <strong>ADEK Evaluated</strong>
             <p className="stat-number">{dashboard.adekEvaluated}</p>
-            <p className="muted small">Completed decisions + correction requests waiting for coordinator.</p>
           </div>
 
           <div>
-            <strong>ADEK Remaining</strong>
+            <strong>Evaluation Remaining</strong>
             <p className="stat-number">{dashboard.adekRemaining}</p>
-            <p className="muted small">Actionable evaluator work + intentionally held/unassigned.</p>
           </div>
 
-          <div>
-            <strong>Actionable ADEK</strong>
-            <p className="stat-number">{dashboard.actionableAdekRemaining}</p>
-          </div>
-
-          <div>
-            <strong>Held Unassigned</strong>
-            <p className="stat-number">{dashboard.heldUnassignedAdek}</p>
-          </div>
 
           <div>
             <strong>Total Selected</strong>

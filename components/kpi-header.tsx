@@ -17,7 +17,6 @@ type KpiData = {
   generalProofread: number;
   literaryProofread: number;
   finalReady: number;
-  totalClosed: number;
   activeAssignments: number;
 };
 
@@ -35,7 +34,6 @@ const emptyKpis: KpiData = {
   generalProofread: 0,
   literaryProofread: 0,
   finalReady: 0,
-  totalClosed: 0,
   activeAssignments: 0,
 };
 
@@ -62,7 +60,6 @@ function normalizeKpis(payload: any): KpiData {
     generalProofread: numberFrom(data.generalProofread),
     literaryProofread: numberFrom(data.literaryProofread),
     finalReady: numberFrom(data.finalReady),
-    totalClosed: numberFrom(data.totalClosed),
     activeAssignments: numberFrom(data.activeAssignments),
   };
 }
@@ -112,14 +109,13 @@ export function KpiHeader() {
   const cards = [
     { label: "Total Submissions", value: kpis.totalSubmissions },
     { label: "ADEK Evaluated", value: kpis.adekEvaluated },
-    { label: "ADEK Remaining", value: kpis.adekRemaining },
-    { label: "Actionable ADEK", value: kpis.actionableAdekRemaining },
-    { label: "Held Unassigned", value: kpis.heldUnassignedAdek },
+    { label: "Evaluation Remaining", value: kpis.adekRemaining },
     { label: "Needs Mgmt", value: kpis.needsManagementReview },
+    { label: "Total Disqualified", value: kpis.totalDisqualified },
     { label: "Corrections", value: kpis.activeCoordinatorCorrections },
     { label: "General Proofread", value: kpis.generalProofread },
     { label: "Literary Proofread", value: kpis.literaryProofread },
-    { label: "Closed", value: kpis.totalClosed },
+    { label: "Completed Final Review / Ready", value: kpis.finalReady },
   ];
 
   return (

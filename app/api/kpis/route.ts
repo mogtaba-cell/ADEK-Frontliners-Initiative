@@ -20,7 +20,6 @@ type KpiResponse = {
     generalProofread: number;
     literaryProofread: number;
     finalReady: number;
-    totalClosed: number;
     activeAssignments: number;
   };
 };
@@ -202,8 +201,6 @@ export async function GET() {
       countAssignments((query) => query.in("status", ["assigned", "in_progress"])),
     ]);
 
-    const totalClosed = finalReady + totalDisqualified;
-
     const payload: KpiResponse = {
       ok: true,
       data: {
@@ -220,7 +217,6 @@ export async function GET() {
         generalProofread,
         literaryProofread,
         finalReady,
-        totalClosed,
         activeAssignments,
       },
     };
