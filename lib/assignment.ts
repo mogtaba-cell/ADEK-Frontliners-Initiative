@@ -54,7 +54,12 @@ function isCancelledStatus(status: unknown) {
 }
 
 function isRemainingAssignmentStatus(status: unknown) {
-  return ["assigned", "in_progress"].includes(String(status ?? ""));
+  return [
+    "assigned",
+    "in_progress",
+    "returned_for_correction",
+    "sent_for_review",
+  ].includes(String(status ?? ""));
 }
 
 type SubmissionForAssignment = {
@@ -88,24 +93,15 @@ function eligibleStatusForPhase(phase: WorkflowPhase) {
   return [];
 }
 
-function normalizeSchoolName(value: string | null | undefined) {
-  return String(value ?? "")
-    .trim()
-    .replace(/\s+/g, " ")
-    .toLowerCase();
-}
-
 function schoolKeyFromSubmission(submission: {
   institution_ref_number?: string | null;
   institution_name?: string | null;
 }) {
-  const institutionRef = String(submission?.institution_ref_number ?? "").trim();
-  if (institutionRef) return `ref:${institutionRef.toLowerCase()}`;
-
-  const institutionName = normalizeSchoolName(submission?.institution_name);
-  if (institutionName) return `name:${institutionName}`;
-
-  return "unknown_school";
+  return (
+    String(submission?.institution_ref_number ?? "").trim() ||
+    String(submission?.institution_name ?? "").trim() ||
+    "Unknown School"
+  );
 }
 
 function isLiteraryPathway(
@@ -257,7 +253,7 @@ async function getCoordinatorForSchool(submissionId: string) {
         `
       )
       .eq("phase", "coordinator_check")
-      .in("status", activeAssignmentStatuses)
+      .in("status", workloadAssignmentStatuses)
       .order("created_at", { ascending: false })
       .range(from, to)
   );
@@ -516,7 +512,6 @@ export async function reactivateAssignmentForReturn(
   }
 ) {
   const sourceAssignment = await getAssignmentById(assignmentId);
-  const timestamp = new Date().toISOString();
 
   await cancelDuplicateActiveAssignmentsForSource(
     {
@@ -528,48 +523,27 @@ export async function reactivateAssignmentForReturn(
     actorId
   );
 
-  const returnedToUserId = options?.assignedTo ?? sourceAssignment.assigned_to;
-
-  if (!returnedToUserId) {
-    throw new Error("Cannot return correction because the original assignee is missing.");
-  }
-
-  const { error: sourceCloseError } = await supabaseAdmin
-    .from("assignments")
-    .update({
-      status: "completed",
-      decision: "needs_correction",
-      completed_at: timestamp,
-      updated_at: timestamp,
-      assigned_by: actorId,
-      correction_reason: options?.correctionReason ?? null,
-      correction_notes: options?.correctionNotes ?? null,
-    })
-    .eq("id", assignmentId);
-
-  if (sourceCloseError) throw sourceCloseError;
-
-  const insertValues: Record<string, any> = {
-    submission_id: sourceAssignment.submission_id,
-    phase: sourceAssignment.phase,
-    assigned_to: returnedToUserId,
-    assigned_by: actorId,
-    requested_by_user_id: options?.requestedByUserId ?? actorId,
-    return_to_user_id: returnedToUserId,
-    correction_reason: options?.correctionReason ?? null,
-    correction_notes: options?.correctionNotes ?? null,
-    correction_source_phase: sourceAssignment.phase,
-    correction_source_assignment_id: assignmentId,
-    proofreader_type: sourceAssignment.proofreader_type ?? null,
+  const updateValues: Record<string, any> = {
     status: "assigned",
     decision: null,
-    created_at: timestamp,
-    updated_at: timestamp,
+    completed_at: null,
+    started_at: null,
+    locked_by: null,
+    lock_expires_at: null,
+    assigned_by: actorId,
+    requested_by_user_id: options?.requestedByUserId ?? null,
+    return_to_user_id: options?.assignedTo ?? null,
+    correction_reason: options?.correctionReason ?? null,
+    correction_notes: options?.correctionNotes ?? null,
+    updated_at: new Date().toISOString(),
   };
+
+  if (options?.assignedTo) updateValues.assigned_to = options.assignedTo;
 
   const { data, error } = await supabaseAdmin
     .from("assignments")
-    .insert(insertValues)
+    .update(updateValues)
+    .eq("id", assignmentId)
     .select("id,assigned_to,phase,status,decision,submission_id")
     .single();
 
@@ -612,14 +586,14 @@ export async function countUnassignedAdekSubmissions() {
     supabaseAdmin
       .from("submissions")
       .select("id")
-      .eq("workflow_status", "ready_for_adek")
+      .eq("registration_status", "Submitted")
       .range(from, to)
   );
 
   const submissionIds = submissions.map((row) => row.id).filter(Boolean);
   if (!submissionIds.length) return 0;
 
-  const activelyAssignedIds = new Set<string>();
+  const assignedIds = new Set<string>();
 
   for (const chunk of chunkArray(
     submissionIds,
@@ -627,22 +601,24 @@ export async function countUnassignedAdekSubmissions() {
   )) {
     const assignments = await fetchAllRows<{
       submission_id: string | null;
+      status: string | null;
     }>((from, to) =>
       supabaseAdmin
         .from("assignments")
-        .select("submission_id")
+        .select("submission_id,status")
         .eq("phase", "adek_evaluation")
         .in("submission_id", chunk)
-        .in("status", activeAssignmentStatuses)
         .range(from, to)
     );
 
     for (const row of assignments) {
-      if (row.submission_id) activelyAssignedIds.add(row.submission_id);
+      if (row.submission_id && !isCancelledStatus(row.status)) {
+        assignedIds.add(row.submission_id);
+      }
     }
   }
 
-  return submissionIds.filter((id) => !activelyAssignedIds.has(id)).length;
+  return submissionIds.filter((id) => !assignedIds.has(id)).length;
 }
 
 export async function getEvaluatorAssignmentWorkloads() {
@@ -692,11 +668,10 @@ export async function getEvaluatorAssignmentWorkloads() {
       submission_id: string | null;
       status: string | null;
       completed_at: string | null;
-      submissions?: { workflow_status?: string | null } | null;
     }>((from, to) =>
       supabaseAdmin
         .from("assignments")
-        .select("assigned_to,submission_id,status,completed_at,submissions!inner(workflow_status)")
+        .select("assigned_to,submission_id,status,completed_at")
         .eq("phase", "adek_evaluation")
         .in("assigned_to", chunk)
         .range(from, to)
@@ -720,14 +695,11 @@ export async function getEvaluatorAssignmentWorkloads() {
         row.completed.add(assignment.submission_id);
       }
 
-      const submissionIsDisqualified =
-        String(assignment.submissions?.workflow_status ?? "") === "disqualified";
-
-      if (!submissionIsDisqualified && assignment.status === "returned_for_correction") {
+      if (assignment.status === "returned_for_correction") {
         row.sent_for_correction.add(assignment.submission_id);
       }
 
-      if (!submissionIsDisqualified && isRemainingAssignmentStatus(assignment.status)) {
+      if (isRemainingAssignmentStatus(assignment.status)) {
         row.remaining.add(assignment.submission_id);
       }
     }
@@ -797,7 +769,7 @@ export async function assignAdekToEvaluatorQuantities(
     supabaseAdmin
       .from("submissions")
       .select("id,reference_id,created_at")
-      .eq("workflow_status", "ready_for_adek")
+      .eq("registration_status", "Submitted")
       .order("created_at", { ascending: true })
       .order("reference_id", { ascending: true })
       .range(from, to)
@@ -828,7 +800,7 @@ export async function assignAdekToEvaluatorQuantities(
     );
 
     for (const row of assignments) {
-      if (row.submission_id && activeAssignmentStatuses.includes(String(row.status))) {
+      if (row.submission_id && !isCancelledStatus(row.status)) {
         alreadyAssigned.add(row.submission_id);
       }
     }
@@ -1144,25 +1116,13 @@ export async function assignProofreadingAfterApproval(
 }
 
 async function hasCompletedPhase(submissionId: string, phase: WorkflowPhase) {
-  let query = supabaseAdmin
+  const { count, error } = await supabaseAdmin
     .from("assignments")
     .select("id", { count: "exact", head: true })
     .eq("submission_id", submissionId)
     .eq("phase", phase)
     .eq("status", "completed")
     .not("completed_at", "is", null);
-
-  if (phase === "adek_evaluation") {
-    query = query.in("decision", ["approved", "approved_by_management", "needs_review"]);
-  } else if (
-    phase === "proofreading" ||
-    phase === "literary_proofreading" ||
-    phase === "final_review"
-  ) {
-    query = query.eq("decision", "completed");
-  }
-
-  const { count, error } = await query;
 
   if (error) throw error;
 

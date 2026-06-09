@@ -50,7 +50,7 @@ async function safeUpdate(
   table: string,
   values: Record<string, any>,
   column: string,
-  value: string
+  value: string,
 ) {
   const { error } = await supabaseAdmin
     .from(table)
@@ -128,7 +128,7 @@ async function updateEditableContent(submissionId: string, form: FormData) {
   const values = editableContentFromForm(form);
 
   const hasAnyValue = Object.entries(values).some(
-    ([key, value]) => key !== "updated_at" && value !== null
+    ([key, value]) => key !== "updated_at" && value !== null,
   );
 
   if (!hasAnyValue) return;
@@ -138,7 +138,7 @@ async function updateEditableContent(submissionId: string, form: FormData) {
 
 async function markAssignmentCompleted(
   assignmentId: string,
-  values: Record<string, any> = {}
+  values: Record<string, any> = {},
 ) {
   const completedAt = values.completed_at ?? nowIso();
 
@@ -151,14 +151,16 @@ async function markAssignmentCompleted(
       ...values,
     },
     "id",
-    assignmentId
+    assignmentId,
   );
 }
 
 async function linkLatestUpdatedArtworkFile(submissionId: string) {
   const { data, error } = await supabaseAdmin
     .from("updated_artwork_files")
-    .select("id,google_file_id,google_file_url,file_name,original_file_name,created_at")
+    .select(
+      "id,google_file_id,google_file_url,file_name,original_file_name,created_at",
+    )
     .eq("submission_id", submissionId)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -183,7 +185,7 @@ async function linkLatestUpdatedArtworkFile(submissionId: string) {
       updated_at: nowIso(),
     },
     "id",
-    submissionId
+    submissionId,
   );
 
   return data;
@@ -211,19 +213,31 @@ async function assertAssignmentCanBeActedOn({
   }
 
   if (String(assignment.phase) !== String(phase)) {
-    throw new Error("Assignment phase does not match the submitted workflow phase.");
+    throw new Error(
+      "Assignment phase does not match the submitted workflow phase.",
+    );
   }
 
-  if (assignment.assigned_to && assignment.assigned_to !== user.id && user.role !== "admin") {
+  if (
+    assignment.assigned_to &&
+    assignment.assigned_to !== user.id &&
+    user.role !== "admin"
+  ) {
     throw new Error("This assignment is not assigned to the current user.");
   }
 
-  if (["completed", "disqualified"].includes(String(submission.workflow_status ?? ""))) {
+  if (
+    ["completed", "disqualified"].includes(
+      String(submission.workflow_status ?? ""),
+    )
+  ) {
     throw new Error("This artwork workflow is already final.");
   }
 
   if (!["assigned", "in_progress"].includes(String(assignment.status ?? ""))) {
-    throw new Error("This assignment is already finalized or waiting for another action.");
+    throw new Error(
+      "This assignment is already finalized or waiting for another action.",
+    );
   }
 }
 
@@ -256,7 +270,10 @@ async function cancelActiveCoordinatorTasks({
 
   if (keepAssignmentId) query = query.neq("id", keepAssignmentId);
   if (keepSourceAssignmentId) {
-    query = query.neq("correction_source_assignment_id", keepSourceAssignmentId);
+    query = query.neq(
+      "correction_source_assignment_id",
+      keepSourceAssignmentId,
+    );
   }
 
   const { error } = await query;
@@ -273,11 +290,14 @@ async function cancelActiveCoordinatorTasks({
       .is("correction_source_assignment_id", null)
       .in("status", ["assigned", "in_progress"]);
 
-    if (keepAssignmentId) nullSourceQuery = nullSourceQuery.neq("id", keepAssignmentId);
+    if (keepAssignmentId)
+      nullSourceQuery = nullSourceQuery.neq("id", keepAssignmentId);
 
     const { error: nullSourceError } = await nullSourceQuery;
     if (nullSourceError) {
-      throw new Error(`Coordinator null-source cleanup failed: ${nullSourceError.message}`);
+      throw new Error(
+        `Coordinator null-source cleanup failed: ${nullSourceError.message}`,
+      );
     }
   }
 }
@@ -321,14 +341,18 @@ async function getCompletedGeneralProofreaderId(submissionId: string) {
     .limit(1)
     .maybeSingle();
 
-  if (error) throw new Error(`General proofreader lookup failed: ${error.message}`);
+  if (error)
+    throw new Error(`General proofreader lookup failed: ${error.message}`);
   return data?.assigned_to ?? null;
 }
 
 function workflowStatusForReturnedSource(sourcePhase: WorkflowPhase) {
   if (sourcePhase === "adek_evaluation") return "ready_for_adek";
   if (sourcePhase === "management_review") return "needs_management_review";
-  if (sourcePhase === "proofreading" || sourcePhase === "literary_proofreading") {
+  if (
+    sourcePhase === "proofreading" ||
+    sourcePhase === "literary_proofreading"
+  ) {
     return "selected_for_proofreading";
   }
   if (sourcePhase === "final_review") return "proofreading_done";
@@ -365,7 +389,7 @@ async function sendToCoordinatorForCorrection({
       correction_notes: correctionNotes ?? null,
     },
     "id",
-    assignmentId
+    assignmentId,
   );
 
   await safeUpdate(
@@ -375,7 +399,7 @@ async function sendToCoordinatorForCorrection({
       updated_at: timestamp,
     },
     "id",
-    submissionId
+    submissionId,
   );
 
   await cancelActiveCoordinatorTasks({
@@ -405,13 +429,17 @@ async function returnCorrectedSubmission({
   actorId: string;
 }) {
   const coordinatorAssignment = await getAssignment(assignmentId);
-  const sourcePhase = coordinatorAssignment.correction_source_phase as WorkflowPhase | null;
+  const sourcePhase =
+    coordinatorAssignment.correction_source_phase as WorkflowPhase | null;
 
   if (!sourcePhase) {
-    throw new Error("Missing correction source phase. Cannot return correction.");
+    throw new Error(
+      "Missing correction source phase. Cannot return correction.",
+    );
   }
 
-  const sourceAssignmentId = coordinatorAssignment.correction_source_assignment_id as string | null;
+  const sourceAssignmentId =
+    coordinatorAssignment.correction_source_assignment_id as string | null;
   if (!sourceAssignmentId) {
     throw new Error("Missing source assignment. Cannot return correction.");
   }
@@ -426,9 +454,12 @@ async function returnCorrectedSubmission({
 
   const linkedUpdatedFile = await linkLatestUpdatedArtworkFile(submissionId);
 
-  if (shouldRequireUpdatedArtworkFile(coordinatorAssignment) && !linkedUpdatedFile) {
+  if (
+    shouldRequireUpdatedArtworkFile(coordinatorAssignment) &&
+    !linkedUpdatedFile
+  ) {
     throw new Error(
-      "A corrected artwork attachment is required before returning this file-quality correction."
+      "A corrected artwork attachment is required before returning this file-quality correction.",
     );
   }
 
@@ -452,7 +483,7 @@ async function returnCorrectedSubmission({
       updated_at: nowIso(),
     },
     "id",
-    submissionId
+    submissionId,
   );
 
   await cancelActiveCoordinatorTasks({
@@ -461,7 +492,6 @@ async function returnCorrectedSubmission({
     decision: "cancelled_after_correction_returned",
   });
 }
-
 
 async function reflectManagementDecisionToEvaluatorAssignments({
   submissionId,
@@ -485,7 +515,7 @@ async function reflectManagementDecisionToEvaluatorAssignments({
 
   if (error) {
     throw new Error(
-      `Evaluator management decision reflection failed: ${error.message}`
+      `Evaluator management decision reflection failed: ${error.message}`,
     );
   }
 }
@@ -511,7 +541,10 @@ async function resolveManagementSourceAssignment({
   const sourcePhase =
     managementAssignment?.correction_source_phase as WorkflowPhase | null;
 
-  if (managementDecision === "approved" && sourcePhase === "literary_proofreading") {
+  if (
+    managementDecision === "approved" &&
+    sourcePhase === "literary_proofreading"
+  ) {
     const returnToUserId =
       managementAssignment.return_to_user_id ??
       managementAssignment.requested_by_user_id;
@@ -520,7 +553,8 @@ async function resolveManagementSourceAssignment({
       await reactivateAssignmentForReturn(sourceAssignmentId, actorId, {
         assignedTo: returnToUserId,
         requestedByUserId: actorId,
-        correctionNotes: comment ?? managementAssignment.correction_notes ?? null,
+        correctionNotes:
+          comment ?? managementAssignment.correction_notes ?? null,
       });
     }
 
@@ -539,7 +573,8 @@ async function resolveManagementSourceAssignment({
 
   if (!sourceAssignment) return;
 
-  if (!ACTIVE_ASSIGNMENT_STATUSES.includes(String(sourceAssignment.status))) return;
+  if (!ACTIVE_ASSIGNMENT_STATUSES.includes(String(sourceAssignment.status)))
+    return;
 
   if (sourceAssignment.phase === "adek_evaluation") {
     await safeUpdate(
@@ -551,7 +586,7 @@ async function resolveManagementSourceAssignment({
         updated_at: timestamp,
       },
       "id",
-      sourceAssignment.id
+      sourceAssignment.id,
     );
     return;
   }
@@ -566,7 +601,7 @@ async function resolveManagementSourceAssignment({
         updated_at: timestamp,
       },
       "id",
-      sourceAssignment.id
+      sourceAssignment.id,
     );
   } else {
     await safeUpdate(
@@ -578,7 +613,7 @@ async function resolveManagementSourceAssignment({
         updated_at: timestamp,
       },
       "id",
-      sourceAssignment.id
+      sourceAssignment.id,
     );
   }
 }
@@ -608,7 +643,7 @@ async function closeOpenAssignmentsAfterDisqualification({
 
   if (error) {
     throw new Error(
-      `Active assignment disqualification cleanup failed: ${error.message}`
+      `Active assignment disqualification cleanup failed: ${error.message}`,
     );
   }
 
@@ -625,11 +660,12 @@ async function closeOpenAssignmentsAfterDisqualification({
       .in("status", ACTIVE_ASSIGNMENT_STATUSES);
 
     if (sourceError) {
-      throw new Error(`Source assignment disqualification cleanup failed: ${sourceError.message}`);
+      throw new Error(
+        `Source assignment disqualification cleanup failed: ${sourceError.message}`,
+      );
     }
   }
 }
-
 
 async function disqualifyFromCoordinator({
   submissionId,
@@ -661,14 +697,15 @@ async function disqualifyFromCoordinator({
       updated_at: completedAt,
     },
     "id",
-    submissionId
+    submissionId,
   );
 
   await closeOpenAssignmentsAfterDisqualification({
     submissionId,
     currentAssignmentId: assignmentId,
     completedAt,
-    sourceAssignmentId: coordinatorAssignment.correction_source_assignment_id ?? null,
+    sourceAssignmentId:
+      coordinatorAssignment.correction_source_assignment_id ?? null,
   });
 }
 
@@ -683,8 +720,11 @@ async function saveCoordinatorProgress({
 }) {
   const timestamp = nowIso();
   const comment = textValue(form, "coordinator_comment");
-  const waitingForResponse = yesNo(form.get("coordinator_waiting_for_response"));
-  const previousWaitingAt = assignment?.coordinator_waiting_for_response_at ?? null;
+  const waitingForResponse = yesNo(
+    form.get("coordinator_waiting_for_response"),
+  );
+  const previousWaitingAt =
+    assignment?.coordinator_waiting_for_response_at ?? null;
 
   await safeUpdate(
     "assignments",
@@ -692,12 +732,12 @@ async function saveCoordinatorProgress({
       coordinator_comment: comment,
       coordinator_waiting_for_response: waitingForResponse,
       coordinator_waiting_for_response_at: waitingForResponse
-        ? previousWaitingAt ?? timestamp
+        ? (previousWaitingAt ?? timestamp)
         : null,
       updated_at: timestamp,
     },
     "id",
-    assignmentId
+    assignmentId,
   );
 }
 
@@ -726,7 +766,7 @@ async function sendLiteraryToManagementReview({
       updated_at: timestamp,
     },
     "id",
-    assignmentId
+    assignmentId,
   );
 
   await safeUpdate(
@@ -736,7 +776,7 @@ async function sendLiteraryToManagementReview({
       updated_at: timestamp,
     },
     "id",
-    submissionId
+    submissionId,
   );
 
   await autoAssignOne(submissionId, "management_review", actorId, {
@@ -797,7 +837,7 @@ export async function POST(req: Request) {
             updated_at: nowIso(),
           },
           "id",
-          submissionId
+          submissionId,
         );
 
         await sendToCoordinatorForCorrection({
@@ -837,7 +877,7 @@ export async function POST(req: Request) {
             updated_at: completedAt,
           },
           "id",
-          submissionId
+          submissionId,
         );
 
         await markAssignmentCompleted(assignmentId, {
@@ -870,7 +910,7 @@ export async function POST(req: Request) {
       await saveCoordinatorProgress({ assignment, assignmentId, form });
 
       const coordinatorAction = String(
-        form.get("coordinator_action") ?? "return_corrected"
+        form.get("coordinator_action") ?? "return_corrected",
       );
 
       if (coordinatorAction === "save_progress") {
@@ -899,7 +939,9 @@ export async function POST(req: Request) {
     if (phase === "proofreading") {
       await updateEditableContent(submissionId, form);
 
-      const decision = String(form.get("general_proofreader_decision") ?? "ready");
+      const decision = String(
+        form.get("general_proofreader_decision") ?? "ready",
+      );
 
       if (decision === "needs_correction") {
         await sendToCoordinatorForCorrection({
@@ -908,7 +950,9 @@ export async function POST(req: Request) {
           actorId: user.id,
           requesterId: assignment.assigned_to ?? user.id,
           sourcePhase: "proofreading",
-          correctionReason: String(form.get("correction_reason") ?? "incomplete_narrative"),
+          correctionReason: String(
+            form.get("correction_reason") ?? "incomplete_narrative",
+          ),
           correctionNotes: null,
         });
       } else {
@@ -921,7 +965,7 @@ export async function POST(req: Request) {
             updated_at: completedAt,
           },
           "id",
-          submissionId
+          submissionId,
         );
 
         await markAssignmentCompleted(assignmentId, {
@@ -933,16 +977,24 @@ export async function POST(req: Request) {
         await maybeAssignReviewerAfterProofreading(
           submissionId,
           generalProofreaderId,
-          user.id
+          user.id,
         );
       }
     }
 
     if (phase === "literary_proofreading") {
       const literaryAction = String(form.get("literary_action") ?? "completed");
-      const publicationSuitable = yesNo(form.get("literary_publication_suitable"));
-      const literaryUpdatedContent = textValue(form, "literary_updated_content");
-      const literaryProofreaderComment = textValue(form, "literary_proofreader_comment");
+      const publicationSuitable = yesNo(
+        form.get("literary_publication_suitable"),
+      );
+      const literaryUpdatedContent = textValue(
+        form,
+        "literary_updated_content",
+      );
+      const literaryProofreaderComment = textValue(
+        form,
+        "literary_proofreader_comment",
+      );
 
       await safeUpdate(
         "submissions",
@@ -953,7 +1005,7 @@ export async function POST(req: Request) {
           updated_at: nowIso(),
         },
         "id",
-        submissionId
+        submissionId,
       );
 
       if (
@@ -973,10 +1025,11 @@ export async function POST(req: Request) {
           {
             workflow_status: "disqualified",
             disqualification_reason: "literary_publication_not_suitable",
+            completed_at: completedAt,
             updated_at: completedAt,
           },
           "id",
-          submissionId
+          submissionId,
         );
 
         await closeOpenAssignmentsAfterDisqualification({
@@ -1004,7 +1057,7 @@ export async function POST(req: Request) {
             updated_at: completedAt,
           },
           "id",
-          submissionId
+          submissionId,
         );
 
         await markAssignmentCompleted(assignmentId, {
@@ -1012,30 +1065,34 @@ export async function POST(req: Request) {
           completed_at: completedAt,
         });
 
-        const generalProofreaderId = await getCompletedGeneralProofreaderId(
-          submissionId
-        );
+        const generalProofreaderId =
+          await getCompletedGeneralProofreaderId(submissionId);
 
         if (generalProofreaderId) {
           await maybeAssignReviewerAfterProofreading(
             submissionId,
             generalProofreaderId,
-            user.id
+            user.id,
           );
         }
       }
     }
 
     if (phase === "management_review") {
-      const managementAction = String(form.get("management_action") ?? "complete");
-      const rawManagementDecision = String(form.get("management_decision") ?? "approved");
+      const managementAction = String(
+        form.get("management_action") ?? "complete",
+      );
+      const rawManagementDecision = String(
+        form.get("management_decision") ?? "approved",
+      );
       const managementDecision =
-        managementAction === "disqualify" || rawManagementDecision === "disqualified"
+        managementAction === "disqualify" ||
+        rawManagementDecision === "disqualified"
           ? "disqualified"
           : "approved";
       const managementArtisticRating = textValue(
         form,
-        "management_artistic_rating"
+        "management_artistic_rating",
       );
       const managementComment = textValue(form, "management_comment");
       const timestamp = nowIso();
@@ -1058,7 +1115,7 @@ export async function POST(req: Request) {
             updated_at: timestamp,
           },
           "id",
-          assignmentId
+          assignmentId,
         );
 
         await safeUpdate(
@@ -1069,7 +1126,7 @@ export async function POST(req: Request) {
             updated_at: timestamp,
           },
           "id",
-          submissionId
+          submissionId,
         );
       } else if (managementDecision === "disqualified") {
         await markAssignmentCompleted(assignmentId, {
@@ -1088,7 +1145,7 @@ export async function POST(req: Request) {
             updated_at: timestamp,
           },
           "id",
-          submissionId
+          submissionId,
         );
 
         await reflectManagementDecisionToEvaluatorAssignments({
@@ -1109,7 +1166,8 @@ export async function POST(req: Request) {
           submissionId,
           currentAssignmentId: assignmentId,
           completedAt: timestamp,
-          sourceAssignmentId: assignment.correction_source_assignment_id ?? null,
+          sourceAssignmentId:
+            assignment.correction_source_assignment_id ?? null,
         });
       } else {
         await markAssignmentCompleted(assignmentId, {
@@ -1128,7 +1186,7 @@ export async function POST(req: Request) {
             updated_at: timestamp,
           },
           "id",
-          submissionId
+          submissionId,
         );
 
         await reflectManagementDecisionToEvaluatorAssignments({
@@ -1169,7 +1227,7 @@ export async function POST(req: Request) {
           updated_at: completedAt,
         },
         "id",
-        submissionId
+        submissionId,
       );
 
       await cancelActiveAssignmentsForCompletedWorkflow({
@@ -1214,7 +1272,7 @@ export async function POST(req: Request) {
         {
           error: error.message ?? "Work completion failed.",
         },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
@@ -1222,7 +1280,7 @@ export async function POST(req: Request) {
       {
         error: error.message ?? "Work completion failed.",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

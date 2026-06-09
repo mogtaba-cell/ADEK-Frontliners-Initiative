@@ -36,7 +36,7 @@ const allAssignmentStatuses = [
   "sent_for_review",
 ];
 
-const WORKSPACE_PAGE_SIZE = 50;
+const WORKSPACE_PAGE_SIZE = 1000;
 
 const correctionReasonLabels: Record<string, string> = {
   adek_file_quality: "Artwork File Quality / Clarity Issue",
@@ -171,14 +171,6 @@ function safeFirstParam(
   return firstParam(value) || fallback;
 }
 
-function getPositiveIntegerParam(
-  value: string | string[] | undefined,
-  fallback: number,
-) {
-  const parsed = Number.parseInt(firstParam(value) || "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
 function chunkArray<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
 
@@ -219,29 +211,6 @@ function buildReturnPath(
   return query ? `${path}?${query}` : path;
 }
 
-function buildWorkspaceQueueApiPath(
-  phase: WorkflowPhase,
-  searchParams: Record<string, string | string[] | undefined>,
-) {
-  const params = new URLSearchParams();
-  params.set("phase", phase);
-
-  for (const [key, value] of Object.entries(searchParams)) {
-    if (key === "refresh" || key === "page") continue;
-
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        if (item !== undefined && item !== "") params.append(key, item);
-      }
-      continue;
-    }
-
-    if (value !== undefined && value !== "") params.set(key, value);
-  }
-
-  return `/api/workspace/queue?${params.toString()}`;
-}
-
 function formatViewLabel(view: string) {
   if (view === "not_completed") return "not completed";
   if (view === "returned_for_correction") return "returned for correction";
@@ -258,10 +227,6 @@ function isProofreadingPhase(phase: WorkflowPhase) {
 }
 
 function statusesForView(phase: WorkflowPhase, view: string) {
-  if (phase === "coordinator_check" && view === "all") {
-    return ["assigned", "in_progress"];
-  }
-
   if (view === "all") return allAssignmentStatuses;
 
   if (view === "completed") return ["completed"];
@@ -295,22 +260,10 @@ function defaultViewForPhase(phase: WorkflowPhase) {
 function applySubmissionWorkflowGate(
   query: any,
   _phase: WorkflowPhase,
-  view: string,
+  _view: string,
 ) {
-  const activeQueueViews = new Set([
-    "not_completed",
-    "pending",
-    "sent_for_correction",
-    "returned_for_correction",
-    "sent_for_review",
-    "needs_review",
-    "waiting_for_response",
-  ]);
-
-  if (activeQueueViews.has(view)) {
-    return query.neq("submissions.workflow_status", "disqualified");
-  }
-
+  // Workspaces intentionally do not hide valid assignments based on submission.workflow_status.
+  // The assignment row is the source of truth for ownership and user-visible tasks.
   return query;
 }
 
@@ -363,58 +316,6 @@ function applyProofreaderTypeGate(
   return query;
 }
 
-
-function submissionSelectFieldsForPhase(phase: WorkflowPhase) {
-  const baseFields = [
-    "id",
-    "reference_id",
-    "registration_id",
-    "registration_status",
-    "workflow_status",
-    "institution_name",
-    "institution_ref_number",
-    "institution_type",
-    "school_region",
-    "group_name",
-    "art_pathway_name_en",
-    "art_pathway_name_ar",
-    "art_sub_pathway_name_en",
-    "art_sub_pathway_name_ar",
-    "artwork_title_en",
-    "artwork_title_ar",
-    "description_en",
-    "description_ar",
-    "influence_idea_source",
-    "most_enjoyable_part",
-    "focused_elements",
-    "participating_students_names",
-    "participating_students_esis_numbers",
-    "participating_students_genders",
-    "participating_students_grades",
-    "participating_students_nationalities",
-    "art_link",
-    "updated_artwork_file_name",
-    "updated_artwork_file_url",
-    "submission_date",
-    "submission_date_value",
-    "artistic_rating",
-    "management_artistic_rating",
-    "evaluator_comment",
-    "evaluator_file_quality_clear",
-    "literary_publication_suitable",
-    "literary_proofreader_comment",
-    "literary_updated_content",
-  ];
-
-  // raw_data is one of the largest columns. Keep it only where the UI compares
-  // original imported text with updated/proofread text during final review.
-  if (phase === "final_review") {
-    baseFields.push("raw_data");
-  }
-
-  return baseFields.join(",\n        ");
-}
-
 function buildAssignmentRowsQuery({
   userId,
   phase,
@@ -464,10 +365,9 @@ function buildAssignmentRowsQuery({
       coordinator_comment,
       coordinator_waiting_for_response,
       coordinator_waiting_for_response_at,
-      submissions!inner(
-        ${submissionSelectFieldsForPhase(phase)}
-      )
+      submissions!inner(*)
       `,
+      { count: "exact" },
     )
     .eq("assigned_to", userId)
     .eq("phase", phase)
@@ -506,7 +406,7 @@ function buildAssignmentRowsQuery({
   return query;
 }
 
-async function fetchAssignmentRowsPage({
+async function fetchAllAssignmentRows({
   userId,
   phase,
   view,
@@ -517,7 +417,6 @@ async function fetchAssignmentRowsPage({
   pathway,
   school,
   search,
-  page,
 }: {
   userId: string;
   phase: WorkflowPhase;
@@ -529,42 +428,51 @@ async function fetchAssignmentRowsPage({
   pathway?: string;
   school?: string;
   search?: string;
-  page: number;
 }) {
-  const from = (Math.max(1, page) - 1) * WORKSPACE_PAGE_SIZE;
-  // Request one extra row so we can know whether Load next is available
-  // without running an exact count on every workspace load.
-  const to = from + WORKSPACE_PAGE_SIZE;
+  const rows: any[] = [];
+  let totalResults = 0;
 
-  const { data, error } = await buildAssignmentRowsQuery({
-    userId,
-    phase,
-    view,
-    statuses,
-    correctionSourcePhase,
-    proofreaderType,
-    correctionReason,
-    pathway,
-    school,
-    search,
-    from,
-    to,
-  });
+  for (let from = 0; ; from += WORKSPACE_PAGE_SIZE) {
+    const to = from + WORKSPACE_PAGE_SIZE - 1;
 
-  if (error) {
-    return {
-      rows: [],
-      hasNextPage: false,
-      error,
-    };
+    const { data, count, error } = await buildAssignmentRowsQuery({
+      userId,
+      phase,
+      view,
+      statuses,
+      correctionSourcePhase,
+      proofreaderType,
+      correctionReason,
+      pathway,
+      school,
+      search,
+      from,
+      to,
+    });
+
+    if (error) {
+      return {
+        rows,
+        count: totalResults,
+        error,
+      };
+    }
+
+    const page = data ?? [];
+
+    if (from === 0) {
+      totalResults = count ?? page.length;
+    }
+
+    rows.push(...page);
+
+    if (page.length < WORKSPACE_PAGE_SIZE) break;
+    if (totalResults > 0 && rows.length >= totalResults) break;
   }
 
-  const rows = data ?? [];
-  const hasNextPage = rows.length > WORKSPACE_PAGE_SIZE;
-
   return {
-    rows: hasNextPage ? rows.slice(0, WORKSPACE_PAGE_SIZE) : rows,
-    hasNextPage,
+    rows,
+    count: totalResults || rows.length,
     error: null,
   };
 }
@@ -928,7 +836,6 @@ export async function WorkQueuePage({
   );
   const school = safeFirstParam(searchParams.school);
   const search = safeFirstParam(searchParams.search);
-  const currentPage = getPositiveIntegerParam(searchParams.page, 1);
 
   const isGeneralProofreader =
     phase === "proofreading" &&
@@ -956,9 +863,9 @@ export async function WorkQueuePage({
 
   const {
     rows: assignments,
-    hasNextPage,
+    count,
     error,
-  } = await fetchAssignmentRowsPage({
+  } = await fetchAllAssignmentRows({
     userId: user.id,
     phase,
     view,
@@ -969,7 +876,6 @@ export async function WorkQueuePage({
     pathway,
     school: isCoordinator ? school : "",
     search,
-    page: currentPage,
   });
 
   const submissionIds = Array.from(
@@ -1052,8 +958,7 @@ export async function WorkQueuePage({
     task_history: historyBySubmission[assignment.submission_id] ?? [],
   }));
 
-  const pageStart = assignments.length ? (currentPage - 1) * WORKSPACE_PAGE_SIZE + 1 : 0;
-  const pageEnd = (currentPage - 1) * WORKSPACE_PAGE_SIZE + assignments.length;
+  const totalResults = count ?? 0;
 
   const kpiGridClass =
     kpiCards.length >= 5
@@ -1086,7 +991,6 @@ export async function WorkQueuePage({
         <h2>Workspace Filters</h2>
 
         <form className="grid grid-4" action="" method="get">
-          <input type="hidden" name="page" value="1" />
           <label>
             <span className="small">Pathway</span>
             <select className="input" name="pathway" defaultValue={pathway}>
@@ -1190,9 +1094,7 @@ export async function WorkQueuePage({
               )?.label ?? school}
             </span>
           )}
-          <span className="pill">
-            Results: {assignments.length ? `${pageStart}-${pageEnd}${hasNextPage ? "+" : ""}` : "0"}
-          </span>
+          <span className="pill">Results: {totalResults}</span>
         </div>
       </div>
 
@@ -1208,10 +1110,6 @@ export async function WorkQueuePage({
           assignments={enrichedAssignments}
           currentPath={buildReturnPath(role, searchParams)}
           proofreaderType={user.proofreader_type ?? null}
-          loadMoreUrl={buildWorkspaceQueueApiPath(phase, searchParams)}
-          initialHasMore={hasNextPage}
-          initialPage={currentPage}
-          pageSize={WORKSPACE_PAGE_SIZE}
         />
       )}
     </main>
