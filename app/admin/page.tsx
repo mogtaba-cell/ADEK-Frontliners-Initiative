@@ -152,6 +152,10 @@ export default async function AdminPage({
       {maintenance && (
         <div className="card" style={{ marginBottom: 16 }}>
           <p className="pill">Workflow Maintenance Completed: {maintenance}</p>
+          <p className="muted small" style={{ marginTop: 6 }}>
+            Assigned: {firstParam(params.assigned) ?? "0"} | Skipped: {firstParam(params.skipped) ?? "0"}
+            {firstParam(params.errors) ? ` | Errors: ${firstParam(params.errors)}` : ""}
+          </p>
         </div>
       )}
 
