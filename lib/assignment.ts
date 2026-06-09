@@ -87,7 +87,7 @@ function eligibleStatusForPhase(phase: WorkflowPhase) {
   if (phase === "coordinator_check") return ["returned_for_correction"];
   if (phase === "management_review") return ["needs_management_review"];
   if (phase === "proofreading") return ["selected_for_proofreading"];
-  if (phase === "literary_proofreading") return ["selected_for_proofreading"];
+  if (phase === "literary_proofreading") return ["selected_for_proofreading", "proofreading_done"];
   if (phase === "final_review") return ["proofreading_done"];
 
   return [];
@@ -119,6 +119,35 @@ function isLiteraryPathway(
     pathwayEn === "literary expressions" ||
     pathwayArabic === "التعبيرات الأدبية" ||
     pathwayArabic === "التعبيرات الادبية"
+  );
+}
+
+function hasClassifiedLiteraryLanguage(
+  submission: Pick<SubmissionForAssignment, "literary_language">
+) {
+  return (
+    submission.literary_language === "arabic" ||
+    submission.literary_language === "english_or_others"
+  );
+}
+
+function requiresLiteraryProofreading(
+  submission: Pick<
+    SubmissionForAssignment,
+    | "art_pathway_name_en"
+    | "art_sub_pathway_name_en"
+    | "art_pathway_name_ar"
+    | "art_sub_pathway_name_ar"
+    | "literary_language"
+  >
+) {
+  return (
+    isLiteraryPathway(
+      submission.art_pathway_name_en,
+      submission.art_sub_pathway_name_en,
+      submission.art_pathway_name_ar,
+      submission.art_sub_pathway_name_ar
+    ) || hasClassifiedLiteraryLanguage(submission)
   );
 }
 
@@ -942,14 +971,10 @@ export async function autoAssignPending(
       }
 
       if (phase === "literary_proofreading") {
-        if (
-          !isLiteraryPathway(
-            submission.art_pathway_name_en,
-            submission.art_sub_pathway_name_en,
-            submission.art_pathway_name_ar,
-            submission.art_sub_pathway_name_ar
-          )
-        ) {
+        // Literary repair is driven by the classified language. This also covers
+        // older records where the pathway text was imported inconsistently but
+        // literary_language is already set by Admin.
+        if (!requiresLiteraryProofreading(submission)) {
           skipped++;
           continue;
         }
@@ -959,10 +984,7 @@ export async function autoAssignPending(
           continue;
         }
 
-        if (
-          submission.literary_language !== "arabic" &&
-          submission.literary_language !== "english_or_others"
-        ) {
+        if (!hasClassifiedLiteraryLanguage(submission)) {
           skipped++;
           errors.push(
             `${
@@ -1075,18 +1097,8 @@ export async function assignProofreadingAfterApproval(
 
   let literarySkippedReason: string | null = null;
 
-  if (
-    isLiteraryPathway(
-      submission?.art_pathway_name_en,
-      submission?.art_sub_pathway_name_en,
-      submission?.art_pathway_name_ar,
-      submission?.art_sub_pathway_name_ar
-    )
-  ) {
-    if (
-      submission.literary_language === "arabic" ||
-      submission.literary_language === "english_or_others"
-    ) {
+  if (requiresLiteraryProofreading(submission)) {
+    if (hasClassifiedLiteraryLanguage(submission)) {
       const proofreaderType = literaryProofreaderTypeForSubmission(submission);
 
       const literaryAlreadyExists = await hasAnyPhaseAssignment(
@@ -1153,12 +1165,7 @@ async function isLiterarySubmission(submissionId: string) {
 
   if (error) throw error;
 
-  return isLiteraryPathway(
-    submission?.art_pathway_name_en,
-    submission?.art_sub_pathway_name_en,
-    submission?.art_pathway_name_ar,
-    submission?.art_sub_pathway_name_ar
-  );
+  return requiresLiteraryProofreading(submission);
 }
 
 async function hasPendingManagementReview(submissionId: string) {
@@ -1176,23 +1183,13 @@ async function isLiteraryReady(submissionId: string) {
 
   if (error) throw error;
 
-  if (
-    !isLiteraryPathway(
-      submission?.art_pathway_name_en,
-      submission?.art_sub_pathway_name_en,
-      submission?.art_pathway_name_ar,
-      submission?.art_sub_pathway_name_ar
-    )
-  ) {
+  if (!requiresLiteraryProofreading(submission)) {
     return true;
   }
 
   if (submission?.literary_management_approved_at) return true;
 
-  if (
-    submission.literary_language !== "arabic" &&
-    submission.literary_language !== "english_or_others"
-  ) {
+  if (!hasClassifiedLiteraryLanguage(submission)) {
     return false;
   }
 

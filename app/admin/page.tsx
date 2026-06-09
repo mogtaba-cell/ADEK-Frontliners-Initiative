@@ -42,189 +42,9 @@ async function countAssignments(filters: (query: any) => any) {
   return count ?? 0;
 }
 
-
-const KPI_PAGE_SIZE = 1000;
-
-type SubmissionSummaryRow = {
-  id: string;
-  workflow_status?: string | null;
-  evaluation_decision?: string | null;
-  management_decision?: string | null;
-};
-
-type AssignmentSummaryRow = {
-  submission_id: string | null;
-  phase?: string | null;
-  proofreader_type?: string | null;
-  status?: string | null;
-  decision?: string | null;
-};
-
-async function fetchAllSubmissionSummaries() {
-  const rows: SubmissionSummaryRow[] = [];
-
-  for (let from = 0; ; from += KPI_PAGE_SIZE) {
-    const { data, error } = await supabaseAdmin
-      .from("submissions")
-      .select("id,workflow_status,evaluation_decision,management_decision")
-      .order("created_at", { ascending: true })
-      .range(from, from + KPI_PAGE_SIZE - 1);
-
-    if (error) {
-      console.error("Admin KPI submissions query failed:", error.message);
-      return rows;
-    }
-
-    rows.push(...((data ?? []) as SubmissionSummaryRow[]));
-    if (!data || data.length < KPI_PAGE_SIZE) break;
-  }
-
-  return rows;
-}
-
-async function fetchAllAssignmentSummaries() {
-  const rows: AssignmentSummaryRow[] = [];
-
-  for (let from = 0; ; from += KPI_PAGE_SIZE) {
-    const { data, error } = await supabaseAdmin
-      .from("assignments")
-      .select("submission_id,phase,proofreader_type,status,decision")
-      .order("created_at", { ascending: true })
-      .range(from, from + KPI_PAGE_SIZE - 1);
-
-    if (error) {
-      console.error("Admin KPI assignments query failed:", error.message);
-      return rows;
-    }
-
-    rows.push(...((data ?? []) as AssignmentSummaryRow[]));
-    if (!data || data.length < KPI_PAGE_SIZE) break;
-  }
-
-  return rows;
-}
-
-function hasAdekFinalityDecision(rows: AssignmentSummaryRow[]) {
-  return rows.some((row) => {
-    if (row.phase !== "adek_evaluation") return false;
-
-    return (
-      (row.status === "completed" && Boolean(row.decision)) ||
-      (row.status === "returned_for_correction" && row.decision === "needs_correction")
-    );
-  });
-}
-
-function hasApprovalDecision(rows: AssignmentSummaryRow[], submission: SubmissionSummaryRow) {
-  if (submission.evaluation_decision === "approved") return true;
-  if (submission.management_decision === "approved") return true;
-
-  return rows.some((row) => {
-    if (row.status !== "completed") return false;
-    if (row.phase === "adek_evaluation") {
-      return row.decision === "approved" || row.decision === "approved_by_management";
-    }
-    if (row.phase === "management_review") {
-      return row.decision === "approved" || row.decision === "approved_by_management";
-    }
-    return false;
-  });
-}
-
-
-function calculateWorkflowKpis(
-  submissions: SubmissionSummaryRow[],
-  assignments: AssignmentSummaryRow[]
-) {
-  const assignmentsBySubmission = new Map<string, AssignmentSummaryRow[]>();
-
-  for (const assignment of assignments) {
-    if (!assignment.submission_id) continue;
-    const existing = assignmentsBySubmission.get(assignment.submission_id) ?? [];
-    existing.push(assignment);
-    assignmentsBySubmission.set(assignment.submission_id, existing);
-  }
-
-  let completedAdekEvaluations = 0;
-  let totalSelected = 0;
-  let activeManagementReview = 0;
-  let totalDisqualified = 0;
-  let activeCoordinatorCorrections = 0;
-  let completedGeneralProofreading = 0;
-  let completedLiteraryProofreading = 0;
-  let completedFinalReady = 0;
-
-  for (const submission of submissions) {
-    const rows = assignmentsBySubmission.get(submission.id) ?? [];
-
-    if (hasAdekFinalityDecision(rows)) completedAdekEvaluations += 1;
-    if (submission.workflow_status === "needs_management_review") activeManagementReview += 1;
-    if (submission.workflow_status === "disqualified") totalDisqualified += 1;
-
-    if (
-      submission.workflow_status === "returned_for_correction" &&
-      rows.some(
-        (row) =>
-          row.phase === "coordinator_check" &&
-          (row.status === "assigned" || row.status === "in_progress")
-      )
-    ) {
-      activeCoordinatorCorrections += 1;
-    }
-
-    if (
-      rows.some(
-        (row) =>
-          row.phase === "proofreading" &&
-          row.proofreader_type === "general" &&
-          row.status === "completed" &&
-          row.decision === "completed"
-      )
-    ) {
-      completedGeneralProofreading += 1;
-    }
-
-    if (
-      rows.some(
-        (row) =>
-          row.phase === "literary_proofreading" &&
-          row.status === "completed" &&
-          row.decision === "completed"
-      )
-    ) {
-      completedLiteraryProofreading += 1;
-    }
-
-    if (
-      rows.some(
-        (row) =>
-          row.phase === "final_review" &&
-          row.status === "completed" &&
-          row.decision === "completed"
-      )
-    ) {
-      completedFinalReady += 1;
-    }
-
-    const isInSelectedPipeline =
-      submission.workflow_status === "selected_for_proofreading" ||
-      submission.workflow_status === "proofreading_done" ||
-      submission.workflow_status === "completed";
-
-    // Total Selected only counts submissions still in the selected/final pipeline.
-    // If a literary proofreader disqualifies an artwork, workflow_status becomes
-    // disqualified, so it is removed from Total Selected and counted under Total Disqualified.
-    if (isInSelectedPipeline && hasApprovalDecision(rows, submission)) {
-      totalSelected += 1;
-    }
-  }
-
-  const activeAssignments = assignments.filter(
-    (row) => row.status === "assigned" || row.status === "in_progress"
-  ).length;
-
-  return {
-    totalSubmissions: submissions.length,
+async function getDashboardCounts() {
+  const [
+    totalSubmissions,
     completedAdekEvaluations,
     totalSelected,
     totalDisqualified,
@@ -233,24 +53,77 @@ function calculateWorkflowKpis(
     completedGeneralProofreading,
     completedLiteraryProofreading,
     completedFinalReady,
+    lastExport,
     activeAssignments,
-  };
-}
-
-async function getDashboardCounts() {
-  const [submissions, assignments, lastExport] = await Promise.all([
-    fetchAllSubmissionSummaries(),
-    fetchAllAssignmentSummaries(),
+  ] = await Promise.all([
+    countSubmissions(),
+    countAssignments((query) =>
+      query
+        .eq("phase", "adek_evaluation")
+        .eq("status", "completed")
+        .not("completed_at", "is", null)
+    ),
+    countSubmissions((query) =>
+      query
+        .eq("evaluation_decision", "approved")
+        .neq("workflow_status", "disqualified")
+    ),
+    countSubmissions((query) =>
+      query.or(
+        "workflow_status.eq.disqualified,evaluation_decision.eq.disqualified,management_decision.eq.disqualified"
+      )
+    ),
+    countAssignments((query) =>
+      query.eq("phase", "coordinator_check").in("status", ["assigned", "in_progress"])
+    ),
+    countAssignments((query) =>
+      query.eq("phase", "management_review").in("status", ["assigned", "in_progress"])
+    ),
+    countAssignments((query) =>
+      query
+        .eq("phase", "proofreading")
+        .eq("status", "completed")
+        .not("completed_at", "is", null)
+    ),
+    countAssignments((query) =>
+      query
+        .eq("phase", "literary_proofreading")
+        .eq("status", "completed")
+        .not("completed_at", "is", null)
+    ),
+    countAssignments((query) =>
+      query
+        .eq("phase", "final_review")
+        .eq("status", "completed")
+        .not("completed_at", "is", null)
+    ),
     supabaseAdmin
       .from("export_batches")
       .select("id,status,mode,destination_folder_id,error_message,created_at,completed_at")
       .order("created_at", { ascending: false })
       .limit(1),
+    countAssignments((query) =>
+      query.in("status", [
+        "assigned",
+        "in_progress",
+        "returned_for_correction",
+        "sent_for_review",
+      ])
+    ),
   ]);
 
   return {
-    ...calculateWorkflowKpis(submissions, assignments),
+    totalSubmissions,
+    completedAdekEvaluations,
+    totalSelected,
+    totalDisqualified,
+    activeCoordinatorCorrections,
+    activeManagementReview,
+    completedGeneralProofreading,
+    completedLiteraryProofreading,
+    completedFinalReady,
     lastExport,
+    activeAssignments,
   };
 }
 
@@ -321,7 +194,7 @@ export default async function AdminPage({
           </div>
 
           <div>
-            <strong>ADEK Evaluated</strong>
+            <strong>Completed ADEK evaluations</strong>
             <p className="stat-number">{dashboard.completedAdekEvaluations}</p>
           </div>
 
@@ -336,12 +209,12 @@ export default async function AdminPage({
           </div>
 
           <div>
-            <strong>Sent Corrections</strong>
+            <strong>Active coordinator corrections</strong>
             <p className="stat-number">{dashboard.activeCoordinatorCorrections}</p>
           </div>
 
           <div>
-            <strong>Needs Mgmt</strong>
+            <strong>Active management review</strong>
             <p className="stat-number">{dashboard.activeManagementReview}</p>
           </div>
 
@@ -356,7 +229,7 @@ export default async function AdminPage({
           </div>
 
           <div>
-            <strong>Completed Final</strong>
+            <strong>Completed final review / ready</strong>
             <p className="stat-number">{dashboard.completedFinalReady}</p>
           </div>
         </div>
