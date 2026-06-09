@@ -40,9 +40,31 @@ function calculateAdekDecision(a: boolean, b: boolean, c: boolean) {
   return "needs_review";
 }
 
-function redirectWithRefresh(req: Request, redirectTo: string) {
+function acceptsJson(req: Request) {
+  return req.headers.get("accept")?.toLowerCase().includes("application/json") ?? false;
+}
+
+function refreshedUrl(req: Request, redirectTo: string) {
   const url = new URL(redirectTo || "/", req.url);
   url.searchParams.set("refresh", Date.now().toString());
+  return url;
+}
+
+function redirectWithRefresh(req: Request, redirectTo: string) {
+  return NextResponse.redirect(refreshedUrl(req, redirectTo), { status: 303 });
+}
+
+function successResponse(req: Request, redirectTo: string) {
+  const url = refreshedUrl(req, redirectTo);
+
+  if (acceptsJson(req)) {
+    return NextResponse.json({
+      ok: true,
+      message: "Action completed.",
+      redirectTo: url.toString(),
+    });
+  }
+
   return NextResponse.redirect(url, { status: 303 });
 }
 
@@ -747,6 +769,17 @@ export async function POST(req: Request) {
     const assignment = await getAssignment(assignmentId);
     const submissionBefore = await getSubmission(submissionId);
 
+    const assignmentStatus = String(assignment.status ?? "");
+    const submissionWorkflowStatus = String(submissionBefore.workflow_status ?? "");
+
+    if (["completed", "disqualified"].includes(submissionWorkflowStatus)) {
+      throw new Error("This artwork workflow is already final.");
+    }
+
+    if (!["assigned", "in_progress"].includes(assignmentStatus)) {
+      throw new Error("This task is already closed or waiting for correction.");
+    }
+
     if (phase === "adek_evaluation") {
       const taskAction = String(form.get("task_action") ?? "complete");
       const fileQualityClear = yesNo(form.get("adek_file_quality_clear"));
@@ -904,40 +937,36 @@ export async function POST(req: Request) {
 
     if (phase === "literary_proofreading") {
       const literaryAction = String(form.get("literary_action") ?? "completed");
+      const hasPublicationSuitableField = form.has("literary_publication_suitable");
+      const publicationSuitable = hasPublicationSuitableField
+        ? yesNo(form.get("literary_publication_suitable"))
+        : true;
       const literaryUpdatedContent = textValue(form, "literary_updated_content");
       const literaryProofreaderComment = textValue(form, "literary_proofreader_comment");
-      const timestamp = nowIso();
 
       await safeUpdate(
         "submissions",
         {
-          literary_publication_suitable:
-            literaryAction === "disqualified" || literaryAction === "needs_review"
-              ? false
-              : true,
+          literary_publication_suitable: publicationSuitable,
           literary_updated_content: literaryUpdatedContent,
           literary_proofreader_comment: literaryProofreaderComment,
-          updated_at: timestamp,
+          updated_at: nowIso(),
         },
         "id",
         submissionId
       );
 
-      if (literaryAction === "disqualified" || literaryAction === "needs_review") {
-        // Literary proofreaders make the final publication suitability decision.
-        // Backward-compatible needs_review from an old browser tab is treated as
-        // disqualified and is never routed to Management Review.
-        await addWorkflowComment({
-          submissionId,
-          authorId: user.id,
-          phase,
-          comment: literaryProofreaderComment,
-        });
+      if (
+        literaryAction === "disqualify" ||
+        literaryAction === "needs_review" ||
+        !publicationSuitable
+      ) {
+        const completedAt = nowIso();
 
         await markAssignmentCompleted(assignmentId, {
           decision: "disqualified",
           correction_notes: literaryProofreaderComment,
-          completed_at: timestamp,
+          completed_at: completedAt,
         });
 
         await safeUpdate(
@@ -945,9 +974,10 @@ export async function POST(req: Request) {
           {
             workflow_status: "disqualified",
             literary_publication_suitable: false,
+            literary_updated_content: literaryUpdatedContent,
             literary_proofreader_comment: literaryProofreaderComment,
-            completed_at: timestamp,
-            updated_at: timestamp,
+            completed_at: completedAt,
+            updated_at: completedAt,
           },
           "id",
           submissionId
@@ -956,8 +986,7 @@ export async function POST(req: Request) {
         await closeOpenAssignmentsAfterDisqualification({
           submissionId,
           currentAssignmentId: assignmentId,
-          completedAt: timestamp,
-          sourceAssignmentId: assignment.correction_source_assignment_id ?? null,
+          completedAt,
         });
       } else if (literaryAction === "needs_correction") {
         await sendToCoordinatorForCorrection({
@@ -970,11 +999,13 @@ export async function POST(req: Request) {
           correctionNotes: literaryProofreaderComment ?? literaryUpdatedContent,
         });
       } else {
+        const completedAt = nowIso();
+
         await safeUpdate(
           "submissions",
           {
-            literary_proofreading_completed_at: timestamp,
-            updated_at: timestamp,
+            literary_proofreading_completed_at: completedAt,
+            updated_at: completedAt,
           },
           "id",
           submissionId
@@ -982,7 +1013,7 @@ export async function POST(req: Request) {
 
         await markAssignmentCompleted(assignmentId, {
           decision: "completed",
-          completed_at: timestamp,
+          completed_at: completedAt,
         });
 
         const generalProofreaderId = await getCompletedGeneralProofreaderId(
@@ -1169,16 +1200,11 @@ export async function POST(req: Request) {
       },
     });
 
-    return redirectWithRefresh(req, redirectTo);
+    return successResponse(req, redirectTo);
   } catch (error: any) {
     console.error("Work completion failed:", error);
 
-    const acceptsJson = req.headers
-      .get("accept")
-      ?.toLowerCase()
-      .includes("application/json");
-
-    if (acceptsJson) {
+    if (acceptsJson(req)) {
       return NextResponse.json(
         {
           error: error.message ?? "Work completion failed.",
@@ -1187,11 +1213,12 @@ export async function POST(req: Request) {
       );
     }
 
-    return NextResponse.json(
-      {
-        error: error.message ?? "Work completion failed.",
-      },
-      { status: 500 }
+    const errorUrl = refreshedUrl(req, redirectTo);
+    errorUrl.searchParams.set(
+      "work_error",
+      error.message ?? "Work completion failed."
     );
+
+    return NextResponse.redirect(errorUrl, { status: 303 });
   }
 }

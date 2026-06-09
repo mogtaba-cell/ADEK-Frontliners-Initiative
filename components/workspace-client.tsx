@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import type { ProofreaderType, Role, WorkflowPhase } from "@/lib/types";
 import { labelPhase, labelWorkflowStatus, statusClassName } from "@/lib/workflow";
 
@@ -684,6 +684,9 @@ export function WorkspaceClient({
   const [literaryPublicationSuitable, setLiteraryPublicationSuitable] =
     useState("yes");
   const [returnPath, setReturnPath] = useState(currentPath);
+  const [isSubmittingTask, setIsSubmittingTask] = useState(false);
+  const [taskError, setTaskError] = useState<string | null>(null);
+  const [taskNotice, setTaskNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -702,6 +705,22 @@ export function WorkspaceClient({
   const selectedSubmission = selectedAssignment?.submissions ?? null;
   const derived = selectedSubmission ? getDerivedFields(selectedSubmission) : null;
   const selectedIsLiteraryExpression = isLiteraryExpressionsSubmission(selectedSubmission);
+  const selectedWorkflowStatus = String(selectedSubmission?.workflow_status ?? "");
+  const selectedAssignmentStatus = String(selectedAssignment?.status ?? "");
+  const isWorkflowFinal = ["completed", "disqualified"].includes(selectedWorkflowStatus);
+  const isAssignmentActionable =
+    Boolean(selectedAssignment) &&
+    ["assigned", "in_progress"].includes(selectedAssignmentStatus) &&
+    !isWorkflowFinal;
+  const nonActionableReason = isWorkflowFinal
+    ? "This artwork workflow is already final. No further action is available."
+    : selectedAssignmentStatus === "returned_for_correction"
+      ? "This artwork was sent for correction and is waiting for the Coordinator. No further action is available until it is returned."
+      : selectedAssignmentStatus === "sent_for_review"
+        ? "This artwork was sent for review. No further action is available from this workspace."
+        : ["completed", "cancelled"].includes(selectedAssignmentStatus)
+          ? "This task is already closed. No further action is available."
+          : null;
 
   useEffect(() => {
     if (!assignments.length) {
@@ -739,6 +758,76 @@ export function WorkspaceClient({
       selectedSubmission.literary_publication_suitable === false ? "no" : "yes"
     );
   }, [selectedSubmission?.id]);
+
+  useEffect(() => {
+    setTaskError(null);
+    setTaskNotice(null);
+    setIsSubmittingTask(false);
+  }, [selectedAssignment?.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const url = new URL(window.location.href);
+    const workError = url.searchParams.get("work_error");
+
+    if (!workError) return;
+
+    setTaskError(workError);
+    url.searchParams.delete("work_error");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+  }, []);
+
+  async function handleTaskSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!isAssignmentActionable) {
+      setTaskError(
+        nonActionableReason ??
+          "This task is not available for action. Please refresh the workspace."
+      );
+      return;
+    }
+
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+
+    setIsSubmittingTask(true);
+    setTaskError(null);
+    setTaskNotice(null);
+
+    try {
+      const response = await fetch(form.action, {
+        method: "POST",
+        body: formData,
+        headers: { Accept: "application/json" },
+      });
+
+      const contentType = response.headers.get("content-type") ?? "";
+      const payload = contentType.includes("application/json")
+        ? await response.json().catch(() => null)
+        : null;
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error ??
+            "This action could not be completed. Please refresh and try again."
+        );
+      }
+
+      setTaskNotice(payload?.message ?? "Action completed. Refreshing workspace...");
+      const redirectTo = payload?.redirectTo || response.url || returnPath || window.location.href;
+      window.location.assign(redirectTo);
+    } catch (error) {
+      setTaskError(
+        error instanceof Error
+          ? error.message
+          : "This action could not be completed. Please refresh and try again."
+      );
+    } finally {
+      setIsSubmittingTask(false);
+    }
+  }
 
   const liveAdekDecision = calculateAdekDecisionLabel(
     culturalAuthenticity,
@@ -1069,6 +1158,7 @@ export function WorkspaceClient({
               className="card workspace-task-action-box"
               action="/api/work/complete"
               method="post"
+              onSubmit={handleTaskSubmit}
             >
               <input type="hidden" name="assignment_id" value={selectedAssignment.id} />
               <input type="hidden" name="submission_id" value={selectedSubmission.id} />
@@ -1110,7 +1200,50 @@ export function WorkspaceClient({
 
               <SourceButtons submission={selectedSubmission} />
 
-              {phase === "adek_evaluation" && (
+              {taskError && (
+                <div
+                  className="card"
+                  style={{
+                    marginTop: 16,
+                    boxShadow: "none",
+                    border: "1px solid rgba(155, 47, 47, 0.35)",
+                    background: "#fff1f1",
+                  }}
+                >
+                  <strong>Action not available</strong>
+                  <p className="muted small" style={{ marginBottom: 0 }}>{taskError}</p>
+                </div>
+              )}
+
+              {taskNotice && (
+                <div
+                  className="card"
+                  style={{
+                    marginTop: 16,
+                    boxShadow: "none",
+                    border: "1px solid rgba(0, 73, 73, 0.25)",
+                    background: "#f0fbf8",
+                  }}
+                >
+                  <strong>{taskNotice}</strong>
+                </div>
+              )}
+
+              {!isAssignmentActionable && nonActionableReason && (
+                <div
+                  className="card"
+                  style={{
+                    marginTop: 16,
+                    boxShadow: "none",
+                    border: "1px solid rgba(0, 73, 73, 0.18)",
+                  }}
+                >
+                  <strong>Task closed</strong>
+                  <p className="muted small" style={{ marginBottom: 0 }}>{nonActionableReason}</p>
+                </div>
+              )}
+
+              {isAssignmentActionable && phase === "adek_evaluation" && (
                 <>
                   <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
                     <h4 style={{ marginTop: 0 }}>Artwork File Quality Check</h4>
@@ -1261,7 +1394,7 @@ export function WorkspaceClient({
                 </>
               )}
 
-              {phase === "coordinator_check" && (
+              {isAssignmentActionable && phase === "coordinator_check" && (
                 <>
                   <p className="muted small">
                     Revise the title, description, and student narrative fields,
@@ -1366,7 +1499,7 @@ export function WorkspaceClient({
                 </>
               )}
 
-              {phase === "proofreading" && (
+              {isAssignmentActionable && phase === "proofreading" && (
                 <>
                   <EditableArtworkText
                     key={`proofreader-edit-${selectedSubmission.id}`}
@@ -1407,28 +1540,16 @@ export function WorkspaceClient({
                 </>
               )}
 
-              {phase === "literary_proofreading" && (
+              {isAssignmentActionable && phase === "literary_proofreading" && (
                 <>
-                  <input type="hidden" name="literary_publication_suitable" value="yes" />
-
                   <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
-                    <h4 style={{ marginTop: 0 }}>Literary Suitability Check</h4>
-
-                    <p className="small" style={{ marginTop: 0 }}>
-                      <strong>
-                        First confirm whether the artwork is aligned with the
-                        initiative and suitable for publication.
-                      </strong>
-                      <br />
-                      تأكد أولاً مما إذا كان العمل الفني متوافقاً مع أهداف المبادرة
-                      ومناسباً للنشر.
-                    </p>
-
+                    <h4 style={{ marginTop: 0 }}>Literary Proofreading Decision</h4>
                     <p className="muted small" style={{ marginBottom: 0 }}>
-                      Use <strong>Disqualify Artwork</strong> only when the literary
-                      content is not suitable for publication. This is a final
-                      literary decision and will not be sent to Management Review.
+                      Use <strong>Mark Done</strong> when the literary content is ready,
+                      <strong> Send for Correction</strong> when the Coordinator needs to correct/update it,
+                      or <strong>Disqualify Artwork</strong> when it is not suitable for publication.
                     </p>
+                    <input type="hidden" name="literary_publication_suitable" value="yes" />
                   </div>
 
                   <label style={{ display: "block", marginTop: 12 }}>
@@ -1439,7 +1560,7 @@ export function WorkspaceClient({
                       name="literary_proofreader_comment"
                       rows={5}
                       dir="auto"
-                      placeholder="Write any comments for the Coordinator, Admin, or later workflow users."
+                      placeholder="Write any comments for the Coordinator, Management, Admin, or later workflow users."
                       defaultValue={displayText(
                         selectedSubmission.literary_proofreader_comment,
                         ""
@@ -1461,17 +1582,10 @@ export function WorkspaceClient({
                       )}
                     />
                   </label>
-
-                  <p className="muted small" style={{ marginTop: 12 }}>
-                    Choose Mark Done if the literary content is ready, Send for
-                    Correction if the Coordinator needs to correct/update the
-                    submission first, or Disqualify Artwork if it is not suitable
-                    for publication.
-                  </p>
                 </>
               )}
 
-              {phase === "management_review" && (
+              {isAssignmentActionable && phase === "management_review" && (
                 <>
                   {selectedIsLiteraryExpression ? (
                     <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
@@ -1536,7 +1650,7 @@ export function WorkspaceClient({
                 </>
               )}
 
-              {phase === "final_review" && (
+              {isAssignmentActionable && phase === "final_review" && (
                 <>
                   <EditableArtworkText
                     key={`reviewer-edit-${selectedSubmission.id}`}
@@ -1553,118 +1667,130 @@ export function WorkspaceClient({
                 </>
               )}
 
-              <div className="actions" style={{ marginTop: 16 }}>
-                {phase === "coordinator_check" ? (
-                  <button
-                    className="btn"
-                    type="submit"
-                    name="coordinator_action"
-                    value="return_corrected"
-                  >
-                    {selectedAssignment.correction_source_phase === "adek_evaluation"
-                      ? "Return to Evaluator"
-                      : "Return to Proofreader"}
-                  </button>
-                ) : phase === "literary_proofreading" ? (
-                  <>
+              {isAssignmentActionable && (
+                <div className="actions" style={{ marginTop: 16 }}>
+                  {phase === "coordinator_check" ? (
                     <button
                       className="btn"
                       type="submit"
-                      name="literary_action"
-                      value="completed"
+                      name="coordinator_action"
+                      value="return_corrected"
+                      disabled={isSubmittingTask}
                     >
-                      Mark Done
+                      {selectedAssignment.correction_source_phase === "adek_evaluation"
+                        ? "Return to Evaluator"
+                        : "Return to Proofreader"}
                     </button>
-
-                    <button
-                      className="btn secondary"
-                      type="submit"
-                      name="literary_action"
-                      value="needs_correction"
-                    >
-                      Send for Correction
-                    </button>
-
-                    <button
-                      className="btn secondary"
-                      type="submit"
-                      name="literary_action"
-                      value="disqualified"
-                    >
-                      Disqualify Artwork
-                    </button>
-                  </>
-                ) : phase === "management_review" ? (
-                  selectedIsLiteraryExpression ? (
+                  ) : phase === "literary_proofreading" ? (
                     <>
                       <button
                         className="btn"
                         type="submit"
-                        name="management_action"
-                        value="send_to_literary_proofreading"
+                        name="literary_action"
+                        value="completed"
+                        disabled={isSubmittingTask}
                       >
-                        Send to Literary Proofreading
+                        Mark Done
                       </button>
 
                       <button
                         className="btn secondary"
                         type="submit"
-                        name="management_action"
-                        value="pending"
+                        name="literary_action"
+                        value="needs_correction"
+                        disabled={isSubmittingTask}
                       >
-                        Save as Pending
+                        Send for Correction
                       </button>
 
                       <button
                         className="btn secondary"
                         type="submit"
-                        name="management_action"
+                        name="literary_action"
                         value="disqualify"
+                        disabled={isSubmittingTask}
                       >
-                        Disqualify
+                        Disqualify Artwork
                       </button>
                     </>
-                  ) : (
-                    <>
-                      <button
-                        className="btn"
-                        type="submit"
-                        name="management_action"
-                        value="complete"
-                      >
-                        Mark Done & Open Next
-                      </button>
+                  ) : phase === "management_review" ? (
+                    selectedIsLiteraryExpression ? (
+                      <>
+                        <button
+                          className="btn"
+                          type="submit"
+                          name="management_action"
+                          value="send_to_literary_proofreading"
+                          disabled={isSubmittingTask}
+                        >
+                          Send to Literary Proofreading
+                        </button>
 
-                      <button
-                        className="btn secondary"
-                        type="submit"
-                        name="management_action"
-                        value="pending"
-                      >
-                        Save as Pending
-                      </button>
-                    </>
-                  )
-                ) : (
-                  <button
-                    className="btn"
-                    type="submit"
-                    name="task_action"
-                    value={
-                      phase === "adek_evaluation" && adekFileQualityClear === "no"
-                        ? "send_correction"
-                        : "complete"
-                    }
-                  >
-                    {phase === "final_review"
-                      ? "Mark as Ready"
-                      : phase === "adek_evaluation" &&
-                          adekFileQualityClear === "no"
-                        ? "Send for Correction"
-                        : "Mark Done & Open Next"}
-                  </button>
-                )}
-              </div>
+                        <button
+                          className="btn secondary"
+                          type="submit"
+                          name="management_action"
+                          value="pending"
+                          disabled={isSubmittingTask}
+                        >
+                          Save as Pending
+                        </button>
+
+                        <button
+                          className="btn secondary"
+                          type="submit"
+                          name="management_action"
+                          value="disqualify"
+                          disabled={isSubmittingTask}
+                        >
+                          Disqualify
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          className="btn"
+                          type="submit"
+                          name="management_action"
+                          value="complete"
+                          disabled={isSubmittingTask}
+                        >
+                          Mark Done & Open Next
+                        </button>
+
+                        <button
+                          className="btn secondary"
+                          type="submit"
+                          name="management_action"
+                          value="pending"
+                          disabled={isSubmittingTask}
+                        >
+                          Save as Pending
+                        </button>
+                      </>
+                    )
+                  ) : (
+                    <button
+                      className="btn"
+                      type="submit"
+                      name="task_action"
+                      value={
+                        phase === "adek_evaluation" && adekFileQualityClear === "no"
+                          ? "send_correction"
+                          : "complete"
+                      }
+                      disabled={isSubmittingTask}
+                    >
+                      {phase === "final_review"
+                        ? "Mark as Ready"
+                        : phase === "adek_evaluation" &&
+                            adekFileQualityClear === "no"
+                          ? "Send for Correction"
+                          : "Mark Done & Open Next"}
+                    </button>
+                  )}
+                </div>
+              )}
             </form>
 
             <TaskHistory history={selectedAssignment.task_history ?? []} />
