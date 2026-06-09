@@ -7,7 +7,6 @@ import {
 } from "@/lib/assignment";
 
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -44,125 +43,189 @@ async function countAssignments(filters: (query: any) => any) {
 }
 
 
-const PAGE_SIZE = 1000;
+const KPI_PAGE_SIZE = 1000;
+
+type SubmissionSummaryRow = {
+  id: string;
+  workflow_status?: string | null;
+  evaluation_decision?: string | null;
+  management_decision?: string | null;
+};
 
 type AssignmentSummaryRow = {
   submission_id: string | null;
   phase?: string | null;
+  proofreader_type?: string | null;
   status?: string | null;
   decision?: string | null;
 };
 
-async function fetchAssignmentSummaries(filters?: (query: any) => any) {
-  const rows: AssignmentSummaryRow[] = [];
+async function fetchAllSubmissionSummaries() {
+  const rows: SubmissionSummaryRow[] = [];
 
-  for (let from = 0; ; from += PAGE_SIZE) {
-    let query = supabaseAdmin
-      .from("assignments")
-      .select("submission_id,phase,status,decision")
+  for (let from = 0; ; from += KPI_PAGE_SIZE) {
+    const { data, error } = await supabaseAdmin
+      .from("submissions")
+      .select("id,workflow_status,evaluation_decision,management_decision")
       .order("created_at", { ascending: true })
-      .range(from, from + PAGE_SIZE - 1);
-
-    if (filters) query = filters(query);
-
-    const { data, error } = await query;
+      .range(from, from + KPI_PAGE_SIZE - 1);
 
     if (error) {
-      console.error("Admin KPI assignment summary query failed:", error.message);
+      console.error("Admin KPI submissions query failed:", error.message);
       return rows;
     }
 
-    rows.push(...((data ?? []) as AssignmentSummaryRow[]));
-
-    if (!data || data.length < PAGE_SIZE) break;
+    rows.push(...((data ?? []) as SubmissionSummaryRow[]));
+    if (!data || data.length < KPI_PAGE_SIZE) break;
   }
 
   return rows;
 }
 
-async function fetchSubmissionIds(filters?: (query: any) => any) {
-  const ids = new Set<string>();
+async function fetchAllAssignmentSummaries() {
+  const rows: AssignmentSummaryRow[] = [];
 
-  for (let from = 0; ; from += PAGE_SIZE) {
-    let query = supabaseAdmin
-      .from("submissions")
-      .select("id")
+  for (let from = 0; ; from += KPI_PAGE_SIZE) {
+    const { data, error } = await supabaseAdmin
+      .from("assignments")
+      .select("submission_id,phase,proofreader_type,status,decision")
       .order("created_at", { ascending: true })
-      .range(from, from + PAGE_SIZE - 1);
-
-    if (filters) query = filters(query);
-
-    const { data, error } = await query;
+      .range(from, from + KPI_PAGE_SIZE - 1);
 
     if (error) {
-      console.error("Admin KPI submission id query failed:", error.message);
-      return ids;
+      console.error("Admin KPI assignments query failed:", error.message);
+      return rows;
     }
 
-    for (const row of data ?? []) {
-      if (row.id) ids.add(row.id);
-    }
-
-    if (!data || data.length < PAGE_SIZE) break;
+    rows.push(...((data ?? []) as AssignmentSummaryRow[]));
+    if (!data || data.length < KPI_PAGE_SIZE) break;
   }
 
-  return ids;
+  return rows;
 }
 
-function isFinalityAdekDecision(row: AssignmentSummaryRow) {
-  const status = row.status ?? "";
-  const decision = row.decision ?? "";
+function hasAdekFinalityDecision(rows: AssignmentSummaryRow[]) {
+  return rows.some((row) => {
+    if (row.phase !== "adek_evaluation") return false;
 
-  return (
-    (status === "completed" && Boolean(decision)) ||
-    (status === "returned_for_correction" && decision === "needs_correction")
-  );
+    return (
+      (row.status === "completed" && Boolean(row.decision)) ||
+      (row.status === "returned_for_correction" && row.decision === "needs_correction")
+    );
+  });
 }
 
-async function getAdekFinalityCounts() {
-  const [readyForAdekIds, adekAssignments] = await Promise.all([
-    fetchSubmissionIds((query) => query.eq("workflow_status", "ready_for_adek")),
-    fetchAssignmentSummaries((query) => query.eq("phase", "adek_evaluation")),
-  ]);
+function hasApprovalDecision(rows: AssignmentSummaryRow[], submission: SubmissionSummaryRow) {
+  if (submission.evaluation_decision === "approved") return true;
+  if (submission.management_decision === "approved") return true;
 
-  const adekEvaluatedIds = new Set<string>();
-  const activeReadyAdekIds = new Set<string>();
+  return rows.some((row) => {
+    if (row.status !== "completed") return false;
+    if (row.phase === "adek_evaluation") {
+      return row.decision === "approved" || row.decision === "approved_by_management";
+    }
+    if (row.phase === "management_review") {
+      return row.decision === "approved" || row.decision === "approved_by_management";
+    }
+    return false;
+  });
+}
 
-  for (const row of adekAssignments) {
-    if (!row.submission_id) continue;
 
-    if (isFinalityAdekDecision(row)) {
-      adekEvaluatedIds.add(row.submission_id);
+function calculateWorkflowKpis(
+  submissions: SubmissionSummaryRow[],
+  assignments: AssignmentSummaryRow[]
+) {
+  const assignmentsBySubmission = new Map<string, AssignmentSummaryRow[]>();
+
+  for (const assignment of assignments) {
+    if (!assignment.submission_id) continue;
+    const existing = assignmentsBySubmission.get(assignment.submission_id) ?? [];
+    existing.push(assignment);
+    assignmentsBySubmission.set(assignment.submission_id, existing);
+  }
+
+  let completedAdekEvaluations = 0;
+  let totalSelected = 0;
+  let activeManagementReview = 0;
+  let totalDisqualified = 0;
+  let activeCoordinatorCorrections = 0;
+  let completedGeneralProofreading = 0;
+  let completedLiteraryProofreading = 0;
+  let completedFinalReady = 0;
+
+  for (const submission of submissions) {
+    const rows = assignmentsBySubmission.get(submission.id) ?? [];
+
+    if (hasAdekFinalityDecision(rows)) completedAdekEvaluations += 1;
+    if (submission.workflow_status === "needs_management_review") activeManagementReview += 1;
+    if (submission.workflow_status === "disqualified") totalDisqualified += 1;
+
+    if (
+      submission.workflow_status === "returned_for_correction" &&
+      rows.some(
+        (row) =>
+          row.phase === "coordinator_check" &&
+          (row.status === "assigned" || row.status === "in_progress")
+      )
+    ) {
+      activeCoordinatorCorrections += 1;
     }
 
     if (
-      readyForAdekIds.has(row.submission_id) &&
-      (row.status === "assigned" || row.status === "in_progress")
+      rows.some(
+        (row) =>
+          row.phase === "proofreading" &&
+          row.proofreader_type === "general" &&
+          row.status === "completed" &&
+          row.decision === "completed"
+      )
     ) {
-      activeReadyAdekIds.add(row.submission_id);
+      completedGeneralProofreading += 1;
+    }
+
+    if (
+      rows.some(
+        (row) =>
+          row.phase === "literary_proofreading" &&
+          row.status === "completed" &&
+          row.decision === "completed"
+      )
+    ) {
+      completedLiteraryProofreading += 1;
+    }
+
+    if (
+      rows.some(
+        (row) =>
+          row.phase === "final_review" &&
+          row.status === "completed" &&
+          row.decision === "completed"
+      )
+    ) {
+      completedFinalReady += 1;
+    }
+
+    const isInSelectedPipeline =
+      submission.workflow_status === "selected_for_proofreading" ||
+      submission.workflow_status === "proofreading_done" ||
+      submission.workflow_status === "completed";
+
+    // Total Selected only counts submissions still in the selected/final pipeline.
+    // If a literary proofreader disqualifies an artwork, workflow_status becomes
+    // disqualified, so it is removed from Total Selected and counted under Total Disqualified.
+    if (isInSelectedPipeline && hasApprovalDecision(rows, submission)) {
+      totalSelected += 1;
     }
   }
 
-  let heldUnassignedAdek = 0;
-
-  for (const submissionId of readyForAdekIds) {
-    if (!activeReadyAdekIds.has(submissionId) && !adekEvaluatedIds.has(submissionId)) {
-      heldUnassignedAdek += 1;
-    }
-  }
+  const activeAssignments = assignments.filter(
+    (row) => row.status === "assigned" || row.status === "in_progress"
+  ).length;
 
   return {
-    adekEvaluated: adekEvaluatedIds.size,
-    actionableAdekRemaining: activeReadyAdekIds.size,
-    heldUnassignedAdek,
-    adekRemaining: activeReadyAdekIds.size + heldUnassignedAdek,
-  };
-}
-
-async function getDashboardCounts() {
-  const [
-    totalSubmissions,
-    adekFinalityCounts,
+    totalSubmissions: submissions.length,
+    completedAdekEvaluations,
     totalSelected,
     totalDisqualified,
     activeCoordinatorCorrections,
@@ -170,69 +233,24 @@ async function getDashboardCounts() {
     completedGeneralProofreading,
     completedLiteraryProofreading,
     completedFinalReady,
-    lastExport,
     activeAssignments,
-  ] = await Promise.all([
-    countSubmissions(),
-    getAdekFinalityCounts(),
-    countSubmissions((query) =>
-      query
-        .eq("evaluation_decision", "approved")
-        .neq("workflow_status", "disqualified")
-    ),
-    countSubmissions((query) =>
-      query.or(
-        "workflow_status.eq.disqualified,evaluation_decision.eq.disqualified,management_decision.eq.disqualified"
-      )
-    ),
-    countAssignments((query) =>
-      query.eq("phase", "coordinator_check").in("status", ["assigned", "in_progress"])
-    ),
-    countAssignments((query) =>
-      query.eq("phase", "management_review").in("status", ["assigned", "in_progress"])
-    ),
-    countAssignments((query) =>
-      query
-        .eq("phase", "proofreading")
-        .eq("status", "completed")
-        .not("completed_at", "is", null)
-    ),
-    countAssignments((query) =>
-      query
-        .eq("phase", "literary_proofreading")
-        .eq("status", "completed")
-        .not("completed_at", "is", null)
-    ),
-    countAssignments((query) =>
-      query
-        .eq("phase", "final_review")
-        .eq("status", "completed")
-        .not("completed_at", "is", null)
-    ),
+  };
+}
+
+async function getDashboardCounts() {
+  const [submissions, assignments, lastExport] = await Promise.all([
+    fetchAllSubmissionSummaries(),
+    fetchAllAssignmentSummaries(),
     supabaseAdmin
       .from("export_batches")
       .select("id,status,mode,destination_folder_id,error_message,created_at,completed_at")
       .order("created_at", { ascending: false })
       .limit(1),
-    countAssignments((query) => query.in("status", ["assigned", "in_progress"])),
   ]);
 
   return {
-    totalSubmissions,
-    adekEvaluated: adekFinalityCounts.adekEvaluated,
-    completedAdekEvaluations: adekFinalityCounts.adekEvaluated,
-    adekRemaining: adekFinalityCounts.adekRemaining,
-    actionableAdekRemaining: adekFinalityCounts.actionableAdekRemaining,
-    heldUnassignedAdek: adekFinalityCounts.heldUnassignedAdek,
-    totalSelected,
-    totalDisqualified,
-    activeCoordinatorCorrections,
-    activeManagementReview,
-    completedGeneralProofreading,
-    completedLiteraryProofreading,
-    completedFinalReady,
+    ...calculateWorkflowKpis(submissions, assignments),
     lastExport,
-    activeAssignments,
   };
 }
 
@@ -304,17 +322,12 @@ export default async function AdminPage({
 
           <div>
             <strong>ADEK Evaluated</strong>
-            <p className="stat-number">{dashboard.adekEvaluated}</p>
+            <p className="stat-number">{dashboard.completedAdekEvaluations}</p>
           </div>
 
           <div>
             <strong>Total Selected</strong>
             <p className="stat-number">{dashboard.totalSelected}</p>
-          </div>
-
-          <div>
-            <strong>Needs Mgmt</strong>
-            <p className="stat-number">{dashboard.activeManagementReview}</p>
           </div>
 
           <div>
@@ -328,12 +341,17 @@ export default async function AdminPage({
           </div>
 
           <div>
-            <strong>General Proofread</strong>
+            <strong>Needs Mgmt</strong>
+            <p className="stat-number">{dashboard.activeManagementReview}</p>
+          </div>
+
+          <div>
+            <strong>Completed general proofreading</strong>
             <p className="stat-number">{dashboard.completedGeneralProofreading}</p>
           </div>
 
           <div>
-            <strong>Literary Proofread</strong>
+            <strong>Completed literary proofreading</strong>
             <p className="stat-number">{dashboard.completedLiteraryProofreading}</p>
           </div>
 

@@ -10,9 +10,6 @@ type KpiResponse = {
     totalSubmissions: number;
     adekEvaluated: number;
     completedAdekEvaluations: number;
-    adekRemaining: number;
-    actionableAdekRemaining: number;
-    heldUnassignedAdek: number;
     totalSelected: number;
     needsManagementReview: number;
     totalDisqualified: number;
@@ -21,146 +18,208 @@ type KpiResponse = {
     literaryProofread: number;
     finalReady: number;
     activeAssignments: number;
+    totalClosed: number;
   };
 };
 
 const KPI_CACHE_TTL_MS = 60_000;
+const PAGE_SIZE = 1000;
+
 let cachedKpis: { expiresAt: number; payload: KpiResponse } | null = null;
 
-const PAGE_SIZE = 1000;
+type SubmissionSummaryRow = {
+  id: string;
+  workflow_status?: string | null;
+  evaluation_decision?: string | null;
+  management_decision?: string | null;
+};
 
 type AssignmentSummaryRow = {
   submission_id: string | null;
   phase?: string | null;
+  proofreader_type?: string | null;
   status?: string | null;
   decision?: string | null;
 };
 
-async function countRows(table: string, filters?: (query: any) => any) {
-  let query = supabaseAdmin.from(table).select("id", { count: "exact", head: true });
-  if (filters) query = filters(query);
-  const { count, error } = await query;
-  if (error) {
-    console.error(`KPI count failed for ${table}:`, error.message);
-    return 0;
-  }
-  return count ?? 0;
-}
-
-async function countAssignments(filters: (query: any) => any) {
-  let query = supabaseAdmin.from("assignments").select("submission_id", { count: "exact", head: true });
-  query = filters(query);
-  const { count, error } = await query;
-  if (error) {
-    console.error("KPI assignment count failed:", error.message);
-    return 0;
-  }
-  return count ?? 0;
-}
-
-async function fetchAssignmentSummaries(filters?: (query: any) => any) {
-  const rows: AssignmentSummaryRow[] = [];
+async function fetchAllSubmissions() {
+  const rows: SubmissionSummaryRow[] = [];
 
   for (let from = 0; ; from += PAGE_SIZE) {
-    let query = supabaseAdmin
-      .from("assignments")
-      .select("submission_id,phase,status,decision")
+    const { data, error } = await supabaseAdmin
+      .from("submissions")
+      .select("id,workflow_status,evaluation_decision,management_decision")
       .order("created_at", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
 
-    if (filters) query = filters(query);
-
-    const { data, error } = await query;
-
     if (error) {
-      console.error("KPI assignment summary query failed:", error.message);
+      console.error("KPI submissions query failed:", error.message);
       return rows;
     }
 
-    rows.push(...((data ?? []) as AssignmentSummaryRow[]));
-
+    rows.push(...((data ?? []) as SubmissionSummaryRow[]));
     if (!data || data.length < PAGE_SIZE) break;
   }
 
   return rows;
 }
 
-async function fetchSubmissionIds(filters?: (query: any) => any) {
-  const ids = new Set<string>();
+async function fetchAllAssignments() {
+  const rows: AssignmentSummaryRow[] = [];
 
   for (let from = 0; ; from += PAGE_SIZE) {
-    let query = supabaseAdmin
-      .from("submissions")
-      .select("id")
+    const { data, error } = await supabaseAdmin
+      .from("assignments")
+      .select("submission_id,phase,proofreader_type,status,decision")
       .order("created_at", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
 
-    if (filters) query = filters(query);
-
-    const { data, error } = await query;
-
     if (error) {
-      console.error("KPI submission id query failed:", error.message);
-      return ids;
+      console.error("KPI assignments query failed:", error.message);
+      return rows;
     }
 
-    for (const row of data ?? []) {
-      if (row.id) ids.add(row.id);
-    }
-
+    rows.push(...((data ?? []) as AssignmentSummaryRow[]));
     if (!data || data.length < PAGE_SIZE) break;
   }
 
-  return ids;
+  return rows;
 }
 
-function isFinalityAdekDecision(row: AssignmentSummaryRow) {
-  const status = row.status ?? "";
-  const decision = row.decision ?? "";
+function hasAdekFinalityDecision(rows: AssignmentSummaryRow[]) {
+  return rows.some((row) => {
+    if (row.phase !== "adek_evaluation") return false;
 
-  return (
-    (status === "completed" && Boolean(decision)) ||
-    (status === "returned_for_correction" && decision === "needs_correction")
-  );
+    return (
+      (row.status === "completed" && Boolean(row.decision)) ||
+      (row.status === "returned_for_correction" && row.decision === "needs_correction")
+    );
+  });
 }
 
-async function getAdekFinalityCounts() {
-  const [readyForAdekIds, adekAssignments] = await Promise.all([
-    fetchSubmissionIds((query) => query.eq("workflow_status", "ready_for_adek")),
-    fetchAssignmentSummaries((query) => query.eq("phase", "adek_evaluation")),
+function hasApprovalDecision(rows: AssignmentSummaryRow[], submission: SubmissionSummaryRow) {
+  if (submission.evaluation_decision === "approved") return true;
+  if (submission.management_decision === "approved") return true;
+
+  return rows.some((row) => {
+    if (row.status !== "completed") return false;
+    if (row.phase === "adek_evaluation") {
+      return row.decision === "approved" || row.decision === "approved_by_management";
+    }
+    if (row.phase === "management_review") {
+      return row.decision === "approved" || row.decision === "approved_by_management";
+    }
+    return false;
+  });
+}
+
+
+async function buildKpis(): Promise<KpiResponse["data"]> {
+  const [submissions, assignments] = await Promise.all([
+    fetchAllSubmissions(),
+    fetchAllAssignments(),
   ]);
 
-  const adekEvaluatedIds = new Set<string>();
-  const activeReadyAdekIds = new Set<string>();
+  const assignmentsBySubmission = new Map<string, AssignmentSummaryRow[]>();
 
-  for (const row of adekAssignments) {
-    if (!row.submission_id) continue;
+  for (const assignment of assignments) {
+    if (!assignment.submission_id) continue;
+    const existing = assignmentsBySubmission.get(assignment.submission_id) ?? [];
+    existing.push(assignment);
+    assignmentsBySubmission.set(assignment.submission_id, existing);
+  }
 
-    if (isFinalityAdekDecision(row)) {
-      adekEvaluatedIds.add(row.submission_id);
+  let adekEvaluated = 0;
+  let totalSelected = 0;
+  let needsManagementReview = 0;
+  let totalDisqualified = 0;
+  let activeCoordinatorCorrections = 0;
+  let generalProofread = 0;
+  let literaryProofread = 0;
+  let finalReady = 0;
+
+  for (const submission of submissions) {
+    const rows = assignmentsBySubmission.get(submission.id) ?? [];
+
+    if (hasAdekFinalityDecision(rows)) adekEvaluated += 1;
+    if (submission.workflow_status === "needs_management_review") needsManagementReview += 1;
+    if (submission.workflow_status === "disqualified") totalDisqualified += 1;
+
+    if (
+      submission.workflow_status === "returned_for_correction" &&
+      rows.some(
+        (row) =>
+          row.phase === "coordinator_check" &&
+          (row.status === "assigned" || row.status === "in_progress"),
+      )
+    ) {
+      activeCoordinatorCorrections += 1;
     }
 
     if (
-      readyForAdekIds.has(row.submission_id) &&
-      (row.status === "assigned" || row.status === "in_progress")
+      rows.some(
+        (row) =>
+          row.phase === "proofreading" &&
+          row.proofreader_type === "general" &&
+          row.status === "completed" &&
+          row.decision === "completed",
+      )
     ) {
-      activeReadyAdekIds.add(row.submission_id);
+      generalProofread += 1;
+    }
+
+    if (
+      rows.some(
+        (row) =>
+          row.phase === "literary_proofreading" &&
+          row.status === "completed" &&
+          row.decision === "completed",
+      )
+    ) {
+      literaryProofread += 1;
+    }
+
+    if (
+      rows.some(
+        (row) =>
+          row.phase === "final_review" &&
+          row.status === "completed" &&
+          row.decision === "completed",
+      )
+    ) {
+      finalReady += 1;
+    }
+
+    const isInSelectedPipeline =
+      submission.workflow_status === "selected_for_proofreading" ||
+      submission.workflow_status === "proofreading_done" ||
+      submission.workflow_status === "completed";
+
+    // Total Selected only counts submissions still in the selected/final pipeline.
+    // If a literary proofreader disqualifies an artwork, workflow_status becomes
+    // disqualified, so it is removed from Total Selected and counted under Total Disqualified.
+    if (isInSelectedPipeline && hasApprovalDecision(rows, submission)) {
+      totalSelected += 1;
     }
   }
 
-  let heldUnassignedAdek = 0;
-
-  for (const submissionId of readyForAdekIds) {
-    if (!activeReadyAdekIds.has(submissionId) && !adekEvaluatedIds.has(submissionId)) {
-      heldUnassignedAdek += 1;
-    }
-  }
+  const activeAssignments = assignments.filter(
+    (row) => row.status === "assigned" || row.status === "in_progress",
+  ).length;
 
   return {
-    adekEvaluated: adekEvaluatedIds.size,
-    actionableAdekRemaining: activeReadyAdekIds.size,
-    heldUnassignedAdek,
-    adekRemaining: activeReadyAdekIds.size + heldUnassignedAdek,
+    totalSubmissions: submissions.length,
+    adekEvaluated,
+    completedAdekEvaluations: adekEvaluated,
+    totalSelected,
+    needsManagementReview,
+    totalDisqualified,
+    activeCoordinatorCorrections,
+    generalProofread,
+    literaryProofread,
+    finalReady,
+    activeAssignments,
+    totalClosed: finalReady + totalDisqualified,
   };
 }
 
@@ -177,48 +236,9 @@ export async function GET() {
       });
     }
 
-    const [
-      totalSubmissions,
-      adekFinalityCounts,
-      totalSelected,
-      needsManagementReview,
-      totalDisqualified,
-      activeCoordinatorCorrections,
-      generalProofread,
-      literaryProofread,
-      finalReady,
-      activeAssignments,
-    ] = await Promise.all([
-      countRows("submissions"),
-      getAdekFinalityCounts(),
-      countRows("submissions", (query) => query.eq("evaluation_decision", "approved").neq("workflow_status", "disqualified")),
-      countAssignments((query) => query.eq("phase", "management_review").in("status", ["assigned", "in_progress"])),
-      countRows("submissions", (query) => query.or("workflow_status.eq.disqualified,evaluation_decision.eq.disqualified,management_decision.eq.disqualified")),
-      countAssignments((query) => query.eq("phase", "coordinator_check").in("status", ["assigned", "in_progress"])),
-      countAssignments((query) => query.eq("phase", "proofreading").eq("status", "completed").not("completed_at", "is", null)),
-      countAssignments((query) => query.eq("phase", "literary_proofreading").eq("status", "completed").not("completed_at", "is", null)),
-      countAssignments((query) => query.eq("phase", "final_review").eq("status", "completed").not("completed_at", "is", null)),
-      countAssignments((query) => query.in("status", ["assigned", "in_progress"])),
-    ]);
-
     const payload: KpiResponse = {
       ok: true,
-      data: {
-        totalSubmissions,
-        adekEvaluated: adekFinalityCounts.adekEvaluated,
-        completedAdekEvaluations: adekFinalityCounts.adekEvaluated,
-        adekRemaining: adekFinalityCounts.adekRemaining,
-        actionableAdekRemaining: adekFinalityCounts.actionableAdekRemaining,
-        heldUnassignedAdek: adekFinalityCounts.heldUnassignedAdek,
-        totalSelected,
-        needsManagementReview,
-        totalDisqualified,
-        activeCoordinatorCorrections,
-        generalProofread,
-        literaryProofread,
-        finalReady,
-        activeAssignments,
-      },
+      data: await buildKpis(),
     };
 
     cachedKpis = {
@@ -236,7 +256,7 @@ export async function GET() {
     console.error("KPI route failed:", error);
     return NextResponse.json(
       { ok: false, error: error.message ?? "Failed to load KPIs.", data: {} },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

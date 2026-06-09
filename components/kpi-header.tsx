@@ -5,11 +5,7 @@ import { usePathname } from "next/navigation";
 
 type KpiData = {
   totalSubmissions: number;
-  adekEvaluated: number;
   completedAdekEvaluations: number;
-  adekRemaining: number;
-  actionableAdekRemaining: number;
-  heldUnassignedAdek: number;
   totalSelected: number;
   needsManagementReview: number;
   totalDisqualified: number;
@@ -17,16 +13,12 @@ type KpiData = {
   generalProofread: number;
   literaryProofread: number;
   finalReady: number;
-  activeAssignments: number;
+  totalClosed: number;
 };
 
 const emptyKpis: KpiData = {
   totalSubmissions: 0,
-  adekEvaluated: 0,
   completedAdekEvaluations: 0,
-  adekRemaining: 0,
-  actionableAdekRemaining: 0,
-  heldUnassignedAdek: 0,
   totalSelected: 0,
   needsManagementReview: 0,
   totalDisqualified: 0,
@@ -34,7 +26,7 @@ const emptyKpis: KpiData = {
   generalProofread: 0,
   literaryProofread: 0,
   finalReady: 0,
-  activeAssignments: 0,
+  totalClosed: 0,
 };
 
 function numberFrom(value: unknown) {
@@ -44,15 +36,9 @@ function numberFrom(value: unknown) {
 
 function normalizeKpis(payload: any): KpiData {
   const data = payload?.data ?? payload ?? {};
-  const adekEvaluated = numberFrom(data.adekEvaluated ?? data.completedAdekEvaluations);
-
   return {
     totalSubmissions: numberFrom(data.totalSubmissions),
-    adekEvaluated,
-    completedAdekEvaluations: adekEvaluated,
-    adekRemaining: numberFrom(data.adekRemaining),
-    actionableAdekRemaining: numberFrom(data.actionableAdekRemaining),
-    heldUnassignedAdek: numberFrom(data.heldUnassignedAdek),
+    completedAdekEvaluations: numberFrom(data.completedAdekEvaluations),
     totalSelected: numberFrom(data.totalSelected),
     needsManagementReview: numberFrom(data.needsManagementReview),
     totalDisqualified: numberFrom(data.totalDisqualified),
@@ -60,7 +46,7 @@ function normalizeKpis(payload: any): KpiData {
     generalProofread: numberFrom(data.generalProofread),
     literaryProofread: numberFrom(data.literaryProofread),
     finalReady: numberFrom(data.finalReady),
-    activeAssignments: numberFrom(data.activeAssignments),
+    totalClosed: numberFrom(data.totalClosed),
   };
 }
 
@@ -108,7 +94,7 @@ export function KpiHeader() {
 
   const cards = [
     { label: "Total Submissions", value: kpis.totalSubmissions },
-    { label: "ADEK Evaluated", value: kpis.adekEvaluated },
+    { label: "ADEK Evaluated", value: kpis.completedAdekEvaluations },
     { label: "Total Selected", value: kpis.totalSelected },
     { label: "Needs Mgmt", value: kpis.needsManagementReview },
     { label: "Total Disqualified", value: kpis.totalDisqualified },
