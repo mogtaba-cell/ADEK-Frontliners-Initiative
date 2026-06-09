@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ProofreaderType, Role, WorkflowPhase } from "@/lib/types";
 import { labelPhase, labelWorkflowStatus, statusClassName } from "@/lib/workflow";
 
@@ -23,51 +23,6 @@ type Assignment = {
   submissions?: any;
   task_history?: any[];
 };
-
-
-const ACTIONABLE_ASSIGNMENT_STATUSES = new Set(["assigned", "in_progress"]);
-const FINAL_WORKFLOW_STATUSES = new Set(["completed", "disqualified"]);
-
-function isAssignmentActionable(assignment: Assignment | null | undefined, submission: any) {
-  if (!assignment || !submission) return false;
-
-  return (
-    ACTIONABLE_ASSIGNMENT_STATUSES.has(String(assignment.status ?? "")) &&
-    !FINAL_WORKFLOW_STATUSES.has(String(submission.workflow_status ?? ""))
-  );
-}
-
-function getNonActionableReason(assignment: Assignment | null | undefined, submission: any) {
-  if (!assignment || !submission) {
-    return "Select an active task before submitting a decision.";
-  }
-
-  const workflowStatus = String(submission.workflow_status ?? "");
-  const assignmentStatus = String(assignment.status ?? "");
-  const decision = String(assignment.decision ?? "");
-
-  if (workflowStatus === "completed") {
-    return "This artwork is already completed. No further decision can be submitted.";
-  }
-
-  if (workflowStatus === "disqualified") {
-    return "This artwork is already disqualified. No further decision can be submitted.";
-  }
-
-  if (assignmentStatus === "returned_for_correction" && decision === "needs_correction") {
-    return "Your correction request has already been submitted and is waiting for coordinator action. You can submit again only if a new task is returned to you.";
-  }
-
-  if (assignmentStatus === "completed") {
-    return "Your decision for this task has already been submitted and finalized.";
-  }
-
-  if (assignmentStatus === "cancelled") {
-    return "This task was cancelled by the workflow and can no longer be submitted.";
-  }
-
-  return "This task is not currently actionable. Refresh the workspace to load your latest active assignments.";
-}
 
 const correctionReasonLabels: Record<string, string> = {
   artwork_mismatch:
@@ -703,7 +658,7 @@ function CoordinatorUpdatedArtworkUpload({
 export function WorkspaceClient({
   phase,
   role,
-  assignments,
+  assignments: initialAssignments,
   currentPath,
   proofreaderType,
   loadMoreUrl,
@@ -721,17 +676,14 @@ export function WorkspaceClient({
   initialPage?: number;
   pageSize?: number;
 }) {
-  const [loadedAssignments, setLoadedAssignments] = useState<Assignment[]>(assignments);
-  const [selectedId, setSelectedId] = useState<string | null>(
-    assignments[0]?.id ?? null
-  );
+  const [assignments, setAssignments] = useState<Assignment[]>(initialAssignments);
   const [hasMoreAssignments, setHasMoreAssignments] = useState(initialHasMore);
-  const [nextPageToLoad, setNextPageToLoad] = useState(initialPage + 1);
+  const [nextPage, setNextPage] = useState(initialPage + 1);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
-  const [taskActionError, setTaskActionError] = useState<string | null>(null);
-  const [taskActionSuccess, setTaskActionSuccess] = useState<string | null>(null);
-  const [isSubmittingTaskAction, setIsSubmittingTaskAction] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    initialAssignments[0]?.id ?? null
+  );
 
   const [adekFileQualityClear, setAdekFileQualityClear] = useState("yes");
   const [culturalAuthenticity, setCulturalAuthenticity] = useState("yes");
@@ -747,54 +699,75 @@ export function WorkspaceClient({
   const [returnPath, setReturnPath] = useState(currentPath);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    setReturnPath(`${window.location.pathname}${window.location.search}`);
-  }, [currentPath]);
-
-  useEffect(() => {
-    setLoadedAssignments(assignments);
+    setAssignments(initialAssignments);
     setHasMoreAssignments(initialHasMore);
-    setNextPageToLoad(initialPage + 1);
+    setNextPage(initialPage + 1);
+    setLoadMoreError(null);
+    setSelectedId(initialAssignments[0]?.id ?? null);
+  }, [initialAssignments, initialHasMore, initialPage]);
+
+  async function handleLoadMore() {
+    if (!loadMoreUrl || isLoadingMore || !hasMoreAssignments) return;
+
+    setIsLoadingMore(true);
     setLoadMoreError(null);
 
-    if (!assignments.length) {
-      setSelectedId(null);
-      return;
-    }
+    try {
+      const separator = loadMoreUrl.includes("?") ? "&" : "?";
+      const response = await fetch(`${loadMoreUrl}${separator}page=${nextPage}`, {
+        headers: { Accept: "application/json" },
+      });
 
-    setSelectedId((currentSelectedId) =>
-      currentSelectedId && assignments.some((assignment) => assignment.id === currentSelectedId)
-        ? currentSelectedId
-        : assignments[0].id,
-    );
-  }, [assignments, initialHasMore, initialPage]);
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Failed to load more artworks.");
+      }
+
+      const nextAssignments: Assignment[] = Array.isArray(payload?.assignments)
+        ? payload.assignments
+        : [];
+
+      setAssignments((current) => {
+        const existingIds = new Set(current.map((assignment) => assignment.id));
+        const uniqueNext = nextAssignments.filter(
+          (assignment) => !existingIds.has(assignment.id),
+        );
+
+        return [...current, ...uniqueNext];
+      });
+
+      setHasMoreAssignments(Boolean(payload?.hasNextPage));
+      setNextPage(Number(payload?.page ?? nextPage) + 1);
+    } catch (error: any) {
+      setLoadMoreError(error?.message ?? "Failed to load more artworks.");
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }
 
   const selectedAssignment = useMemo(
     () =>
-      loadedAssignments.find((assignment) => assignment.id === selectedId) ??
-      loadedAssignments[0] ??
+      assignments.find((assignment) => assignment.id === selectedId) ??
+      assignments[0] ??
       null,
-    [loadedAssignments, selectedId]
+    [assignments, selectedId]
   );
 
   const selectedSubmission = selectedAssignment?.submissions ?? null;
   const derived = selectedSubmission ? getDerivedFields(selectedSubmission) : null;
   const selectedIsLiteraryExpression = isLiteraryExpressionsSubmission(selectedSubmission);
-  const selectedAssignmentIsActionable = isAssignmentActionable(
-    selectedAssignment,
-    selectedSubmission,
-  );
-  const selectedAssignmentNonActionableReason = getNonActionableReason(
-    selectedAssignment,
-    selectedSubmission,
-  );
 
   useEffect(() => {
-    setTaskActionError(null);
-    setTaskActionSuccess(null);
-    setIsSubmittingTaskAction(false);
-  }, [selectedAssignment?.id]);
+    if (!assignments.length) {
+      setSelectedId(null);
+      return;
+    }
+
+    if (!selectedId || !assignments.some((assignment) => assignment.id === selectedId)) {
+      setSelectedId(assignments[0].id);
+    }
+  }, [assignments, selectedId]);
 
   useEffect(() => {
     if (!selectedSubmission) return;
@@ -822,105 +795,6 @@ export function WorkspaceClient({
     );
   }, [selectedSubmission?.id]);
 
-  async function handleTaskSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!selectedAssignmentIsActionable) {
-      setTaskActionError(selectedAssignmentNonActionableReason);
-      return;
-    }
-
-    const form = event.currentTarget;
-    const formData = new FormData(form);
-
-    setIsSubmittingTaskAction(true);
-    setTaskActionError(null);
-    setTaskActionSuccess(null);
-
-    try {
-      const response = await fetch(form.action, {
-        method: "POST",
-        body: formData,
-        headers: { Accept: "application/json" },
-      });
-
-      if (response.redirected) {
-        window.location.href = response.url;
-        return;
-      }
-
-      if (!response.ok) {
-        const contentType = response.headers.get("content-type") ?? "";
-        let message = "This task could not be submitted. Please refresh and try again.";
-
-        if (contentType.includes("application/json")) {
-          const payload = await response.json().catch(() => null);
-          message = payload?.error || payload?.message || message;
-        } else {
-          const text = await response.text().catch(() => "");
-          message = text.trim() || message;
-        }
-
-        setTaskActionError(message);
-        setIsSubmittingTaskAction(false);
-        return;
-      }
-
-      setTaskActionSuccess("Decision submitted. Refreshing your workspace...");
-      window.location.href = returnPath || window.location.href;
-    } catch (error) {
-      setTaskActionError(
-        error instanceof Error
-          ? error.message
-          : "This task could not be submitted. Please refresh and try again.",
-      );
-      setIsSubmittingTaskAction(false);
-    }
-  }
-
-  async function handleLoadMore() {
-    if (!loadMoreUrl || isLoadingMore || !hasMoreAssignments) return;
-
-    setIsLoadingMore(true);
-    setLoadMoreError(null);
-
-    try {
-      const separator = loadMoreUrl.includes("?") ? "&" : "?";
-      const response = await fetch(`${loadMoreUrl}${separator}page=${nextPageToLoad}`, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-      });
-
-      if (!response.ok) {
-        throw new Error("Could not load more artworks. Please try again.");
-      }
-
-      const payload = (await response.json()) as {
-        assignments?: Assignment[];
-        hasNextPage?: boolean;
-        page?: number;
-      };
-
-      const nextAssignments = payload.assignments ?? [];
-
-      setLoadedAssignments((currentAssignments) => {
-        const existingIds = new Set(currentAssignments.map((assignment) => assignment.id));
-        const uniqueNextAssignments = nextAssignments.filter(
-          (assignment) => !existingIds.has(assignment.id),
-        );
-
-        return [...currentAssignments, ...uniqueNextAssignments];
-      });
-
-      setHasMoreAssignments(Boolean(payload.hasNextPage));
-      setNextPageToLoad((payload.page ?? nextPageToLoad) + 1);
-    } catch (error) {
-      setLoadMoreError(error instanceof Error ? error.message : "Could not load more artworks.");
-    } finally {
-      setIsLoadingMore(false);
-    }
-  }
-
   const liveAdekDecision = calculateAdekDecisionLabel(
     culturalAuthenticity,
     artisticExcellence,
@@ -940,13 +814,13 @@ export function WorkspaceClient({
         <div className="workspace-sidebar-header">
           <h2>Assigned Artworks</h2>
           <p className="muted small">
-            {loadedAssignments.length} artwork{loadedAssignments.length === 1 ? "" : "s"} loaded
-            in this view.
+            {assignments.length} artwork{assignments.length === 1 ? "" : "s"} in
+            this view.
           </p>
         </div>
 
         <div className="workspace-list">
-          {loadedAssignments.map((assignment, index) => {
+          {assignments.map((assignment, index) => {
             const submission = assignment.submissions;
             const fields = submission ? getDerivedFields(submission) : null;
             const isSelected = assignment.id === selectedAssignment?.id;
@@ -994,20 +868,16 @@ export function WorkspaceClient({
             );
           })}
 
-          {loadedAssignments.length === 0 && (
+          {assignments.length === 0 && (
             <div className="workspace-empty">
               No artworks match the selected filters.
             </div>
           )}
+        </div>
 
-          {loadMoreError && (
-            <div className="workspace-empty">
-              <p className="muted small">{loadMoreError}</p>
-            </div>
-          )}
-
-          {loadMoreUrl && hasMoreAssignments && (
-            <div className="actions" style={{ padding: "0.75rem" }}>
+        {loadMoreUrl && (hasMoreAssignments || loadMoreError) && (
+          <div className="actions" style={{ padding: 12, justifyContent: "center" }}>
+            {hasMoreAssignments && (
               <button
                 className="btn secondary"
                 type="button"
@@ -1016,9 +886,15 @@ export function WorkspaceClient({
               >
                 {isLoadingMore ? "Loading..." : `Load next ${pageSize}`}
               </button>
-            </div>
-          )}
-        </div>
+            )}
+
+            {loadMoreError && (
+              <p className="muted small" style={{ margin: 0 }}>
+                {loadMoreError}
+              </p>
+            )}
+          </div>
+        )}
       </aside>
 
       <section className="workspace-main">
@@ -1269,7 +1145,6 @@ export function WorkspaceClient({
               className="card workspace-task-action-box"
               action="/api/work/complete"
               method="post"
-              onSubmit={handleTaskSubmit}
             >
               <input type="hidden" name="assignment_id" value={selectedAssignment.id} />
               <input type="hidden" name="submission_id" value={selectedSubmission.id} />
@@ -1281,66 +1156,6 @@ export function WorkspaceClient({
                 value={proofreaderType ?? ""}
               />
 
-              {!selectedAssignmentIsActionable && (
-                <div
-                  className="card"
-                  style={{
-                    marginTop: 0,
-                    marginBottom: 16,
-                    boxShadow: "none",
-                    borderColor: "rgba(180, 83, 9, 0.35)",
-                    background: "rgba(251, 191, 36, 0.08)",
-                  }}
-                >
-                  <h4 style={{ marginTop: 0 }}>No action needed</h4>
-                  <p className="muted small" style={{ marginBottom: 0 }}>
-                    {selectedAssignmentNonActionableReason}
-                  </p>
-                </div>
-              )}
-
-              {taskActionError && (
-                <div
-                  className="card"
-                  role="alert"
-                  style={{
-                    marginTop: 0,
-                    marginBottom: 16,
-                    boxShadow: "none",
-                    borderColor: "rgba(185, 28, 28, 0.35)",
-                    background: "rgba(254, 226, 226, 0.7)",
-                  }}
-                >
-                  <h4 style={{ marginTop: 0 }}>Could not submit decision</h4>
-                  <p className="muted small" style={{ marginBottom: 0 }}>
-                    {taskActionError}
-                  </p>
-                </div>
-              )}
-
-              {taskActionSuccess && (
-                <div
-                  className="card"
-                  role="status"
-                  style={{
-                    marginTop: 0,
-                    marginBottom: 16,
-                    boxShadow: "none",
-                    borderColor: "rgba(21, 128, 61, 0.35)",
-                    background: "rgba(220, 252, 231, 0.7)",
-                  }}
-                >
-                  <h4 style={{ marginTop: 0 }}>Decision submitted</h4>
-                  <p className="muted small" style={{ marginBottom: 0 }}>
-                    {taskActionSuccess}
-                  </p>
-                </div>
-              )}
-
-              <fieldset
-                disabled={!selectedAssignmentIsActionable || isSubmittingTaskAction}
-                style={{ border: 0, margin: 0, padding: 0 }}
-              >
               <div className="task-action-header">
                 <div>
                   <h3 style={{ marginTop: 0 }}>Task Action</h3>
@@ -1750,15 +1565,9 @@ export function WorkspaceClient({
 
               {phase === "management_review" && (
                 <>
-                  {selectedIsLiteraryExpression && (
-                    <input type="hidden" name="management_decision" value="approved" />
-                  )}
-
                   {selectedIsLiteraryExpression ? (
-                    <p className="muted small" style={{ marginTop: 0 }}>
-                      Choose whether to send this Literary Expressions submission to
-                      literary proofreading, save it as pending, or disqualify it.
-                    </p>
+                    <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
+                    </div>
                   ) : (
                     <label>
                       <span className="small">Management Decision</span>
@@ -1850,25 +1659,14 @@ export function WorkspaceClient({
                   </button>
                 ) : phase === "literary_proofreading" ? (
                   literaryPublicationSuitable === "no" ? (
-                    <>
-                      <button
-                        className="btn"
-                        type="submit"
-                        name="literary_action"
-                        value="disqualify"
-                      >
-                        Disqualify Artwork
-                      </button>
-
-                      <button
-                        className="btn secondary"
-                        type="submit"
-                        name="literary_action"
-                        value="needs_correction"
-                      >
-                        Send for Correction
-                      </button>
-                    </>
+                    <button
+                      className="btn"
+                      type="submit"
+                      name="literary_action"
+                      value="needs_review"
+                    >
+                      Needs Review
+                    </button>
                   ) : (
                     <>
                       <button
@@ -1961,7 +1759,6 @@ export function WorkspaceClient({
                   </button>
                 )}
               </div>
-              </fieldset>
             </form>
 
             <TaskHistory history={selectedAssignment.task_history ?? []} />

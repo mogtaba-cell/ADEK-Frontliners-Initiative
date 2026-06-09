@@ -179,33 +179,6 @@ function getPositiveIntegerParam(
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function buildWorkspacePagePath(
-  role: Role,
-  searchParams: Record<string, string | string[] | undefined>,
-  page: number,
-) {
-  const params = new URLSearchParams();
-
-  for (const [key, value] of Object.entries(searchParams)) {
-    if (key === "refresh") continue;
-
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        if (item !== undefined && item !== "") params.append(key, item);
-      }
-      continue;
-    }
-
-    if (value !== undefined && value !== "") params.set(key, value);
-  }
-
-  params.set("page", String(Math.max(1, page)));
-
-  const query = params.toString();
-  const path = pathForWorkspaceRole(role);
-  return query ? `${path}?${query}` : path;
-}
-
 function chunkArray<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
 
@@ -269,7 +242,6 @@ function buildWorkspaceQueueApiPath(
   return `/api/workspace/queue?${params.toString()}`;
 }
 
-
 function formatViewLabel(view: string) {
   if (view === "not_completed") return "not completed";
   if (view === "returned_for_correction") return "returned for correction";
@@ -286,9 +258,6 @@ function isProofreadingPhase(phase: WorkflowPhase) {
 }
 
 function statusesForView(phase: WorkflowPhase, view: string) {
-  // Coordinator queue should list active assigned artwork tasks only.
-  // Completed coordinator correction rows remain visible in Task Flow/history,
-  // but should not create duplicate artwork cards in the left workspace list.
   if (phase === "coordinator_check" && view === "all") {
     return ["assigned", "in_progress"];
   }
@@ -302,13 +271,9 @@ function statusesForView(phase: WorkflowPhase, view: string) {
   }
 
   if (view === "needs_review") {
-    return phase === "management_review" ? ["assigned"] : ["completed"];
-  }
-
-  if (view === "pending") {
     return phase === "management_review"
-      ? ["in_progress"]
-      : ["assigned", "in_progress"];
+      ? ["assigned", "in_progress"]
+      : ["completed"];
   }
 
   if (view === "sent_for_review") return ["sent_for_review"];
@@ -332,9 +297,6 @@ function applySubmissionWorkflowGate(
   _phase: WorkflowPhase,
   view: string,
 ) {
-  // Once a coordinator disqualifies a submission, it must not remain in any
-  // active/pending queue. Completed/disqualified history remains available
-  // through the Disqualified/Completed views and Task Flow.
   const activeQueueViews = new Set([
     "not_completed",
     "pending",
@@ -356,12 +318,7 @@ function applyDecisionGate(query: any, phase: WorkflowPhase, view: string) {
   if (view === "approved") return query.eq("decision", "approved");
   if (view === "disqualified") return query.eq("decision", "disqualified");
 
-  if (phase === "management_review") {
-    if (view === "needs_review") return query.is("decision", null);
-    if (view === "pending") return query.eq("decision", "pending");
-  }
-
-  if (view === "needs_review") {
+  if (view === "needs_review" && phase !== "management_review") {
     return query.eq("decision", "needs_review");
   }
 
@@ -404,6 +361,58 @@ function applyProofreaderTypeGate(
   }
 
   return query;
+}
+
+
+function submissionSelectFieldsForPhase(phase: WorkflowPhase) {
+  const baseFields = [
+    "id",
+    "reference_id",
+    "registration_id",
+    "registration_status",
+    "workflow_status",
+    "institution_name",
+    "institution_ref_number",
+    "institution_type",
+    "school_region",
+    "group_name",
+    "art_pathway_name_en",
+    "art_pathway_name_ar",
+    "art_sub_pathway_name_en",
+    "art_sub_pathway_name_ar",
+    "artwork_title_en",
+    "artwork_title_ar",
+    "description_en",
+    "description_ar",
+    "influence_idea_source",
+    "most_enjoyable_part",
+    "focused_elements",
+    "participating_students_names",
+    "participating_students_esis_numbers",
+    "participating_students_genders",
+    "participating_students_grades",
+    "participating_students_nationalities",
+    "art_link",
+    "updated_artwork_file_name",
+    "updated_artwork_file_url",
+    "submission_date",
+    "submission_date_value",
+    "artistic_rating",
+    "management_artistic_rating",
+    "evaluator_comment",
+    "evaluator_file_quality_clear",
+    "literary_publication_suitable",
+    "literary_proofreader_comment",
+    "literary_updated_content",
+  ];
+
+  // raw_data is one of the largest columns. Keep it only where the UI compares
+  // original imported text with updated/proofread text during final review.
+  if (phase === "final_review") {
+    baseFields.push("raw_data");
+  }
+
+  return baseFields.join(",\n        ");
 }
 
 function buildAssignmentRowsQuery({
@@ -456,45 +465,7 @@ function buildAssignmentRowsQuery({
       coordinator_waiting_for_response,
       coordinator_waiting_for_response_at,
       submissions!inner(
-        id,
-        reference_id,
-        registration_id,
-        registration_status,
-        workflow_status,
-        institution_name,
-        institution_ref_number,
-        institution_type,
-        school_region,
-        group_name,
-        art_pathway_name_en,
-        art_pathway_name_ar,
-        art_sub_pathway_name_en,
-        art_sub_pathway_name_ar,
-        artwork_title_en,
-        artwork_title_ar,
-        description_en,
-        description_ar,
-        influence_idea_source,
-        most_enjoyable_part,
-        focused_elements,
-        participating_students_names,
-        participating_students_esis_numbers,
-        participating_students_genders,
-        participating_students_grades,
-        participating_students_nationalities,
-        art_link,
-        updated_artwork_file_name,
-        updated_artwork_file_url,
-        submission_date,
-        submission_date_value,
-        artistic_rating,
-        management_artistic_rating,
-        evaluator_comment,
-        evaluator_file_quality_clear,
-        literary_publication_suitable,
-        literary_proofreader_comment,
-        literary_updated_content,
-        raw_data
+        ${submissionSelectFieldsForPhase(phase)}
       )
       `,
     )
@@ -560,9 +531,9 @@ async function fetchAssignmentRowsPage({
   search?: string;
   page: number;
 }) {
-  // Fetch one extra row so the workspace can show a fast Next button
-  // without asking Postgres/Supabase for an expensive exact count.
   const from = (Math.max(1, page) - 1) * WORKSPACE_PAGE_SIZE;
+  // Request one extra row so we can know whether Load next is available
+  // without running an exact count on every workspace load.
   const to = from + WORKSPACE_PAGE_SIZE;
 
   const { data, error } = await buildAssignmentRowsQuery({
@@ -851,7 +822,6 @@ function ViewOptions({
     return (
       <>
         <option value="needs_review">Needs Review</option>
-        <option value="pending">Pending</option>
         <option value="approved">Approved</option>
         <option value="disqualified">Disqualified</option>
         <option value="all">All</option>
@@ -1082,9 +1052,8 @@ export async function WorkQueuePage({
     task_history: historyBySubmission[assignment.submission_id] ?? [],
   }));
 
-  const totalResultsLabel = hasNextPage
-    ? `${assignments.length} shown on page ${currentPage}+`
-    : `${assignments.length} shown on page ${currentPage}`;
+  const pageStart = assignments.length ? (currentPage - 1) * WORKSPACE_PAGE_SIZE + 1 : 0;
+  const pageEnd = (currentPage - 1) * WORKSPACE_PAGE_SIZE + assignments.length;
 
   const kpiGridClass =
     kpiCards.length >= 5
@@ -1117,6 +1086,7 @@ export async function WorkQueuePage({
         <h2>Workspace Filters</h2>
 
         <form className="grid grid-4" action="" method="get">
+          <input type="hidden" name="page" value="1" />
           <label>
             <span className="small">Pathway</span>
             <select className="input" name="pathway" defaultValue={pathway}>
@@ -1220,7 +1190,9 @@ export async function WorkQueuePage({
               )?.label ?? school}
             </span>
           )}
-          <span className="pill">Results: {totalResultsLabel}</span>
+          <span className="pill">
+            Results: {assignments.length ? `${pageStart}-${pageEnd}${hasNextPage ? "+" : ""}` : "0"}
+          </span>
         </div>
       </div>
 

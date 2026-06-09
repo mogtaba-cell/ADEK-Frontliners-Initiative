@@ -77,14 +77,62 @@ function defaultViewForPhase(phase: WorkflowPhase) {
   return "not_completed";
 }
 
+function submissionSelectFieldsForPhase(phase: WorkflowPhase) {
+  const baseFields = [
+    "id",
+    "reference_id",
+    "registration_id",
+    "registration_status",
+    "workflow_status",
+    "institution_name",
+    "institution_ref_number",
+    "institution_type",
+    "school_region",
+    "group_name",
+    "art_pathway_name_en",
+    "art_pathway_name_ar",
+    "art_sub_pathway_name_en",
+    "art_sub_pathway_name_ar",
+    "artwork_title_en",
+    "artwork_title_ar",
+    "description_en",
+    "description_ar",
+    "influence_idea_source",
+    "most_enjoyable_part",
+    "focused_elements",
+    "participating_students_names",
+    "participating_students_esis_numbers",
+    "participating_students_genders",
+    "participating_students_grades",
+    "participating_students_nationalities",
+    "art_link",
+    "updated_artwork_file_name",
+    "updated_artwork_file_url",
+    "submission_date",
+    "submission_date_value",
+    "artistic_rating",
+    "management_artistic_rating",
+    "evaluator_comment",
+    "evaluator_file_quality_clear",
+    "literary_publication_suitable",
+    "literary_proofreader_comment",
+    "literary_updated_content",
+  ];
+
+  // raw_data is one of the largest columns. Keep it only where the UI compares
+  // original imported text with updated/proofread text during final review.
+  if (phase === "final_review") {
+    baseFields.push("raw_data");
+  }
+
+  return baseFields.join(",\n        ");
+}
+
 function applySubmissionWorkflowGate(
   query: any,
   _phase: WorkflowPhase,
   view: string,
 ) {
-  // Once a coordinator disqualifies a submission, it must not remain in any
-  // active/pending queue. Completed/disqualified history remains available
-  // through the Disqualified/Completed views and Task Flow.
   const activeQueueViews = new Set([
     "not_completed",
     "pending",
@@ -219,45 +267,7 @@ function buildAssignmentRowsQuery({
       coordinator_waiting_for_response,
       coordinator_waiting_for_response_at,
       submissions!inner(
-        id,
-        reference_id,
-        registration_id,
-        registration_status,
-        workflow_status,
-        institution_name,
-        institution_ref_number,
-        institution_type,
-        school_region,
-        group_name,
-        art_pathway_name_en,
-        art_pathway_name_ar,
-        art_sub_pathway_name_en,
-        art_sub_pathway_name_ar,
-        artwork_title_en,
-        artwork_title_ar,
-        description_en,
-        description_ar,
-        influence_idea_source,
-        most_enjoyable_part,
-        focused_elements,
-        participating_students_names,
-        participating_students_esis_numbers,
-        participating_students_genders,
-        participating_students_grades,
-        participating_students_nationalities,
-        art_link,
-        updated_artwork_file_name,
-        updated_artwork_file_url,
-        submission_date,
-        submission_date_value,
-        artistic_rating,
-        management_artistic_rating,
-        evaluator_comment,
-        evaluator_file_quality_clear,
-        literary_publication_suitable,
-        literary_proofreader_comment,
-        literary_updated_content,
-        raw_data
+        ${submissionSelectFieldsForPhase(phase)}
       )
       `,
     )
