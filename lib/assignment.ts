@@ -587,38 +587,37 @@ export async function countUnassignedAdekSubmissions() {
       .from("submissions")
       .select("id")
       .eq("registration_status", "Submitted")
-      .range(from, to)
+      .eq("workflow_status", "ready_for_adek")
+      .range(from, to),
   );
 
   const submissionIds = submissions.map((row) => row.id).filter(Boolean);
-  if (!submissionIds.length) return 0;
 
-  const assignedIds = new Set<string>();
+  if (!submissionIds.length) {
+    return 0;
+  }
 
-  for (const chunk of chunkArray(
-    submissionIds,
-    SUPABASE_IN_FILTER_CHUNK_SIZE
-  )) {
-    const assignments = await fetchAllRows<{
-      submission_id: string | null;
-      status: string | null;
-    }>((from, to) =>
+  const assignedSubmissionIds = new Set<string>();
+
+  for (const chunk of chunkArray(submissionIds, SUPABASE_IN_FILTER_CHUNK_SIZE)) {
+    const assignments = await fetchAllRows<{ submission_id: string | null }>((from, to) =>
       supabaseAdmin
         .from("assignments")
-        .select("submission_id,status")
+        .select("submission_id")
         .eq("phase", "adek_evaluation")
+        .in("status", ["assigned", "in_progress"])
         .in("submission_id", chunk)
-        .range(from, to)
+        .range(from, to),
     );
 
-    for (const row of assignments) {
-      if (row.submission_id && !isCancelledStatus(row.status)) {
-        assignedIds.add(row.submission_id);
+    for (const assignment of assignments) {
+      if (assignment.submission_id) {
+        assignedSubmissionIds.add(assignment.submission_id);
       }
     }
   }
 
-  return submissionIds.filter((id) => !assignedIds.has(id)).length;
+  return submissionIds.filter((id) => !assignedSubmissionIds.has(id)).length;
 }
 
 export async function getEvaluatorAssignmentWorkloads() {
