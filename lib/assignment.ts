@@ -589,13 +589,42 @@ type CleanAdekCandidateSubmission = {
   updated_at: string | null;
 };
 
-const disqualificationEvidenceOrFilter = [
-  "decision.ilike.%disqual%",
-  "status.ilike.%disqual%",
-  "coordinator_comment.ilike.%disqual%",
-  "correction_reason.ilike.%disqual%",
-  "correction_notes.ilike.%disqual%",
-].join(",");
+type AssignmentDisqualificationEvidenceRow = {
+  submission_id: string | null;
+  status: string | null;
+  decision: string | null;
+  coordinator_comment: string | null;
+  correction_reason: string | null;
+  correction_notes: string | null;
+};
+
+const DISQUALIFY_TEXT_MARKER = "disqual";
+
+const DISQUALIFY_DECISION_VALUES = new Set([
+  "disqualified",
+  "disqualified_by_management",
+  "cancelled_after_disqualification",
+  "cancelled_after_coordinator_disqualification",
+  "cancelled_after_prior_coordinator_disqualification",
+  "cancelled_after_literary_disqualification",
+  "cancelled_after_management_disqualification",
+]);
+
+function rowHasDisqualificationEvidence(
+  row: Pick<
+    AssignmentDisqualificationEvidenceRow,
+    "decision" | "coordinator_comment" | "correction_reason" | "correction_notes"
+  >
+) {
+  const decision = String(row.decision ?? "").toLowerCase();
+
+  if (DISQUALIFY_DECISION_VALUES.has(decision)) return true;
+  if (decision.includes(DISQUALIFY_TEXT_MARKER)) return true;
+
+  return [row.coordinator_comment, row.correction_reason, row.correction_notes].some(
+    (value) => String(value ?? "").toLowerCase().includes(DISQUALIFY_TEXT_MARKER)
+  );
+}
 
 async function getCleanReadyForAdekSubmissions(options?: {
   submissionIds?: string[];
@@ -668,19 +697,16 @@ async function getCleanReadyForAdekSubmissions(options?: {
       }
     }
 
-    const disqualificationEvidence = await fetchAllRows<{
-      submission_id: string | null;
-    }>((from, to) =>
+    const assignmentHistory = await fetchAllRows<AssignmentDisqualificationEvidenceRow>((from, to) =>
       supabaseAdmin
         .from("assignments")
-        .select("submission_id")
+        .select("submission_id,status,decision,coordinator_comment,correction_reason,correction_notes")
         .in("submission_id", chunk)
-        .or(disqualificationEvidenceOrFilter)
         .range(from, to)
     );
 
-    for (const assignment of disqualificationEvidence) {
-      if (assignment.submission_id) {
+    for (const assignment of assignmentHistory) {
+      if (assignment.submission_id && rowHasDisqualificationEvidence(assignment)) {
         blockedSubmissionIds.add(assignment.submission_id);
       }
     }
