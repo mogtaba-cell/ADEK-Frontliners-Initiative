@@ -87,7 +87,7 @@ function eligibleStatusForPhase(phase: WorkflowPhase) {
   if (phase === "coordinator_check") return ["returned_for_correction"];
   if (phase === "management_review") return ["needs_management_review"];
   if (phase === "proofreading") return ["selected_for_proofreading"];
-  if (phase === "literary_proofreading") return ["selected_for_proofreading"];
+  if (phase === "literary_proofreading") return ["selected_for_proofreading", "proofreading_done"];
   if (phase === "final_review") return ["proofreading_done"];
 
   return [];
@@ -581,43 +581,117 @@ async function hasActivePhaseAssignment(
   return (count ?? 0) > 0;
 }
 
-export async function countUnassignedAdekSubmissions() {
-  const submissions = await fetchAllRows<{ id: string }>((from, to) =>
-    supabaseAdmin
-      .from("submissions")
-      .select("id")
-      .eq("registration_status", "Submitted")
-      .eq("workflow_status", "ready_for_adek")
-      .range(from, to),
+
+type CleanAdekCandidateSubmission = {
+  id: string;
+  reference_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+const disqualificationEvidenceOrFilter = [
+  "decision.ilike.%disqual%",
+  "status.ilike.%disqual%",
+  "coordinator_comment.ilike.%disqual%",
+  "correction_reason.ilike.%disqual%",
+  "correction_notes.ilike.%disqual%",
+].join(",");
+
+async function getCleanReadyForAdekSubmissions(options?: {
+  submissionIds?: string[];
+}) {
+  const requestedIds = Array.from(
+    new Set((options?.submissionIds ?? []).filter(Boolean))
   );
 
-  const submissionIds = submissions.map((row) => row.id).filter(Boolean);
+  const submissions: CleanAdekCandidateSubmission[] = [];
 
-  if (!submissionIds.length) {
-    return 0;
+  if (requestedIds.length) {
+    for (const chunk of chunkArray(requestedIds, SUPABASE_IN_FILTER_CHUNK_SIZE)) {
+      const rows = await fetchAllRows<CleanAdekCandidateSubmission>((from, to) =>
+        supabaseAdmin
+          .from("submissions")
+          .select("id,reference_id,created_at,updated_at")
+          .eq("registration_status", "Submitted")
+          .eq("workflow_status", "ready_for_adek")
+          .is("evaluation_decision", null)
+          .is("management_decision", null)
+          .is("reviewer_decision", null)
+          .is("coordinator_disqualification_reason", null)
+          .in("id", chunk)
+          .order("created_at", { ascending: true })
+          .order("reference_id", { ascending: true })
+          .range(from, to)
+      );
+
+      submissions.push(...rows);
+    }
+  } else {
+    submissions.push(
+      ...(await fetchAllRows<CleanAdekCandidateSubmission>((from, to) =>
+        supabaseAdmin
+          .from("submissions")
+          .select("id,reference_id,created_at,updated_at")
+          .eq("registration_status", "Submitted")
+          .eq("workflow_status", "ready_for_adek")
+          .is("evaluation_decision", null)
+          .is("management_decision", null)
+          .is("reviewer_decision", null)
+          .is("coordinator_disqualification_reason", null)
+          .order("created_at", { ascending: true })
+          .order("reference_id", { ascending: true })
+          .range(from, to)
+      ))
+    );
   }
 
-  const assignedSubmissionIds = new Set<string>();
+  const submissionIds = submissions.map((submission) => submission.id).filter(Boolean);
+  if (!submissionIds.length) return [];
+
+  const blockedSubmissionIds = new Set<string>();
 
   for (const chunk of chunkArray(submissionIds, SUPABASE_IN_FILTER_CHUNK_SIZE)) {
-    const assignments = await fetchAllRows<{ submission_id: string | null }>((from, to) =>
+    if (!chunk.length) continue;
+
+    const activeAssignments = await fetchAllRows<{ submission_id: string | null }>((from, to) =>
       supabaseAdmin
         .from("assignments")
         .select("submission_id")
-        .eq("phase", "adek_evaluation")
-        .in("status", ["assigned", "in_progress"])
         .in("submission_id", chunk)
-        .range(from, to),
+        .in("status", ["assigned", "in_progress"])
+        .range(from, to)
     );
 
-    for (const assignment of assignments) {
+    for (const assignment of activeAssignments) {
       if (assignment.submission_id) {
-        assignedSubmissionIds.add(assignment.submission_id);
+        blockedSubmissionIds.add(assignment.submission_id);
+      }
+    }
+
+    const disqualificationEvidence = await fetchAllRows<{
+      submission_id: string | null;
+    }>((from, to) =>
+      supabaseAdmin
+        .from("assignments")
+        .select("submission_id")
+        .in("submission_id", chunk)
+        .or(disqualificationEvidenceOrFilter)
+        .range(from, to)
+    );
+
+    for (const assignment of disqualificationEvidence) {
+      if (assignment.submission_id) {
+        blockedSubmissionIds.add(assignment.submission_id);
       }
     }
   }
 
-  return submissionIds.filter((id) => !assignedSubmissionIds.has(id)).length;
+  return submissions.filter((submission) => !blockedSubmissionIds.has(submission.id));
+}
+
+export async function countUnassignedAdekSubmissions() {
+  const cleanUnassignedSubmissions = await getCleanReadyForAdekSubmissions();
+  return cleanUnassignedSubmissions.length;
 }
 
 export async function getEvaluatorAssignmentWorkloads() {
@@ -760,58 +834,11 @@ export async function assignAdekToEvaluatorQuantities(
     0
   );
 
-  const submissions = await fetchAllRows<{
-    id: string;
-    reference_id: string | null;
-    created_at: string | null;
-  }>((from, to) =>
-    supabaseAdmin
-      .from("submissions")
-      .select("id,reference_id,created_at")
-      .eq("registration_status", "Submitted")
-      .order("created_at", { ascending: true })
-      .order("reference_id", { ascending: true })
-      .range(from, to)
-  );
-
-  const submissionIds = submissions
-    .map((submission) => submission.id)
-    .filter(Boolean);
-
-  const alreadyAssigned = new Set<string>();
-
-  for (const chunk of chunkArray(
-    submissionIds,
-    SUPABASE_IN_FILTER_CHUNK_SIZE
-  )) {
-    if (!chunk.length) continue;
-
-    const assignments = await fetchAllRows<{
-      submission_id: string | null;
-      status: string | null;
-    }>((from, to) =>
-      supabaseAdmin
-        .from("assignments")
-        .select("submission_id,status")
-        .eq("phase", "adek_evaluation")
-        .in("submission_id", chunk)
-        .range(from, to)
-    );
-
-    for (const row of assignments) {
-      if (row.submission_id && !isCancelledStatus(row.status)) {
-        alreadyAssigned.add(row.submission_id);
-      }
-    }
-  }
-
-  const availableSubmissions = submissions.filter(
-    (submission) => !alreadyAssigned.has(submission.id)
-  );
+  const availableSubmissions = await getCleanReadyForAdekSubmissions();
 
   if (totalRequested > availableSubmissions.length) {
     throw new Error(
-      `You requested ${totalRequested} assignments, but only ${availableSubmissions.length} unassigned artworks are available.`
+      `You requested ${totalRequested} assignments, but only ${availableSubmissions.length} clean unassigned ADEK-ready artworks are available.`
     );
   }
 
@@ -829,6 +856,7 @@ export async function assignAdekToEvaluatorQuantities(
         assigned_to: target.evaluatorId,
         assigned_by: actorId ?? null,
         status: "assigned",
+        decision: null,
       });
     }
   }
@@ -836,24 +864,6 @@ export async function assignAdekToEvaluatorQuantities(
   for (const chunk of chunkArray(assignmentsToInsert, 500)) {
     const { error } = await supabaseAdmin.from("assignments").insert(chunk);
     if (error) throw error;
-  }
-
-  if (assignmentsToInsert.length) {
-    const ids = assignmentsToInsert.map(
-      (assignment) => assignment.submission_id
-    );
-
-    for (const chunk of chunkArray(ids, SUPABASE_IN_FILTER_CHUNK_SIZE)) {
-      const { error } = await supabaseAdmin
-        .from("submissions")
-        .update({
-          workflow_status: "ready_for_adek",
-          updated_at: new Date().toISOString(),
-        })
-        .in("id", chunk);
-
-      if (error) throw error;
-    }
   }
 
   return {
@@ -941,9 +951,8 @@ export async function autoAssignPending(
       }
 
       if (phase === "literary_proofreading") {
-        // Literary repair is driven by the classified literary language.
-        // Some imported rows have reliable literary_language values even when
-        // pathway text is inconsistent, so do not block repair by pathway label.
+        // Literary repair is driven by classified language. This covers records
+        // whose pathway text was imported inconsistently but literary_language is set.
         if (await hasAnyPhaseAssignment(submission.id, "literary_proofreading")) {
           skipped++;
           continue;
@@ -1384,10 +1393,23 @@ export async function repairMissingAdekAssignments(
 
   if (evaluatorsError) throw evaluatorsError;
 
-  const evaluatorIds = (evaluators ?? []).map((row) => row.id);
+  const evaluatorIds = (evaluators ?? []).map((row) => row.id).filter(Boolean);
 
   if (!evaluatorIds.length) {
     throw new Error("No active evaluator users available.");
+  }
+
+  const cleanSubmissions = await getCleanReadyForAdekSubmissions({
+    submissionIds: uniqueSubmissionIds,
+  });
+
+  const cleanSubmissionIds = cleanSubmissions.map((submission) => submission.id);
+
+  if (!cleanSubmissionIds.length) {
+    return {
+      assigned: 0,
+      skipped: uniqueSubmissionIds.length,
+    };
   }
 
   const { data: activeAssignments, error: activeError } = await supabaseAdmin
@@ -1395,7 +1417,7 @@ export async function repairMissingAdekAssignments(
     .select("assigned_to")
     .eq("phase", "adek_evaluation")
     .in("assigned_to", evaluatorIds)
-    .in("status", activeAssignmentStatuses);
+    .in("status", ["assigned", "in_progress"]);
 
   if (activeError) throw activeError;
 
@@ -1406,37 +1428,18 @@ export async function repairMissingAdekAssignments(
   }
 
   for (const row of activeAssignments ?? []) {
+    if (!row.assigned_to) continue;
     workload.set(row.assigned_to, (workload.get(row.assigned_to) ?? 0) + 1);
-  }
-
-  const alreadyAssigned = new Set<string>();
-
-  for (const submissionChunk of chunkArray(
-    uniqueSubmissionIds,
-    SUPABASE_IN_FILTER_CHUNK_SIZE
-  )) {
-    const { data, error } = await supabaseAdmin
-      .from("assignments")
-      .select("submission_id")
-      .in("submission_id", submissionChunk)
-      .eq("phase", "adek_evaluation")
-      .in("status", activeAssignmentStatuses);
-
-    if (error) throw error;
-
-    for (const row of data ?? []) {
-      alreadyAssigned.add(row.submission_id);
-    }
   }
 
   const assignmentsToInsert: any[] = [];
 
-  for (const submissionId of uniqueSubmissionIds) {
-    if (alreadyAssigned.has(submissionId)) continue;
-
+  for (const submissionId of cleanSubmissionIds) {
     const assignedTo = Array.from(workload.entries()).sort(
       (a, b) => a[1] - b[1]
-    )[0][0];
+    )[0]?.[0];
+
+    if (!assignedTo) break;
 
     workload.set(assignedTo, (workload.get(assignedTo) ?? 0) + 1);
 
@@ -1446,6 +1449,7 @@ export async function repairMissingAdekAssignments(
       assigned_to: assignedTo,
       assigned_by: actorId ?? null,
       status: "assigned",
+      decision: null,
     });
   }
 
