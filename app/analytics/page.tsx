@@ -293,6 +293,40 @@ async function getFilterOptions() {
   ) as Record<string, string[]>;
 }
 
+function assignmentBelongsToCurrentUserRole(
+  user: { role: string | null; proofreader_type?: string | null },
+  assignment: { phase: string | null; proofreader_type?: string | null }
+) {
+  const role = String(user.role ?? "");
+  const phase = String(assignment.phase ?? "");
+  const userProofreaderType = String(user.proofreader_type ?? "");
+  const assignmentProofreaderType = String(assignment.proofreader_type ?? "");
+
+  if (role === "evaluator") return phase === "adek_evaluation";
+  if (role === "coordinator") return phase === "coordinator_check";
+  if (role === "management") return phase === "management_review";
+  if (role === "reviewer") return phase === "final_review";
+  if (role === "categorizer") return phase === "categorization";
+  if (role === "rater") return phase === "artistic_ranking";
+
+  if (role === "proofreader") {
+    if (userProofreaderType === "general") {
+      return phase === "proofreading";
+    }
+
+    if (["literary_arabic", "literary_english_or_others"].includes(userProofreaderType)) {
+      return (
+        phase === "literary_proofreading" &&
+        (!assignmentProofreaderType || assignmentProofreaderType === userProofreaderType)
+      );
+    }
+
+    return phase === "proofreading" || phase === "literary_proofreading";
+  }
+
+  return false;
+}
+
 async function getLiveUserProgress(): Promise<UserProgressRow[]> {
   const users = await fetchAllRows<{
     id: string;
@@ -334,6 +368,7 @@ async function getLiveUserProgress(): Promise<UserProgressRow[]> {
       .range(from, to)
   );
 
+  const userById = new Map(users.map((user) => [user.id, user]));
   const progressMap = new Map<
     string,
     { assigned: Set<string>; completed: Set<string>; remaining: Set<string>; sentForCorrection: Set<string> }
@@ -352,13 +387,15 @@ async function getLiveUserProgress(): Promise<UserProgressRow[]> {
     if (!assignment.assigned_to || !assignment.submission_id) continue;
 
     const current = progressMap.get(assignment.assigned_to);
-    if (!current) continue;
+    const assignedUser = userById.get(assignment.assigned_to);
+    if (!current || !assignedUser) continue;
+    if (!assignmentBelongsToCurrentUserRole(assignedUser, assignment)) continue;
 
     const status = String(assignment.status ?? "");
 
     current.assigned.add(assignment.submission_id);
 
-    if (status === "completed" && assignment.completed_at) {
+    if (status === "completed") {
       current.completed.add(assignment.submission_id);
     }
 
