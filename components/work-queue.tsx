@@ -51,7 +51,9 @@ const correctionSourceLabels: Record<string, string> = {
   proofreading: "General Proofreading",
   literary_proofreading: "Literary Proofreading",
   management_review: "Management Review",
-  final_review: "Final Review",
+  final_review: "Review",
+  categorization: "Categorization",
+  artistic_ranking: "Artistic Ranking",
 };
 
 function schoolOptionFromSubmission(submission: any): SchoolOption {
@@ -691,7 +693,19 @@ async function getKpiCards({
 
     return [
       { label: "Remaining", value: remaining },
-      { label: "Ready / Completed", value: completed },
+      { label: "Review Completed", value: completed },
+    ];
+  }
+
+  if (phase === "categorization" || phase === "artistic_ranking") {
+    const [remaining, completed] = await Promise.all([
+      getAssignmentCount({ userId, phase, view: "not_completed" }),
+      getAssignmentCount({ userId, phase, view: "completed" }),
+    ]);
+
+    return [
+      { label: "Remaining", value: remaining },
+      { label: "Completed", value: completed },
     ];
   }
 

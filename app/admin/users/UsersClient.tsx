@@ -7,6 +7,8 @@ const roles = [
   ["management", "Management"],
   ["proofreader", "Proofreader"],
   ["reviewer", "Reviewer"],
+  ["categorizer", "Categorizer"],
+  ["rater", "Rater"],
   ["adek_hq", "ADEK HQ Read Only"],
 ];
 

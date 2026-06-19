@@ -8,3 +8,5 @@ Arabic Literary Proofreader 1,arabic_literary_1@example.com,arabic_literary_1,Ch
 English or Other Literary Proofreader 1,english_literary_1@example.com,english_literary_1,ChangeMe@2026,proofreader,literary_english_or_others,true
 Management 1,management_1@example.com,management_1,ChangeMe@2026,management,,true
 Reviewer 1,reviewer_1@example.com,reviewer_1,ChangeMe@2026,reviewer,,true
+Categorizer 1,categorizer_1@example.com,categorizer_1,ChangeMe@2026,categorizer,,true
+Rater 1,rater_1@example.com,rater_1,ChangeMe@2026,rater,,true

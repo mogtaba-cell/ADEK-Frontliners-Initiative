@@ -24,7 +24,9 @@ const phases = [
   { phase: "adek_evaluation", label: "Auto Assign ADEK Evaluation Work", description: "Assigns artworks marked Ready for ADEK Evaluation to active ADEK evaluators." },
   { phase: "management_review", label: "Auto Assign Management Review Work", description: "Assigns Needs Review artworks to active management users." },
   { phase: "proofreading", label: "Auto Assign Proofreading Work", description: "Assigns selected approved artworks to active proofreaders." },
-  { phase: "final_review", label: "Auto Assign Final Review Work", description: "Assigns proofreading-completed artworks to active final reviewers." },
+  { phase: "final_review", label: "Auto Assign Review Work", description: "Assigns proofreading-completed artworks to active reviewers." },
+  { phase: "categorization", label: "Auto Assign Categorization Work", description: "Assigns review-completed artworks to active categorizers." },
+  { phase: "artistic_ranking", label: "Auto Assign Artistic Ranking Work", description: "Assigns categorized artworks to active raters." },
 ];
 
 async function readResponse(res: Response) {

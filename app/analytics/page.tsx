@@ -172,6 +172,8 @@ function roleLabel(row: UserProgressRow) {
   if (row.role === "coordinator") return "Coordinator";
   if (row.role === "management") return "Management";
   if (row.role === "reviewer") return "Reviewer";
+  if (row.role === "categorizer") return "Categorizer";
+  if (row.role === "rater") return "Rater";
 
   return row.role;
 }
@@ -184,6 +186,8 @@ function userProgressGroupKey(row: UserProgressRow) {
   if (row.role === "coordinator") return "Coordinators";
   if (row.role === "management") return "Management";
   if (row.role === "reviewer") return "Reviewers";
+  if (row.role === "categorizer") return "Categorizers";
+  if (row.role === "rater") return "Raters";
   return "Other Users";
 }
 

@@ -53,6 +53,10 @@ async function getDashboardCounts() {
     completedGeneralProofreading,
     completedLiteraryProofreading,
     completedFinalReady,
+    activeCategorization,
+    completedCategorization,
+    activeArtisticRanking,
+    completedArtisticRanking,
     lastExport,
     activeAssignments,
   ] = await Promise.all([
@@ -97,6 +101,24 @@ async function getDashboardCounts() {
         .eq("status", "completed")
         .not("completed_at", "is", null)
     ),
+    countAssignments((query) =>
+      query.eq("phase", "categorization").in("status", ["assigned", "in_progress"])
+    ),
+    countAssignments((query) =>
+      query
+        .eq("phase", "categorization")
+        .eq("status", "completed")
+        .not("completed_at", "is", null)
+    ),
+    countAssignments((query) =>
+      query.eq("phase", "artistic_ranking").in("status", ["assigned", "in_progress"])
+    ),
+    countAssignments((query) =>
+      query
+        .eq("phase", "artistic_ranking")
+        .eq("status", "completed")
+        .not("completed_at", "is", null)
+    ),
     supabaseAdmin
       .from("export_batches")
       .select("id,status,mode,destination_folder_id,error_message,created_at,completed_at")
@@ -122,6 +144,10 @@ async function getDashboardCounts() {
     completedGeneralProofreading,
     completedLiteraryProofreading,
     completedFinalReady,
+    activeCategorization,
+    completedCategorization,
+    activeArtisticRanking,
+    completedArtisticRanking,
     lastExport,
     activeAssignments,
   };
@@ -233,8 +259,28 @@ export default async function AdminPage({
           </div>
 
           <div>
-            <strong>Completed final review / ready</strong>
+            <strong>Completed review / ready for categorization</strong>
             <p className="stat-number">{dashboard.completedFinalReady}</p>
+          </div>
+
+          <div>
+            <strong>Active categorization</strong>
+            <p className="stat-number">{dashboard.activeCategorization}</p>
+          </div>
+
+          <div>
+            <strong>Completed categorization</strong>
+            <p className="stat-number">{dashboard.completedCategorization}</p>
+          </div>
+
+          <div>
+            <strong>Active artistic ranking</strong>
+            <p className="stat-number">{dashboard.activeArtisticRanking}</p>
+          </div>
+
+          <div>
+            <strong>Completed artistic ranking / final completed</strong>
+            <p className="stat-number">{dashboard.completedArtisticRanking}</p>
           </div>
         </div>
       </div>
@@ -326,8 +372,18 @@ export default async function AdminPage({
                 },
                 {
                   phase: "final_review",
-                  title: "Final review",
+                  title: "Review",
                   description: "Assigns artworks to reviewers only after all required previous stages are completed.",
+                },
+                {
+                  phase: "categorization",
+                  title: "Categorization",
+                  description: "Assigns reviewer-completed artworks to categorizers.",
+                },
+                {
+                  phase: "artistic_ranking",
+                  title: "Artistic ranking",
+                  description: "Assigns categorized artworks to raters for final artistic ranking.",
                 },
               ].map((item) => (
                 <form

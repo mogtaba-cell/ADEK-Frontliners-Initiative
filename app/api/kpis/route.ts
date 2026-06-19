@@ -17,6 +17,8 @@ type KpiResponse = {
     generalProofread: number;
     literaryProofread: number;
     finalReady: number;
+    categorized: number;
+    artisticRanked: number;
     activeAssignments: number;
     totalClosed: number;
   };
@@ -137,6 +139,8 @@ async function buildKpis(): Promise<KpiResponse["data"]> {
   let generalProofread = 0;
   let literaryProofread = 0;
   let finalReady = 0;
+  let categorized = 0;
+  let artisticRanked = 0;
 
   for (const submission of submissions) {
     const rows = assignmentsBySubmission.get(submission.id) ?? [];
@@ -190,9 +194,33 @@ async function buildKpis(): Promise<KpiResponse["data"]> {
       finalReady += 1;
     }
 
+    if (
+      rows.some(
+        (row) =>
+          row.phase === "categorization" &&
+          row.status === "completed" &&
+          row.decision === "completed",
+      )
+    ) {
+      categorized += 1;
+    }
+
+    if (
+      rows.some(
+        (row) =>
+          row.phase === "artistic_ranking" &&
+          row.status === "completed" &&
+          row.decision === "completed",
+      )
+    ) {
+      artisticRanked += 1;
+    }
+
     const isInSelectedPipeline =
       submission.workflow_status === "selected_for_proofreading" ||
       submission.workflow_status === "proofreading_done" ||
+      submission.workflow_status === "ready_for_categorization" ||
+      submission.workflow_status === "ready_for_artistic_ranking" ||
       submission.workflow_status === "completed";
 
     // Total Selected only counts submissions still in the selected/final pipeline.
@@ -218,8 +246,10 @@ async function buildKpis(): Promise<KpiResponse["data"]> {
     generalProofread,
     literaryProofread,
     finalReady,
+    categorized,
+    artisticRanked,
     activeAssignments,
-    totalClosed: finalReady + totalDisqualified,
+    totalClosed: artisticRanked + totalDisqualified,
   };
 }
 

@@ -454,8 +454,10 @@ export function SubmissionsClient({
                 <th>School</th>
                 <th>Group Name</th>
                 <th>Region</th>
-                <th>Pathway</th>
+                <th>Original Pathway</th>
+                <th>Categorized Pathway</th>
                 <th>ADEK Artistic Rating</th>
+                <th>Artistic Ranking</th>
                 <th>Updated File</th>
                 <th>Action</th>
               </tr>
@@ -492,8 +494,10 @@ export function SubmissionsClient({
                     <td>{displayText(submission.group_name)}</td>
                     <td>{displayText(submission.school_region)}</td>
                     <td>{displayText(submission.art_pathway_name_en)}</td>
+                    <td>{displayText(submission.categorized_pathway)}</td>
 
                     <td>{artisticRatingLabel(submission.artistic_rating)}</td>
+                    <td>{displayText(submission.artistic_ranking)}</td>
 
                     <td>
                       {submission.updated_artwork_file_url ? (
@@ -610,7 +614,8 @@ function SubmissionModal({
               <DetailField label="School Type" value={submission.institution_type} />
               <DetailField label="Group Name" value={submission.group_name} />
               <DetailField label="Region" value={submission.school_region} />
-              <DetailField label="Pathway" value={submission.art_pathway_name_en} />
+              <DetailField label="Original Pathway" value={submission.art_pathway_name_en} />
+              <DetailField label="Categorized Pathway" value={submission.categorized_pathway} />
               <DetailField label="Arabic Pathway" value={derived.arabicPathway} />
               <DetailField label="Subpathway" value={submission.art_sub_pathway_name_en} />
               <DetailField label="Arabic Subpathway" value={derived.arabicSubpathway} />
@@ -635,6 +640,27 @@ function SubmissionModal({
                   value={
                     artisticRatingLabel(submission.management_artistic_rating)
                   }
+                />
+              )}
+
+              {submission.artistic_ranking && (
+                <DetailField
+                  label="Final Artistic Ranking"
+                  value={submission.artistic_ranking}
+                />
+              )}
+
+              {submission.categorization_completed_at && (
+                <DetailField
+                  label="Categorization Completed At"
+                  value={submission.categorization_completed_at}
+                />
+              )}
+
+              {submission.artistic_ranking_completed_at && (
+                <DetailField
+                  label="Artistic Ranking Completed At"
+                  value={submission.artistic_ranking_completed_at}
                 />
               )}
 

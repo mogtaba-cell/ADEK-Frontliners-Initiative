@@ -5,6 +5,8 @@ export type Role =
   | "management"
   | "proofreader"
   | "reviewer"
+  | "categorizer"
+  | "rater"
   | "adek_hq";
 
 export type ProofreaderType =
@@ -19,7 +21,9 @@ export type WorkflowPhase =
   | "management_review"
   | "proofreading"
   | "literary_proofreading"
-  | "final_review";
+  | "final_review"
+  | "categorization"
+  | "artistic_ranking";
 
 export type WorkflowStatus =
   | "imported"
@@ -34,6 +38,8 @@ export type WorkflowStatus =
   | "proofreading_in_progress"
   | "proofreading_done"
   | "final_review_in_progress"
+  | "ready_for_categorization"
+  | "ready_for_artistic_ranking"
   | "completed";
 
 export type AssignmentStatus =

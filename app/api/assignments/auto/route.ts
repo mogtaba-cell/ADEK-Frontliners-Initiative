@@ -17,6 +17,8 @@ const REPAIR_PHASES: RepairMissingAssignmentsScope[] = [
   "proofreading",
   "literary_proofreading",
   "final_review",
+  "categorization",
+  "artistic_ranking",
 ];
 
 function redirectToAdmin(req: Request, params: Record<string, string | number>) {

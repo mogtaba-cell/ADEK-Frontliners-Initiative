@@ -11,8 +11,8 @@ export default async function ReviewerPage({
     <WorkQueuePage
       role="reviewer"
       phase="final_review"
-      title="My Final Review Workspace"
-      startLabel="Start Final Review Workspace"
+      title="My Review Workspace"
+      startLabel="Start Review Workspace"
       searchParams={(await searchParams) ?? {}}
     />
   );

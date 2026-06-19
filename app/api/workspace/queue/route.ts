@@ -20,6 +20,8 @@ const validWorkspacePhases = new Set([
   "proofreading",
   "literary_proofreading",
   "final_review",
+  "categorization",
+  "artistic_ranking",
 ]);
 
 function chunkArray<T>(items: T[], size: number): T[][] {
@@ -112,6 +114,10 @@ function submissionSelectFieldsForPhase(phase: WorkflowPhase) {
     "submission_date_value",
     "artistic_rating",
     "management_artistic_rating",
+    "categorized_pathway",
+    "categorization_completed_at",
+    "artistic_ranking",
+    "artistic_ranking_completed_at",
     "evaluator_comment",
     "evaluator_file_quality_clear",
     "literary_publication_suitable",

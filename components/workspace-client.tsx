@@ -45,6 +45,9 @@ const correctionSourceLabels: Record<string, string> = {
   adek_evaluation: "ADEK Evaluation",
   proofreading: "General Proofreading",
   literary_proofreading: "Literary Proofreading",
+  final_review: "Review",
+  categorization: "Categorization",
+  artistic_ranking: "Artistic Ranking",
   coordinator_check: "Coordinator Correction",
 };
 
@@ -54,6 +57,26 @@ const artisticRatingLabels: Record<string, string> = {
   good: "جيد / Good",
   excellent: "ممتاز / Excellent",
 };
+
+const categorizationPathways = [
+  "Visual Expressions",
+  "Digital Expressions",
+  "Performing Expressions",
+  "Others & STEAM Expressions",
+  "Literary Expressions",
+];
+
+const artisticRankingOptions = ["Excellent", "Very Good", "Good", "Medium"];
+
+function defaultCategorizedPathway(submission: any) {
+  const current = String(submission?.categorized_pathway ?? "").trim();
+  if (categorizationPathways.includes(current)) return current;
+
+  const imported = String(submission?.art_pathway_name_en ?? "").trim();
+  if (categorizationPathways.includes(imported)) return imported;
+
+  return "";
+}
 
 function rawText(rawData: any, keys: string[]) {
   if (!rawData || typeof rawData !== "object") return "";
@@ -1076,6 +1099,22 @@ export function WorkspaceClient({
                       />
                     )}
 
+                  {!isLimitedSubmissionDetailsView &&
+                    selectedSubmission.categorized_pathway && (
+                      <DetailField
+                        label="Categorized Pathway"
+                        value={selectedSubmission.categorized_pathway}
+                      />
+                    )}
+
+                  {!isLimitedSubmissionDetailsView &&
+                    selectedSubmission.artistic_ranking && (
+                      <DetailField
+                        label="Artistic Ranking"
+                        value={selectedSubmission.artistic_ranking}
+                      />
+                    )}
+
                   {selectedAssignment.correction_source_phase && (
                     <DetailField
                       label="Correction requested from"
@@ -1186,6 +1225,20 @@ export function WorkspaceClient({
                     <p className="muted small" style={{ marginBottom: 0 }}>
                       First confirm whether the artwork is aligned with the
                       initiative and suitable for publication.
+                    </p>
+                  )}
+
+                  {phase === "categorization" && (
+                    <p className="muted small" style={{ marginBottom: 0 }}>
+                      Select the final correct pathway for this reviewed artwork,
+                      then click done. This role cannot disqualify or send to correction.
+                    </p>
+                  )}
+
+                  {phase === "artistic_ranking" && (
+                    <p className="muted small" style={{ marginBottom: 0 }}>
+                      Select the final artistic ranking for this categorized artwork,
+                      then click done. This is the final completion step.
                     </p>
                   )}
                 </div>
@@ -1650,6 +1703,61 @@ export function WorkspaceClient({
                 </>
               )}
 
+              {isAssignmentActionable && phase === "categorization" && (
+                <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
+                  <h4 style={{ marginTop: 0 }}>Categorization</h4>
+                  <p className="muted small">
+                    Choose the correct final pathway for this artwork based on the
+                    latest reviewed title, description, narrative, and attachment.
+                  </p>
+
+                  <label style={{ display: "block", marginTop: 12 }}>
+                    <span className="small">Correct Pathway</span>
+                    <select
+                      className="input"
+                      name="categorized_pathway"
+                      defaultValue={defaultCategorizedPathway(selectedSubmission)}
+                      required
+                    >
+                      <option value="" disabled>
+                        Select pathway
+                      </option>
+                      {categorizationPathways.map((pathway) => (
+                        <option key={pathway} value={pathway}>
+                          {pathway}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
+
+              {isAssignmentActionable && phase === "artistic_ranking" && (
+                <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
+                  <h4 style={{ marginTop: 0 }}>Artistic Ranking</h4>
+                  <p className="muted small">
+                    Choose the final artistic ranking after the artwork has been reviewed
+                    and categorized.
+                  </p>
+
+                  <label style={{ display: "block", marginTop: 12 }}>
+                    <span className="small">Artistic Ranking</span>
+                    <select
+                      className="input"
+                      name="artistic_ranking"
+                      defaultValue={selectedSubmission.artistic_ranking ?? "Very Good"}
+                      required
+                    >
+                      {artisticRankingOptions.map((ranking) => (
+                        <option key={ranking} value={ranking}>
+                          {ranking}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
+
               {isAssignmentActionable && phase === "final_review" && (
                 <>
                   <EditableArtworkText
@@ -1661,7 +1769,7 @@ export function WorkspaceClient({
                     <span className="small">Reviewer Decision</span>
 
                     <select className="input" name="reviewer_decision">
-                      <option value="completed">Mark as Ready</option>
+                      <option value="completed">Mark as Ready for Categorization</option>
                     </select>
                   </label>
                 </>
@@ -1782,11 +1890,15 @@ export function WorkspaceClient({
                       disabled={isSubmittingTask}
                     >
                       {phase === "final_review"
-                        ? "Mark as Ready"
-                        : phase === "adek_evaluation" &&
-                            adekFileQualityClear === "no"
-                          ? "Send for Correction"
-                          : "Mark Done & Open Next"}
+                        ? "Mark as Ready for Categorization"
+                        : phase === "categorization"
+                          ? "Mark Categorization Done"
+                          : phase === "artistic_ranking"
+                            ? "Mark Ranking Done & Complete"
+                            : phase === "adek_evaluation" &&
+                                adekFileQualityClear === "no"
+                              ? "Send for Correction"
+                              : "Mark Done & Open Next"}
                     </button>
                   )}
                 </div>

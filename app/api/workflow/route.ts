@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { autoAssignOne } from "@/lib/assignment";
+import { assignCategorizationAfterReview, autoAssignOne } from "@/lib/assignment";
 import { audit } from "@/lib/audit";
 import { evaluationDecision } from "@/lib/decision";
 import { roleHome } from "@/lib/workflow";
@@ -166,13 +166,15 @@ export async function POST(req: Request) {
       phase = "final_review";
 
       if (action === "review_complete") {
-        nextStatus = "completed";
+        nextStatus = "ready_for_categorization";
+        const completedAt = new Date().toISOString();
         await supabaseAdmin.from("final_reviews").upsert(
-          { submission_id: submissionId, reviewer_id: user.id, status: "completed", notes: comment || null, completed_at: new Date().toISOString() },
+          { submission_id: submissionId, reviewer_id: user.id, status: "completed", notes: comment || null, completed_at: completedAt },
           { onConflict: "submission_id" }
         );
         await completeAssignment(assignmentId, user.id);
-        await supabaseAdmin.from("submissions").update({ workflow_status: nextStatus, updated_at: new Date().toISOString() }).eq("id", submissionId);
+        await supabaseAdmin.from("submissions").update({ workflow_status: nextStatus, reviewer_decision: "completed", completed_at: null, updated_at: completedAt }).eq("id", submissionId);
+        await assignCategorizationAfterReview(submissionId, user.id);
       } else if (action === "review_return") {
         nextStatus = "selected_for_proofreading";
         await supabaseAdmin.from("final_reviews").upsert(

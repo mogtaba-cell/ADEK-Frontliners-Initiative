@@ -20,6 +20,8 @@ const validRoles = new Set([
   "management",
   "proofreader",
   "reviewer",
+  "categorizer",
+  "rater",
   "adek_hq",
 ]);
 
@@ -44,6 +46,10 @@ export function homeForRole(role: Role | string) {
       return "/proofreader";
     case "reviewer":
       return "/reviewer";
+    case "categorizer":
+      return "/categorizer";
+    case "rater":
+      return "/rater";
     case "adek_hq":
       return "/submissions";
     default:

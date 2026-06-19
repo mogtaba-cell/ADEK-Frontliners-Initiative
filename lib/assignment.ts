@@ -9,6 +9,8 @@ const phaseToRole: Record<WorkflowPhase, Role> = {
   proofreading: "proofreader",
   literary_proofreading: "proofreader",
   final_review: "reviewer",
+  categorization: "categorizer",
+  artistic_ranking: "rater",
 };
 
 export const activeAssignmentStatuses = [
@@ -89,6 +91,8 @@ function eligibleStatusForPhase(phase: WorkflowPhase) {
   if (phase === "proofreading") return ["selected_for_proofreading"];
   if (phase === "literary_proofreading") return ["selected_for_proofreading", "proofreading_done"];
   if (phase === "final_review") return ["proofreading_done"];
+  if (phase === "categorization") return ["ready_for_categorization"];
+  if (phase === "artistic_ranking") return ["ready_for_artistic_ranking"];
 
   return [];
 }
@@ -1019,6 +1023,30 @@ export async function autoAssignPending(
         }
       }
 
+      if (phase === "categorization") {
+        if (!(await isReadyForCategorization(submission.id))) {
+          skipped++;
+          continue;
+        }
+
+        if (await hasAnyPhaseAssignment(submission.id, "categorization")) {
+          skipped++;
+          continue;
+        }
+      }
+
+      if (phase === "artistic_ranking") {
+        if (!(await isReadyForArtisticRanking(submission.id))) {
+          skipped++;
+          continue;
+        }
+
+        if (await hasAnyPhaseAssignment(submission.id, "artistic_ranking")) {
+          skipped++;
+          continue;
+        }
+      }
+
       const result = await autoAssignOne(submission.id, phase, actorId, {
         ...assignmentOptions,
         proofreaderType,
@@ -1250,6 +1278,134 @@ export async function isReadyForFinalReview(submissionId: string) {
   return adekDone && generalDone && literaryDone && !activeCorrection && !activeManagement;
 }
 
+export async function isReadyForCategorization(submissionId: string) {
+  const { data: submission, error } = await supabaseAdmin
+    .from("submissions")
+    .select("workflow_status,reviewer_decision")
+    .eq("id", submissionId)
+    .single();
+
+  if (error) throw error;
+  if (submission?.workflow_status === "disqualified") return false;
+
+  const reviewDone = await hasCompletedPhase(submissionId, "final_review");
+  const activeCorrection = await hasActivePhase(submissionId, "coordinator_check");
+  const activeManagement = await hasPendingManagementReview(submissionId);
+
+  return reviewDone && !activeCorrection && !activeManagement;
+}
+
+export async function assignCategorizationAfterReview(
+  submissionId: string,
+  actorId?: string
+) {
+  const ready = await isReadyForCategorization(submissionId);
+
+  if (!ready) {
+    return {
+      assigned: false,
+      waiting_for: "review_completion",
+    };
+  }
+
+  if (await hasAnyPhaseAssignment(submissionId, "categorization")) {
+    return {
+      assigned: false,
+      waiting_for: "already_has_categorization",
+    };
+  }
+
+  const timestamp = new Date().toISOString();
+
+  await supabaseAdmin
+    .from("submissions")
+    .update({
+      workflow_status: "ready_for_categorization",
+      completed_at: null,
+      updated_at: timestamp,
+    })
+    .eq("id", submissionId);
+
+  try {
+    const result = await autoAssignOne(submissionId, "categorization", actorId);
+
+    return {
+      assigned: !result.skipped,
+      result,
+    };
+  } catch (error: any) {
+    return {
+      assigned: false,
+      waiting_for: "available_categorizer",
+      error: error?.message ?? "Categorization assignment could not be created.",
+    };
+  }
+}
+
+export async function isReadyForArtisticRanking(submissionId: string) {
+  const { data: submission, error } = await supabaseAdmin
+    .from("submissions")
+    .select("workflow_status")
+    .eq("id", submissionId)
+    .single();
+
+  if (error) throw error;
+  if (submission?.workflow_status === "disqualified") return false;
+
+  const categorizationDone = await hasCompletedPhase(submissionId, "categorization");
+  const activeCorrection = await hasActivePhase(submissionId, "coordinator_check");
+  const activeManagement = await hasPendingManagementReview(submissionId);
+
+  return categorizationDone && !activeCorrection && !activeManagement;
+}
+
+export async function assignArtisticRankingAfterCategorization(
+  submissionId: string,
+  actorId?: string
+) {
+  const ready = await isReadyForArtisticRanking(submissionId);
+
+  if (!ready) {
+    return {
+      assigned: false,
+      waiting_for: "categorization_completion",
+    };
+  }
+
+  if (await hasAnyPhaseAssignment(submissionId, "artistic_ranking")) {
+    return {
+      assigned: false,
+      waiting_for: "already_has_artistic_ranking",
+    };
+  }
+
+  const timestamp = new Date().toISOString();
+
+  await supabaseAdmin
+    .from("submissions")
+    .update({
+      workflow_status: "ready_for_artistic_ranking",
+      completed_at: null,
+      updated_at: timestamp,
+    })
+    .eq("id", submissionId);
+
+  try {
+    const result = await autoAssignOne(submissionId, "artistic_ranking", actorId);
+
+    return {
+      assigned: !result.skipped,
+      result,
+    };
+  } catch (error: any) {
+    return {
+      assigned: false,
+      waiting_for: "available_rater",
+      error: error?.message ?? "Artistic ranking assignment could not be created.",
+    };
+  }
+}
+
 async function getReviewerForProofreader(generalProofreaderId: string) {
   const { data: links, error } = await supabaseAdmin
     .from("reviewer_proofreader_links")
@@ -1351,13 +1507,23 @@ async function repairFinalReview(actorId?: string) {
   return autoAssignPending("final_review", 5000, actorId);
 }
 
+async function repairCategorization(actorId?: string) {
+  return autoAssignPending("categorization", 5000, actorId);
+}
+
+async function repairArtisticRanking(actorId?: string) {
+  return autoAssignPending("artistic_ranking", 5000, actorId);
+}
+
 export type RepairMissingAssignmentsScope =
   | "all"
   | "coordinator_check"
   | "management_review"
   | "proofreading"
   | "literary_proofreading"
-  | "final_review";
+  | "final_review"
+  | "categorization"
+  | "artistic_ranking";
 
 export async function repairMissingAssignments(
   actorId?: string,
@@ -1383,6 +1549,14 @@ export async function repairMissingAssignments(
 
   if (scope === "all" || scope === "final_review") {
     results.push(await repairFinalReview(actorId));
+  }
+
+  if (scope === "all" || scope === "categorization") {
+    results.push(await repairCategorization(actorId));
+  }
+
+  if (scope === "all" || scope === "artistic_ranking") {
+    results.push(await repairArtisticRanking(actorId));
   }
 
   const assigned = results.reduce((sum, row) => sum + (row.assigned ?? 0), 0);

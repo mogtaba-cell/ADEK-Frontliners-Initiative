@@ -6,7 +6,7 @@ import { audit } from "@/lib/audit";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const validRoles = new Set(["admin", "coordinator", "evaluator", "management", "proofreader", "reviewer", "adek_hq"]);
+const validRoles = new Set(["admin", "coordinator", "evaluator", "management", "proofreader", "reviewer", "categorizer", "rater", "adek_hq"]);
 const validProofreaderTypes = new Set([
   "general",
   "literary_arabic",

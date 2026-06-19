@@ -63,6 +63,10 @@ const PREFERRED_SUBMISSION_COLUMNS = [
   "ethical_public_appropriateness",
   "artistic_rating",
   "management_artistic_rating",
+  "categorized_pathway",
+  "categorization_completed_at",
+  "artistic_ranking",
+  "artistic_ranking_completed_at",
   "disqualification_reason",
   "coordinator_disqualification_reason",
 

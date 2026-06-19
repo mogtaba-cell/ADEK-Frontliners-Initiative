@@ -3,6 +3,8 @@ import { requireUser } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { audit } from "@/lib/audit";
 import {
+  assignArtisticRankingAfterCategorization,
+  assignCategorizationAfterReview,
   assignProofreadingAfterApproval,
   autoAssignOne,
   maybeAssignReviewerAfterProofreading,
@@ -282,6 +284,8 @@ function workflowStatusForReturnedSource(sourcePhase: WorkflowPhase) {
     return "selected_for_proofreading";
   }
   if (sourcePhase === "final_review") return "proofreading_done";
+  if (sourcePhase === "categorization") return "ready_for_categorization";
+  if (sourcePhase === "artistic_ranking") return "ready_for_artistic_ranking";
   return "returned_for_correction";
 }
 
@@ -614,6 +618,8 @@ async function closeOpenAssignmentsAfterDisqualification({
       "proofreading",
       "literary_proofreading",
       "final_review",
+      "categorization",
+      "artistic_ranking",
     ])
     .in("status", ACTIVE_ASSIGNMENT_STATUSES);
 
@@ -753,6 +759,8 @@ export async function POST(req: Request) {
       "management",
       "proofreader",
       "reviewer",
+      "categorizer",
+      "rater",
     ]);
 
     const form = await req.formData();
@@ -1163,8 +1171,76 @@ export async function POST(req: Request) {
       await safeUpdate(
         "submissions",
         {
-          workflow_status: "completed",
+          workflow_status: "ready_for_categorization",
           reviewer_decision: "completed",
+          completed_at: null,
+          updated_at: completedAt,
+        },
+        "id",
+        submissionId
+      );
+
+      await assignCategorizationAfterReview(submissionId, user.id);
+    }
+
+    if (phase === "categorization") {
+      const categorizedPathway = textValue(form, "categorized_pathway");
+      const allowedPathways = new Set([
+        "Visual Expressions",
+        "Digital Expressions",
+        "Performing Expressions",
+        "Others & STEAM Expressions",
+        "Literary Expressions",
+      ]);
+
+      if (!categorizedPathway || !allowedPathways.has(categorizedPathway)) {
+        throw new Error("Select a valid pathway before completing categorization.");
+      }
+
+      const completedAt = nowIso();
+
+      await markAssignmentCompleted(assignmentId, {
+        decision: "completed",
+        completed_at: completedAt,
+      });
+
+      await safeUpdate(
+        "submissions",
+        {
+          categorized_pathway: categorizedPathway,
+          categorization_completed_at: completedAt,
+          workflow_status: "ready_for_artistic_ranking",
+          completed_at: null,
+          updated_at: completedAt,
+        },
+        "id",
+        submissionId
+      );
+
+      await assignArtisticRankingAfterCategorization(submissionId, user.id);
+    }
+
+    if (phase === "artistic_ranking") {
+      const artisticRanking = textValue(form, "artistic_ranking");
+      const allowedRankings = new Set(["Excellent", "Very Good", "Good", "Medium"]);
+
+      if (!artisticRanking || !allowedRankings.has(artisticRanking)) {
+        throw new Error("Select a valid artistic ranking before completing the artwork.");
+      }
+
+      const completedAt = nowIso();
+
+      await markAssignmentCompleted(assignmentId, {
+        decision: "completed",
+        completed_at: completedAt,
+      });
+
+      await safeUpdate(
+        "submissions",
+        {
+          artistic_ranking: artisticRanking,
+          artistic_ranking_completed_at: completedAt,
+          workflow_status: "completed",
           completed_at: completedAt,
           updated_at: completedAt,
         },

@@ -423,6 +423,8 @@ function userProgressSectionLabel(row: UserProgressRow) {
   if (row.role === "coordinator") return "Coordinators";
   if (row.role === "management") return "Management";
   if (row.role === "reviewer") return "Reviewers";
+  if (row.role === "categorizer") return "Categorizers";
+  if (row.role === "rater") return "Raters";
 
   if (row.role === "proofreader") {
     if (row.proofreader_type === "general") return "General Proofreaders";
