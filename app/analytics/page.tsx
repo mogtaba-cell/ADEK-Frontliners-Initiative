@@ -243,6 +243,8 @@ function groupUserProgress(rows: UserProgressRow[]) {
     "Coordinators",
     "Management",
     "Reviewers",
+    "Categorizers",
+    "Raters",
     "Other Users",
   ];
 

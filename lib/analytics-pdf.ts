@@ -449,7 +449,9 @@ function userProgressSectionOrder(title: string) {
     Coordinators: 6,
     Management: 7,
     Reviewers: 8,
-    "Other Users": 9,
+    Categorizers: 9,
+    Raters: 10,
+    "Other Users": 11,
   };
 
   return order[title] ?? 99;
