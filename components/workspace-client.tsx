@@ -1817,9 +1817,9 @@ export function WorkspaceClient({
                     rubric weights automatically to calculate the final total and artistic rating.
                   </p>
 
-                  <div className="grid grid-3" style={{ marginTop: 12 }}>
-                    <label>
-                      <span className="small">
+                  <div className="grid grid-3" style={{ marginTop: 12, alignItems: "end" }}>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <span className="small" style={{ minHeight: 44 }}>
                         Artistic Quality & Creativity / الجودة الفنية والإبداع
                         <br />
                         <strong>Score 0-100 · Weight 50%</strong>
@@ -1841,8 +1841,8 @@ export function WorkspaceClient({
                       />
                     </label>
 
-                    <label>
-                      <span className="small">
+                    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <span className="small" style={{ minHeight: 44 }}>
                         Relation to the Initiative / الارتباط بموضوع المبادرة
                         <br />
                         <strong>Score 0-100 · Weight 35%</strong>
@@ -1864,8 +1864,8 @@ export function WorkspaceClient({
                       />
                     </label>
 
-                    <label>
-                      <span className="small">
+                    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <span className="small" style={{ minHeight: 44 }}>
                         Age Appropriateness / الملاءمة العمرية
                         <br />
                         <strong>Score 0-100 · Weight 15%</strong>
