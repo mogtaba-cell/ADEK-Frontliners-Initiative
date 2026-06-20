@@ -1307,8 +1307,7 @@ export function WorkspaceClient({
 
                   {phase === "artistic_ranking" && (
                     <p className="muted small" style={{ marginBottom: 0 }}>
-                      Score the artwork using the artistic grading rubric. The final
-                      artistic rating is calculated automatically from the total score.
+                      The final artistic rating is calculated automatically from the total score.
                     </p>
                   )}
                 </div>
@@ -1888,20 +1887,6 @@ export function WorkspaceClient({
                       />
                     </label>
                   </div>
-
-                  <div className="card" style={{ marginTop: 12, boxShadow: "none" }}>
-                    <div className="grid grid-2">
-                      <DetailField
-                        label="Weighted Total Rubric Score"
-                        value={`${liveArtisticRubricTotal} / 100`}
-                      />
-                      <DetailField
-                        label="Weighting Formula"
-                        value="Artistic Quality 50% · Initiative 35% · Age 15%"
-                      />
-                    </div>
-                  </div>
-
                   <div className="submission-text-block" style={{ marginTop: 12 }}>
                     <strong>Final classification matrix</strong>
                     <div>
