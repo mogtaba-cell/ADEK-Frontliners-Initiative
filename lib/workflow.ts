@@ -30,7 +30,7 @@ export const phaseLabels: Record<WorkflowPhase, string> = {
   literary_proofreading: "Literary Proofreading",
   final_review: "Review",
   categorization: "Categorization",
-  artistic_ranking: "Artistic Ranking",
+  artistic_ranking: "Artistic Grading",
 };
 
 export const workflowLabels: Record<WorkflowStatus, string> = {
@@ -47,7 +47,7 @@ export const workflowLabels: Record<WorkflowStatus, string> = {
   proofreading_done: "Proofreading Done",
   final_review_in_progress: "Review In Progress",
   ready_for_categorization: "Ready for Categorization",
-  ready_for_artistic_ranking: "Ready for Artistic Ranking",
+  ready_for_artistic_ranking: "Ready for Artistic Grading",
   completed: "Completed",
 };
 

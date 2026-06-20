@@ -18,12 +18,13 @@ const roles = [
 export default async function UsersPage() {
   const user = await requireUser(["admin"]);
 
-  const [{ data: users }, { data: links }] = await Promise.all([
+  const [{ data: users }, { data: links }, { data: raterPathwayLinks }] = await Promise.all([
     supabaseAdmin
       .from("profiles")
       .select("id,email,username,full_name,role,proofreader_type,is_active,created_at")
       .order("created_at", { ascending: false }),
     supabaseAdmin.from("reviewer_proofreader_links").select("reviewer_id,proofreader_id"),
+    supabaseAdmin.from("rater_pathway_assignments").select("rater_id,pathway"),
   ]);
 
   return (
@@ -50,11 +51,20 @@ export default async function UsersPage() {
           </select>
 
           <input className="input" name="password" placeholder="Temporary password" type="password" required />
+          <input
+            className="input"
+            name="rater_pathways"
+            placeholder="Rater pathways, comma-separated"
+          />
           <button className="btn">Create user</button>
         </form>
       </div>
 
-      <UsersClient users={users ?? []} links={links ?? []} />
+      <UsersClient
+        users={users ?? []}
+        links={links ?? []}
+        raterPathwayLinks={raterPathwayLinks ?? []}
+      />
     </main>
   );
 }

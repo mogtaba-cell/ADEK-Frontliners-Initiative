@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireUser, hashPassword } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { audit } from "@/lib/audit";
+import { normalizeRaterPathway } from "@/lib/rater-rubric";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -62,6 +63,27 @@ async function replaceReviewerLinks(reviewerId: string, proofreaderIds: string[]
   }
 }
 
+async function replaceRaterPathwayLinks(raterId: string, pathways: string[]) {
+  const { error: deleteError } = await supabaseAdmin
+    .from("rater_pathway_assignments")
+    .delete()
+    .eq("rater_id", raterId);
+
+  if (deleteError) throw deleteError;
+
+  const rows = Array.from(
+    new Set(pathways.map((pathway) => normalizeRaterPathway(pathway)).filter(Boolean))
+  ).map((pathway) => ({
+    rater_id: raterId,
+    pathway,
+  }));
+
+  if (rows.length) {
+    const { error } = await supabaseAdmin.from("rater_pathway_assignments").insert(rows);
+    if (error) throw error;
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const actor = await requireUser(["admin"]);
@@ -90,6 +112,15 @@ export async function POST(req: Request) {
     const { data, error } = await supabaseAdmin.from("profiles").insert(payload).select("id").single();
     if (error) throw error;
 
+    const raterPathways = String(f.get("rater_pathways") ?? "")
+      .split(/[;,]/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    if (role === "rater" && raterPathways.length) {
+      await replaceRaterPathwayLinks(data.id, raterPathways);
+    }
+
     await audit({ actorId: actor.id, action: "user_created", entityType: "profile", entityId: data.id, after: { email, role, proofreader_type } });
 
     return NextResponse.redirect(new URL("/admin/users", req.url));
@@ -108,6 +139,12 @@ export async function PATCH(req: Request) {
     if (Array.isArray(body.reviewer_proofreader_ids)) {
       await replaceReviewerLinks(id, body.reviewer_proofreader_ids.map((x: unknown) => String(x)));
       await audit({ actorId: actor.id, action: "reviewer_links_updated", entityType: "profile", entityId: id, after: { reviewer_proofreader_ids: body.reviewer_proofreader_ids } });
+      return NextResponse.json({ ok: true });
+    }
+
+    if (Array.isArray(body.rater_pathways)) {
+      await replaceRaterPathwayLinks(id, body.rater_pathways.map((x: unknown) => String(x)));
+      await audit({ actorId: actor.id, action: "rater_pathways_updated", entityType: "profile", entityId: id, after: { rater_pathways: body.rater_pathways } });
       return NextResponse.json({ ok: true });
     }
 

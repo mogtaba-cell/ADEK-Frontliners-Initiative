@@ -11,6 +11,11 @@ import {
   reactivateAssignmentForReturn,
 } from "@/lib/assignment";
 import type { WorkflowPhase } from "@/lib/types";
+import {
+  calculateArtisticRubricTotal,
+  finalArtisticRatingFromScore,
+  parseRubricScore,
+} from "@/lib/rater-rubric";
 
 const ACTIVE_ASSIGNMENT_STATUSES = [
   "assigned",
@@ -1221,13 +1226,33 @@ export async function POST(req: Request) {
     }
 
     if (phase === "artistic_ranking") {
-      const artisticRanking = textValue(form, "artistic_ranking");
-      const allowedRankings = new Set(["Excellent", "Very Good", "Good", "Medium"]);
+      const artisticQualityCreativity = parseRubricScore(
+        form.get("artistic_quality_creativity_score"),
+        50,
+        "Artistic Quality & Creativity"
+      );
+      const initiativeRelation = parseRubricScore(
+        form.get("initiative_relation_score"),
+        35,
+        "Relation to the Initiative"
+      );
+      const ageAppropriateness = parseRubricScore(
+        form.get("age_appropriateness_score"),
+        15,
+        "Age Appropriateness"
+      );
+      const totalScore = calculateArtisticRubricTotal({
+        artisticQualityCreativity,
+        initiativeRelation,
+        ageAppropriateness,
+      });
 
-      if (!artisticRanking || !allowedRankings.has(artisticRanking)) {
-        throw new Error("Select a valid artistic ranking before completing the artwork.");
+      if (totalScore < 1) {
+        throw new Error("Total artistic rubric score must be at least 1.");
       }
 
+      const artisticRanking = finalArtisticRatingFromScore(totalScore);
+      const rubricComment = textValue(form, "artistic_rubric_comment");
       const completedAt = nowIso();
 
       await markAssignmentCompleted(assignmentId, {
@@ -1238,6 +1263,11 @@ export async function POST(req: Request) {
       await safeUpdate(
         "submissions",
         {
+          artistic_quality_creativity_score: artisticQualityCreativity,
+          initiative_relation_score: initiativeRelation,
+          age_appropriateness_score: ageAppropriateness,
+          artistic_rubric_total_score: totalScore,
+          artistic_rubric_comment: rubricComment,
           artistic_ranking: artisticRanking,
           artistic_ranking_completed_at: completedAt,
           workflow_status: "completed",
@@ -1247,6 +1277,13 @@ export async function POST(req: Request) {
         "id",
         submissionId
       );
+
+      await addWorkflowComment({
+        submissionId,
+        authorId: user.id,
+        phase,
+        comment: rubricComment,
+      });
 
       await cancelActiveAssignmentsForCompletedWorkflow({
         submissionId,

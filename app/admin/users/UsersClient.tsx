@@ -1,5 +1,7 @@
 "use client";
 
+import { RATER_PATHWAYS } from "@/lib/rater-rubric";
+
 const roles = [
   ["admin", "Admin"],
   ["coordinator", "Coordinator"],
@@ -28,12 +30,19 @@ type LinkRow = {
   proofreader_id: string;
 };
 
+type RaterPathwayLinkRow = {
+  rater_id: string;
+  pathway: string;
+};
+
 export function UsersClient({
   users,
   links,
+  raterPathwayLinks,
 }: {
   users: UserRow[];
   links: LinkRow[];
+  raterPathwayLinks: RaterPathwayLinkRow[];
 }) {
   const generalProofreaders = users.filter(
     (u) =>
@@ -43,6 +52,7 @@ export function UsersClient({
   );
 
   const reviewers = users.filter((u) => u.role === "reviewer" && u.is_active);
+  const raters = users.filter((u) => u.role === "rater" && u.is_active);
 
   async function updateUser(id: string) {
     const payload = {
@@ -108,6 +118,32 @@ export function UsersClient({
     }
 
     alert("Reviewer links updated.");
+    window.location.reload();
+  }
+
+  async function saveRaterPathwayLinks(raterId: string) {
+    const selected = Array.from(
+      document.querySelectorAll<HTMLInputElement>(
+        `input[data-rater='${raterId}']:checked`
+      )
+    ).map((input) => input.value);
+
+    const res = await fetch("/api/admin/users", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: raterId,
+        rater_pathways: selected,
+      }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json();
+      alert(data.error || "Failed to update rater pathway links.");
+      return;
+    }
+
+    alert("Rater pathway links updated.");
     window.location.reload();
   }
 
@@ -321,6 +357,62 @@ export function UsersClient({
           {reviewers.length === 0 && (
             <p className="muted">No active reviewers yet.</p>
           )}
+        </div>
+      </div>
+
+      <div
+        className="card"
+        id="rater-pathway-links"
+        style={{ marginTop: 16 }}
+      >
+        <h2>Rater / Pathway Links</h2>
+
+        <p className="muted">
+          Raters only receive Artistic Grading tasks for the categorized pathways
+          selected here. Tick one or more pathways for each active Rater, then
+          click Save Pathways.
+        </p>
+
+        <div className="grid grid-3">
+          {raters.map((rater) => {
+            const linked = new Set(
+              raterPathwayLinks
+                .filter((link) => link.rater_id === rater.id)
+                .map((link) => link.pathway)
+            );
+
+            return (
+              <div className="card" key={rater.id} style={{ boxShadow: "none" }}>
+                <h3>{rater.full_name}</h3>
+                <p className="muted small">{rater.email}</p>
+
+                <div className="grid">
+                  {RATER_PATHWAYS.map((pathway) => (
+                    <label key={pathway} className="actions small">
+                      <input
+                        data-rater={rater.id}
+                        type="checkbox"
+                        value={pathway}
+                        defaultChecked={linked.has(pathway)}
+                      />
+
+                      {pathway}
+                    </label>
+                  ))}
+
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => saveRaterPathwayLinks(rater.id)}
+                  >
+                    Save Pathways
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+
+          {raters.length === 0 && <p className="muted">No active raters yet.</p>}
         </div>
       </div>
     </>

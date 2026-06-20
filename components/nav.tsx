@@ -23,7 +23,10 @@ const links: Record<Role, { href: string; label: string }[]> = {
   proofreader: [{ href: "/proofreader", label: "Proofreading Workspace" }],
   reviewer: [{ href: "/reviewer", label: "Review Workspace" }],
   categorizer: [{ href: "/categorizer", label: "Categorization Workspace" }],
-  rater: [{ href: "/rater", label: "Artistic Ranking Workspace" }],
+  rater: [
+    { href: "/rater", label: "Artistic Grading Criteria" },
+    { href: "/rater/workspace", label: "Artistic Grading Workspace" },
+  ],
   adek_hq: [
     { href: "/submissions", label: "Submissions" },
     { href: "/analytics", label: "Analytics" },

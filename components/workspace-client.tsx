@@ -3,6 +3,10 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import type { ProofreaderType, Role, WorkflowPhase } from "@/lib/types";
 import { labelPhase, labelWorkflowStatus, statusClassName } from "@/lib/workflow";
+import {
+  calculateArtisticRubricTotal,
+  finalArtisticRatingFromScore,
+} from "@/lib/rater-rubric";
 
 type Assignment = {
   id: string;
@@ -47,7 +51,7 @@ const correctionSourceLabels: Record<string, string> = {
   literary_proofreading: "Literary Proofreading",
   final_review: "Review",
   categorization: "Categorization",
-  artistic_ranking: "Artistic Ranking",
+  artistic_ranking: "Artistic Grading",
   coordinator_check: "Coordinator Correction",
 };
 
@@ -65,8 +69,6 @@ const categorizationPathways = [
   "Others & STEAM Expressions",
   "Literary Expressions",
 ];
-
-const artisticRankingOptions = ["Excellent", "Very Good", "Good", "Medium"];
 
 function defaultCategorizedPathway(submission: any) {
   const current = String(submission?.categorized_pathway ?? "").trim();
@@ -98,6 +100,11 @@ function displayText(value: unknown, fallback = "—") {
   }
 
   return String(value);
+}
+
+function integerOrDefault(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
 }
 
 function fallbackText(submission: any, directValue: unknown, rawKeys: string[]) {
@@ -702,6 +709,10 @@ export function WorkspaceClient({
   const [artisticRating, setArtisticRating] = useState("good");
   const [managementArtisticRating, setManagementArtisticRating] =
     useState("good");
+  const [artisticQualityCreativityScore, setArtisticQualityCreativityScore] =
+    useState(0);
+  const [initiativeRelationScore, setInitiativeRelationScore] = useState(0);
+  const [ageAppropriatenessScore, setAgeAppropriatenessScore] = useState(0);
   const [generalProofreaderDecision, setGeneralProofreaderDecision] =
     useState("ready");
   const [literaryPublicationSuitable, setLiteraryPublicationSuitable] =
@@ -780,6 +791,16 @@ export function WorkspaceClient({
     setLiteraryPublicationSuitable(
       selectedSubmission.literary_publication_suitable === false ? "no" : "yes"
     );
+
+    setArtisticQualityCreativityScore(
+      integerOrDefault(selectedSubmission.artistic_quality_creativity_score, 0)
+    );
+    setInitiativeRelationScore(
+      integerOrDefault(selectedSubmission.initiative_relation_score, 0)
+    );
+    setAgeAppropriatenessScore(
+      integerOrDefault(selectedSubmission.age_appropriateness_score, 0)
+    );
   }, [selectedSubmission?.id]);
 
   useEffect(() => {
@@ -856,6 +877,15 @@ export function WorkspaceClient({
     culturalAuthenticity,
     artisticExcellence,
     ethicalAppropriateness
+  );
+
+  const liveArtisticRubricTotal = calculateArtisticRubricTotal({
+    artisticQualityCreativity: artisticQualityCreativityScore,
+    initiativeRelation: initiativeRelationScore,
+    ageAppropriateness: ageAppropriatenessScore,
+  });
+  const liveFinalArtisticRating = finalArtisticRatingFromScore(
+    liveArtisticRubricTotal
   );
 
   const isLimitedSubmissionDetailsView =
@@ -1110,7 +1140,7 @@ export function WorkspaceClient({
                   {!isLimitedSubmissionDetailsView &&
                     selectedSubmission.artistic_ranking && (
                       <DetailField
-                        label="Artistic Ranking"
+                        label="Artistic Grading"
                         value={selectedSubmission.artistic_ranking}
                       />
                     )}
@@ -1237,8 +1267,8 @@ export function WorkspaceClient({
 
                   {phase === "artistic_ranking" && (
                     <p className="muted small" style={{ marginBottom: 0 }}>
-                      Select the final artistic ranking for this categorized artwork,
-                      then click done. This is the final completion step.
+                      Score the artwork using the artistic grading rubric. The final
+                      artistic rating is calculated automatically from the total score.
                     </p>
                   )}
                 </div>
@@ -1734,27 +1764,118 @@ export function WorkspaceClient({
 
               {isAssignmentActionable && phase === "artistic_ranking" && (
                 <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
-                  <h4 style={{ marginTop: 0 }}>Artistic Ranking</h4>
+                  <h4 style={{ marginTop: 0 }}>Artistic Grading Rubric</h4>
                   <p className="muted small">
-                    Choose the final artistic ranking after the artwork has been reviewed
-                    and categorized.
+                    Enter points for each criterion. The total score and final artistic
+                    rating are calculated automatically and saved when you click done.
                   </p>
 
+                  <div className="grid grid-3" style={{ marginTop: 12 }}>
+                    <label>
+                      <span className="small">
+                        Artistic Quality & Creativity / الجودة الفنية والإبداع
+                        <br />
+                        <strong>0-50 points</strong>
+                      </span>
+                      <input
+                        className="input"
+                        type="number"
+                        name="artistic_quality_creativity_score"
+                        min={0}
+                        max={50}
+                        step={1}
+                        value={artisticQualityCreativityScore}
+                        onChange={(event) =>
+                          setArtisticQualityCreativityScore(
+                            integerOrDefault(event.target.value, 0)
+                          )
+                        }
+                        required
+                      />
+                    </label>
+
+                    <label>
+                      <span className="small">
+                        Relation to the Initiative / الارتباط بموضوع المبادرة
+                        <br />
+                        <strong>0-35 points</strong>
+                      </span>
+                      <input
+                        className="input"
+                        type="number"
+                        name="initiative_relation_score"
+                        min={0}
+                        max={35}
+                        step={1}
+                        value={initiativeRelationScore}
+                        onChange={(event) =>
+                          setInitiativeRelationScore(
+                            integerOrDefault(event.target.value, 0)
+                          )
+                        }
+                        required
+                      />
+                    </label>
+
+                    <label>
+                      <span className="small">
+                        Age Appropriateness / الملاءمة العمرية
+                        <br />
+                        <strong>0-15 points</strong>
+                      </span>
+                      <input
+                        className="input"
+                        type="number"
+                        name="age_appropriateness_score"
+                        min={0}
+                        max={15}
+                        step={1}
+                        value={ageAppropriatenessScore}
+                        onChange={(event) =>
+                          setAgeAppropriatenessScore(
+                            integerOrDefault(event.target.value, 0)
+                          )
+                        }
+                        required
+                      />
+                    </label>
+                  </div>
+
+                  <div className="card" style={{ marginTop: 12, boxShadow: "none" }}>
+                    <div className="grid grid-2">
+                      <DetailField
+                        label="Total Rubric Score"
+                        value={`${liveArtisticRubricTotal} / 100`}
+                      />
+                      <DetailField
+                        label="Calculated Final Artistic Rating"
+                        value={liveFinalArtisticRating}
+                      />
+                    </div>
+                  </div>
+
                   <label style={{ display: "block", marginTop: 12 }}>
-                    <span className="small">Artistic Ranking</span>
-                    <select
+                    <span className="small">Optional Rater Comment</span>
+                    <textarea
                       className="input"
-                      name="artistic_ranking"
-                      defaultValue={selectedSubmission.artistic_ranking ?? "Very Good"}
-                      required
-                    >
-                      {artisticRankingOptions.map((ranking) => (
-                        <option key={ranking} value={ranking}>
-                          {ranking}
-                        </option>
-                      ))}
-                    </select>
+                      name="artistic_rubric_comment"
+                      rows={4}
+                      dir="auto"
+                      defaultValue={displayText(
+                        selectedSubmission.artistic_rubric_comment,
+                        ""
+                      )}
+                      placeholder="Add short notes about the artistic grading decision if needed..."
+                    />
                   </label>
+
+                  <div className="submission-text-block" style={{ marginTop: 12 }}>
+                    <strong>Final classification matrix</strong>
+                    <div>
+                      99-100 Outstanding · 90-98 Excellent · 75-89 Very Good ·
+                      41-74 Average · 1-40 Weak
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1894,7 +2015,7 @@ export function WorkspaceClient({
                         : phase === "categorization"
                           ? "Mark Categorization Done"
                           : phase === "artistic_ranking"
-                            ? "Mark Ranking Done & Complete"
+                            ? "Submit Rubric & Complete"
                             : phase === "adek_evaluation" &&
                                 adekFileQualityClear === "no"
                               ? "Send for Correction"

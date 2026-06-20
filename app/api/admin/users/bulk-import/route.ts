@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import { requireUser, hashPassword } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { audit } from "@/lib/audit";
+import { normalizeRaterPathway } from "@/lib/rater-rubric";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,6 +46,37 @@ function normalizeBoolean(value: unknown) {
   }
 
   return true;
+}
+
+function parseRaterPathways(value: unknown) {
+  return Array.from(
+    new Set(
+      String(value ?? "")
+        .split(/[;,]/)
+        .map((item) => normalizeRaterPathway(item))
+        .filter(Boolean)
+    )
+  ) as string[];
+}
+
+async function replaceRaterPathwayLinks(raterId: string, pathways: string[]) {
+  const { error: deleteError } = await supabaseAdmin
+    .from("rater_pathway_assignments")
+    .delete()
+    .eq("rater_id", raterId);
+
+  if (deleteError) throw deleteError;
+
+  if (!pathways.length) return;
+
+  const { error } = await supabaseAdmin.from("rater_pathway_assignments").insert(
+    pathways.map((pathway) => ({
+      rater_id: raterId,
+      pathway,
+    }))
+  );
+
+  if (error) throw error;
 }
 
 function normalizeProofreaderType(value: unknown) {
@@ -130,6 +162,9 @@ export async function POST(req: Request) {
       const role = getCell(row, ["role", "Role"]).toLowerCase();
       const proofreaderTypeRaw = getCell(row, ["proofreader_type", "Proofreader Type", "proofreaderType"]).toLowerCase();
       const proofreaderType = role === "proofreader" ? normalizeProofreaderType(proofreaderTypeRaw) : null;
+      const raterPathways = role === "rater"
+        ? parseRaterPathways(getCell(row, ["rater_pathways", "Rater Pathways", "pathways", "Pathways"]))
+        : [];
       const temporaryPassword = getCell(row, [
         "temp_password",
         "temporary_password",
@@ -241,6 +276,10 @@ export async function POST(req: Request) {
         continue;
       }
 
+      if (role === "rater") {
+        await replaceRaterPathwayLinks(saved.id, raterPathways);
+      }
+
       if (existing) {
         updated++;
       } else {
@@ -256,6 +295,7 @@ export async function POST(req: Request) {
           email: saved.email,
           role: saved.role,
           imported_from_file: file.name,
+          rater_pathways: role === "rater" ? raterPathways : undefined,
         },
       });
     }

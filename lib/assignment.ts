@@ -1,6 +1,7 @@
 import "server-only";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import type { ProofreaderType, Role, WorkflowPhase } from "@/lib/types";
+import { normalizeRaterPathway } from "@/lib/rater-rubric";
 
 const phaseToRole: Record<WorkflowPhase, Role> = {
   coordinator_check: "coordinator",
@@ -74,6 +75,7 @@ type SubmissionForAssignment = {
   art_sub_pathway_name_en?: string | null;
   art_sub_pathway_name_ar?: string | null;
   literary_language?: string | null;
+  categorized_pathway?: string | null;
 };
 
 export type EvaluatorAssignmentTarget = {
@@ -221,6 +223,70 @@ async function getLeastLoadedUser(
   }
 
   return Array.from(workload.entries()).sort((a, b) => a[1] - b[1])[0][0];
+}
+
+async function getRaterCandidateIdsForPathway(pathway: string | null | undefined) {
+  const normalizedPathway = normalizeRaterPathway(pathway);
+
+  if (!normalizedPathway) {
+    throw new Error(
+      "This artwork does not have a valid categorized pathway. Categorization must be completed before assigning artistic ranking."
+    );
+  }
+
+  const { data: links, error } = await supabaseAdmin
+    .from("rater_pathway_assignments")
+    .select("rater_id")
+    .eq("pathway", normalizedPathway);
+
+  if (error) throw error;
+
+  const configuredIds = Array.from(
+    new Set<string>(
+      (links ?? [])
+        .map((row: any) => String(row.rater_id ?? "").trim())
+        .filter((id: string) => id.length > 0)
+    )
+  );
+
+  if (!configuredIds.length) {
+    throw new Error(
+      `No rater is configured for pathway: ${normalizedPathway}. Configure Admin > Users > Rater Pathway Links first.`
+    );
+  }
+
+  const { data: activeRaters, error: activeRatersError } = await supabaseAdmin
+    .from("profiles")
+    .select("id")
+    .in("id", configuredIds)
+    .eq("role", "rater")
+    .eq("is_active", true);
+
+  if (activeRatersError) throw activeRatersError;
+
+  const candidateIds = Array.from(
+    new Set<string>((activeRaters ?? []).map((row: any) => String(row.id)))
+  );
+
+  if (!candidateIds.length) {
+    throw new Error(
+      `No active rater is configured for pathway: ${normalizedPathway}. Configure Admin > Users > Rater Pathway Links first.`
+    );
+  }
+
+  return candidateIds;
+}
+
+async function getRaterCandidateIdsForSubmission(submissionId: string) {
+  const { data: submission, error } = await supabaseAdmin
+    .from("submissions")
+    .select("categorized_pathway")
+    .eq("id", submissionId)
+    .single();
+
+  if (error) throw error;
+
+  return getRaterCandidateIdsForPathway(submission?.categorized_pathway);
 }
 
 async function getCoordinatorForSchool(submissionId: string) {
@@ -410,6 +476,7 @@ export async function autoAssignOne(
     correctionNotes?: string | null;
     correctionSourcePhase?: WorkflowPhase | null;
     correctionSourceAssignmentId?: string | null;
+    candidateIds?: string[];
   }
 ) {
   if (phase === "coordinator_check" && options?.correctionSourceAssignmentId) {
@@ -470,9 +537,15 @@ export async function autoAssignOne(
   }
 
   if (!assignedTo) {
+    const candidateIds =
+      phase === "artistic_ranking"
+        ? await getRaterCandidateIdsForSubmission(submissionId)
+        : options?.candidateIds;
+
     assignedTo = await getLeastLoadedUser(role, {
       phase,
       proofreaderType: options?.proofreaderType,
+      candidateIds,
     });
   }
 
@@ -928,7 +1001,7 @@ export async function autoAssignPending(
     supabaseAdmin
       .from("submissions")
       .select(
-        "id,reference_id,workflow_status,registration_status,art_pathway_name_en,art_pathway_name_ar,art_sub_pathway_name_en,art_sub_pathway_name_ar,literary_language"
+        "id,reference_id,workflow_status,registration_status,art_pathway_name_en,art_pathway_name_ar,art_sub_pathway_name_en,art_sub_pathway_name_ar,literary_language,categorized_pathway"
       )
       .in("workflow_status", eligibleStatuses)
       .range(from, to)

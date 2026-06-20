@@ -53,7 +53,7 @@ const correctionSourceLabels: Record<string, string> = {
   management_review: "Management Review",
   final_review: "Review",
   categorization: "Categorization",
-  artistic_ranking: "Artistic Ranking",
+  artistic_ranking: "Artistic Grading",
 };
 
 function schoolOptionFromSubmission(submission: any): SchoolOption {

@@ -1,12 +1,12 @@
-full_name,email,username,password,role,proofreader_type,is_active
-Admin User,admin@example.com,admin_user,ChangeMe@2026,admin,,true
-ADEK HQ User,adek_hq@example.com,adek_hq_user,ChangeMe@2026,adek_hq,,true
-ADEK Evaluator 1,adek_evaluator_1@example.com,adek_evaluator_1,ChangeMe@2026,evaluator,,true
-Coordinator 1,coordinator_1@example.com,coordinator_1,ChangeMe@2026,coordinator,,true
-General Proofreader 1,general_proofreader_1@example.com,general_proofreader_1,ChangeMe@2026,proofreader,general,true
-Arabic Literary Proofreader 1,arabic_literary_1@example.com,arabic_literary_1,ChangeMe@2026,proofreader,literary_arabic,true
-English or Other Literary Proofreader 1,english_literary_1@example.com,english_literary_1,ChangeMe@2026,proofreader,literary_english_or_others,true
-Management 1,management_1@example.com,management_1,ChangeMe@2026,management,,true
-Reviewer 1,reviewer_1@example.com,reviewer_1,ChangeMe@2026,reviewer,,true
-Categorizer 1,categorizer_1@example.com,categorizer_1,ChangeMe@2026,categorizer,,true
-Rater 1,rater_1@example.com,rater_1,ChangeMe@2026,rater,,true
+full_name,email,username,password,role,proofreader_type,is_active,rater_pathways
+Admin User,admin@example.com,admin_user,ChangeMe@2026,admin,,true,
+ADEK HQ User,adek_hq@example.com,adek_hq_user,ChangeMe@2026,adek_hq,,true,
+ADEK Evaluator 1,adek_evaluator_1@example.com,adek_evaluator_1,ChangeMe@2026,evaluator,,true,
+Coordinator 1,coordinator_1@example.com,coordinator_1,ChangeMe@2026,coordinator,,true,
+General Proofreader 1,general_proofreader_1@example.com,general_proofreader_1,ChangeMe@2026,proofreader,general,true,
+Arabic Literary Proofreader 1,arabic_literary_1@example.com,arabic_literary_1,ChangeMe@2026,proofreader,literary_arabic,true,
+English or Other Literary Proofreader 1,english_literary_1@example.com,english_literary_1,ChangeMe@2026,proofreader,literary_english_or_others,true,
+Management 1,management_1@example.com,management_1,ChangeMe@2026,management,,true,
+Reviewer 1,reviewer_1@example.com,reviewer_1,ChangeMe@2026,reviewer,,true,
+Categorizer 1,categorizer_1@example.com,categorizer_1,ChangeMe@2026,categorizer,,true,
+Rater 1,rater_1@example.com,rater_1,ChangeMe@2026,rater,,true,Visual Expressions;Digital Expressions

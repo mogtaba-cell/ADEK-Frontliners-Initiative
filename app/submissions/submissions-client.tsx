@@ -457,7 +457,7 @@ export function SubmissionsClient({
                 <th>Original Pathway</th>
                 <th>Categorized Pathway</th>
                 <th>ADEK Artistic Rating</th>
-                <th>Artistic Ranking</th>
+                <th>Artistic Grading</th>
                 <th>Updated File</th>
                 <th>Action</th>
               </tr>
@@ -645,8 +645,47 @@ function SubmissionModal({
 
               {submission.artistic_ranking && (
                 <DetailField
-                  label="Final Artistic Ranking"
+                  label="Final Artistic Grading"
                   value={submission.artistic_ranking}
+                />
+              )}
+
+              {submission.artistic_rubric_total_score !== null &&
+                submission.artistic_rubric_total_score !== undefined && (
+                  <DetailField
+                    label="Artistic Rubric Total Score"
+                    value={`${submission.artistic_rubric_total_score} / 100`}
+                  />
+                )}
+
+              {submission.artistic_quality_creativity_score !== null &&
+                submission.artistic_quality_creativity_score !== undefined && (
+                  <DetailField
+                    label="Artistic Quality & Creativity Score"
+                    value={`${submission.artistic_quality_creativity_score} / 50`}
+                  />
+                )}
+
+              {submission.initiative_relation_score !== null &&
+                submission.initiative_relation_score !== undefined && (
+                  <DetailField
+                    label="Relation to Initiative Score"
+                    value={`${submission.initiative_relation_score} / 35`}
+                  />
+                )}
+
+              {submission.age_appropriateness_score !== null &&
+                submission.age_appropriateness_score !== undefined && (
+                  <DetailField
+                    label="Age Appropriateness Score"
+                    value={`${submission.age_appropriateness_score} / 15`}
+                  />
+                )}
+
+              {submission.artistic_rubric_comment && (
+                <DetailField
+                  label="Artistic Rubric Comment"
+                  value={submission.artistic_rubric_comment}
                 />
               )}
 
@@ -659,7 +698,7 @@ function SubmissionModal({
 
               {submission.artistic_ranking_completed_at && (
                 <DetailField
-                  label="Artistic Ranking Completed At"
+                  label="Artistic Grading Completed At"
                   value={submission.artistic_ranking_completed_at}
                 />
               )}
