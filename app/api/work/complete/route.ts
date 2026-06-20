@@ -1228,17 +1228,17 @@ export async function POST(req: Request) {
     if (phase === "artistic_ranking") {
       const artisticQualityCreativity = parseRubricScore(
         form.get("artistic_quality_creativity_score"),
-        50,
+        100,
         "Artistic Quality & Creativity"
       );
       const initiativeRelation = parseRubricScore(
         form.get("initiative_relation_score"),
-        35,
+        100,
         "Relation to the Initiative"
       );
       const ageAppropriateness = parseRubricScore(
         form.get("age_appropriateness_score"),
-        15,
+        100,
         "Age Appropriateness"
       );
       const totalScore = calculateArtisticRubricTotal({
@@ -1252,7 +1252,6 @@ export async function POST(req: Request) {
       }
 
       const artisticRanking = finalArtisticRatingFromScore(totalScore);
-      const rubricComment = textValue(form, "artistic_rubric_comment");
       const completedAt = nowIso();
 
       await markAssignmentCompleted(assignmentId, {
@@ -1267,7 +1266,7 @@ export async function POST(req: Request) {
           initiative_relation_score: initiativeRelation,
           age_appropriateness_score: ageAppropriateness,
           artistic_rubric_total_score: totalScore,
-          artistic_rubric_comment: rubricComment,
+          artistic_rubric_comment: null,
           artistic_ranking: artisticRanking,
           artistic_ranking_completed_at: completedAt,
           workflow_status: "completed",
@@ -1277,13 +1276,6 @@ export async function POST(req: Request) {
         "id",
         submissionId
       );
-
-      await addWorkflowComment({
-        submissionId,
-        authorId: user.id,
-        phase,
-        comment: rubricComment,
-      });
 
       await cancelActiveAssignmentsForCompletedWorkflow({
         submissionId,

@@ -15,9 +15,9 @@ export default async function RaterHomePage() {
       <div className="card">
         <h1>Artistic Grading Criteria</h1>
         <p className="muted">
-          Use this guide before opening your workspace. Raters score each artwork
-          out of 100 using three criteria. The system calculates the final
-          artistic rating automatically from your entered points.
+          Use this guide before opening your workspace. Raters now score each
+          criterion out of 100, and the system applies the rubric weights
+          automatically to calculate the final artistic rating.
         </p>
 
         <div className="actions" style={{ marginTop: 16 }}>
@@ -34,7 +34,7 @@ export default async function RaterHomePage() {
             <p dir="rtl" style={{ fontWeight: 800 }}>
               {criterion.titleAr}
             </p>
-            <p className="pill pill-info">{criterion.maxScore}%</p>
+            <p className="pill pill-info">Score 0-100 · Weight {criterion.weight}%</p>
             <p className="muted">{criterion.description}</p>
           </div>
         ))}
@@ -77,7 +77,7 @@ export default async function RaterHomePage() {
         <p className="muted small">
           Note: the supplied matrix did not assign a rating for scores 66-74, so
           the platform treats 41-74 as Average to keep every score mapped to a
-          final display value.
+          final display value. The weighted total is rounded to the nearest whole number.
         </p>
       </div>
     </main>

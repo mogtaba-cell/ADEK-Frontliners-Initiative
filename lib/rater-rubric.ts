@@ -13,7 +13,8 @@ export const ARTISTIC_RUBRIC_CRITERIA = [
     id: "artistic_quality_creativity",
     title: "Artistic Quality & Creativity",
     titleAr: "الجودة الفنية والإبداع",
-    maxScore: 50,
+    weight: 50,
+    inputMaxScore: 100,
     description:
       "Technical skill, execution, structure, originality, effective use of artistic elements, attention to detail, audience impact, and student effort.",
   },
@@ -21,7 +22,8 @@ export const ARTISTIC_RUBRIC_CRITERIA = [
     id: "initiative_relation",
     title: "Relation to the Initiative",
     titleAr: "الارتباط بموضوع المبادرة",
-    maxScore: 35,
+    weight: 35,
+    inputMaxScore: 100,
     description:
       "Clear message related to the initiative and innovative use of ideas, symbols, materials, or techniques to deliver the message.",
   },
@@ -29,7 +31,8 @@ export const ARTISTIC_RUBRIC_CRITERIA = [
     id: "age_appropriateness",
     title: "Age Appropriateness",
     titleAr: "الملاءمة العمرية",
-    maxScore: 15,
+    weight: 15,
+    inputMaxScore: 100,
     description:
       "Achievement relative to age or grade level and whether the artistic output is appropriate for the student age group.",
   },
@@ -47,11 +50,12 @@ export function calculateArtisticRubricTotal(scores: {
   initiativeRelation: number;
   ageAppropriateness: number;
 }) {
-  return (
-    scores.artisticQualityCreativity +
-    scores.initiativeRelation +
-    scores.ageAppropriateness
-  );
+  const weightedTotal =
+    scores.artisticQualityCreativity * 0.5 +
+    scores.initiativeRelation * 0.35 +
+    scores.ageAppropriateness * 0.15;
+
+  return Math.round(weightedTotal);
 }
 
 export function finalArtisticRatingFromScore(totalScore: number) {
@@ -65,7 +69,7 @@ export function finalArtisticRatingFromScore(totalScore: number) {
   return "Weak";
 }
 
-export function parseRubricScore(value: unknown, maxScore: number, label: string) {
+export function parseRubricScore(value: unknown, maxScore = 100, label: string) {
   const numberValue = Number(value);
 
   if (!Number.isFinite(numberValue) || !Number.isInteger(numberValue)) {

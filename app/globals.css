@@ -718,6 +718,20 @@ a[aria-disabled="true"] {
   color: #9b2f2f;
 }
 
+.decision-outstanding {
+  background: rgba(125, 157, 84, 0.22);
+  color: #234d20;
+}
+
+.decision-very-good {
+  background: rgba(178, 199, 192, 0.28);
+  color: #1e5b4b;
+}
+
+.workspace-task-action-box {
+  align-self: start;
+}
+
 @media (max-width: 800px) {
   .task-action-header {
     flex-direction: column;

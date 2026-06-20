@@ -160,6 +160,43 @@ function calculateAdekDecisionLabel(a: string, b: string, c: string) {
   };
 }
 
+function calculateArtisticRatingLabel(rating: string) {
+  const normalized = String(rating ?? "").trim().toLowerCase();
+
+  if (normalized === "outstanding") {
+    return {
+      label: "Outstanding",
+      className: "decision-outstanding",
+    };
+  }
+
+  if (normalized === "excellent") {
+    return {
+      label: "Excellent",
+      className: "decision-approved",
+    };
+  }
+
+  if (normalized === "very good") {
+    return {
+      label: "Very Good",
+      className: "decision-very-good",
+    };
+  }
+
+  if (normalized === "average") {
+    return {
+      label: "Average",
+      className: "decision-needs-review",
+    };
+  }
+
+  return {
+    label: "Weak",
+    className: "decision-disqualified",
+  };
+}
+
 function getCorrectionSourceLabel(value: string | null | undefined) {
   if (!value) return "Unknown phase";
   return correctionSourceLabels[value] ?? labelPhase(value) ?? value;
@@ -887,6 +924,9 @@ export function WorkspaceClient({
   const liveFinalArtisticRating = finalArtisticRatingFromScore(
     liveArtisticRubricTotal
   );
+  const liveArtisticRatingBadge = calculateArtisticRatingLabel(
+    liveFinalArtisticRating
+  );
 
   const isLimitedSubmissionDetailsView =
     phase === "adek_evaluation" ||
@@ -1277,6 +1317,14 @@ export function WorkspaceClient({
                   <div className={`decision-badge ${liveAdekDecision.className}`}>
                     <span>Decision</span>
                     <strong>{liveAdekDecision.label}</strong>
+                  </div>
+                )}
+
+                {phase === "artistic_ranking" && (
+                  <div className={`decision-badge ${liveArtisticRatingBadge.className}`}>
+                    <span>Calculated Final Artistic Rating</span>
+                    <strong>{liveArtisticRatingBadge.label}</strong>
+                    <small>{liveArtisticRubricTotal} / 100 weighted total</small>
                   </div>
                 )}
               </div>
@@ -1766,8 +1814,8 @@ export function WorkspaceClient({
                 <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
                   <h4 style={{ marginTop: 0 }}>Artistic Grading Rubric</h4>
                   <p className="muted small">
-                    Enter points for each criterion. The total score and final artistic
-                    rating are calculated automatically and saved when you click done.
+                    Enter a score out of 100 for each criterion. The system applies the
+                    rubric weights automatically to calculate the final total and artistic rating.
                   </p>
 
                   <div className="grid grid-3" style={{ marginTop: 12 }}>
@@ -1775,14 +1823,14 @@ export function WorkspaceClient({
                       <span className="small">
                         Artistic Quality & Creativity / الجودة الفنية والإبداع
                         <br />
-                        <strong>0-50 points</strong>
+                        <strong>Score 0-100 · Weight 50%</strong>
                       </span>
                       <input
                         className="input"
                         type="number"
                         name="artistic_quality_creativity_score"
                         min={0}
-                        max={50}
+                        max={100}
                         step={1}
                         value={artisticQualityCreativityScore}
                         onChange={(event) =>
@@ -1798,14 +1846,14 @@ export function WorkspaceClient({
                       <span className="small">
                         Relation to the Initiative / الارتباط بموضوع المبادرة
                         <br />
-                        <strong>0-35 points</strong>
+                        <strong>Score 0-100 · Weight 35%</strong>
                       </span>
                       <input
                         className="input"
                         type="number"
                         name="initiative_relation_score"
                         min={0}
-                        max={35}
+                        max={100}
                         step={1}
                         value={initiativeRelationScore}
                         onChange={(event) =>
@@ -1821,14 +1869,14 @@ export function WorkspaceClient({
                       <span className="small">
                         Age Appropriateness / الملاءمة العمرية
                         <br />
-                        <strong>0-15 points</strong>
+                        <strong>Score 0-100 · Weight 15%</strong>
                       </span>
                       <input
                         className="input"
                         type="number"
                         name="age_appropriateness_score"
                         min={0}
-                        max={15}
+                        max={100}
                         step={1}
                         value={ageAppropriatenessScore}
                         onChange={(event) =>
@@ -1844,30 +1892,15 @@ export function WorkspaceClient({
                   <div className="card" style={{ marginTop: 12, boxShadow: "none" }}>
                     <div className="grid grid-2">
                       <DetailField
-                        label="Total Rubric Score"
+                        label="Weighted Total Rubric Score"
                         value={`${liveArtisticRubricTotal} / 100`}
                       />
                       <DetailField
-                        label="Calculated Final Artistic Rating"
-                        value={liveFinalArtisticRating}
+                        label="Weighting Formula"
+                        value="Artistic Quality 50% · Initiative 35% · Age 15%"
                       />
                     </div>
                   </div>
-
-                  <label style={{ display: "block", marginTop: 12 }}>
-                    <span className="small">Optional Rater Comment</span>
-                    <textarea
-                      className="input"
-                      name="artistic_rubric_comment"
-                      rows={4}
-                      dir="auto"
-                      defaultValue={displayText(
-                        selectedSubmission.artistic_rubric_comment,
-                        ""
-                      )}
-                      placeholder="Add short notes about the artistic grading decision if needed..."
-                    />
-                  </label>
 
                   <div className="submission-text-block" style={{ marginTop: 12 }}>
                     <strong>Final classification matrix</strong>
