@@ -901,9 +901,15 @@ export function WorkspaceClient({
       params.set("phase", phase);
       params.set("page", String(page));
 
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 20000);
+
       const response = await fetch(`/api/workspace/queue?${params.toString()}`, {
         headers: { Accept: "application/json" },
+        signal: controller.signal,
       });
+
+      window.clearTimeout(timeoutId);
 
       const payload = await response.json().catch(() => null);
 
@@ -1010,11 +1016,18 @@ export function WorkspaceClient({
           setTaskNotice(payload?.message ?? "Action completed. Next artwork loaded.");
           return;
         }
+
+        setTaskNotice(
+          payload?.message ??
+            "Action completed. The next page did not load automatically. Press Load More or refresh when ready."
+        );
+        return;
       }
 
-      setTaskNotice(payload?.message ?? "Action completed. Refreshing workspace...");
-      const redirectTo = payload?.redirectTo || response.url || returnPath || window.location.href;
-      window.location.assign(redirectTo);
+      setVisibleAssignments([]);
+      setSelectedId(null);
+      setTaskNotice(payload?.message ?? "Action completed. No more loaded artworks remain.");
+      return;
     } catch (error) {
       setTaskError(
         error instanceof Error

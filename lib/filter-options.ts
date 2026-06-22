@@ -107,22 +107,9 @@ export async function getSubmissionFilterOptions(): Promise<FilterOptions> {
     return cachedFilterOptions.value;
   }
 
-  const rows = await fetchAllSubmissionFilterRows();
-
-  const liveArtisticRatings = sortUnique(
-    rows
-      .map((submission: any) => submission.artistic_rating)
-      .map(normalizeArtisticRatingValue)
-      .filter(Boolean)
-  );
-
-  const artisticRatings = sortArtisticRatings(
-    sortUnique([
-      ...OFFICIAL_ARTISTIC_RATINGS,
-      ...liveArtisticRatings,
-    ])
-  );
-
+  // Prefer the compact materialized/options table first. The old order fetched
+  // every submissions row before checking analytics_filter_options, which made
+  // workspace pages slow even though the compact table existed.
   let analyticsOptions: any[] = [];
 
   const { data, error } = await supabaseAdmin
@@ -151,6 +138,10 @@ export async function getSubmissionFilterOptions(): Promise<FilterOptions> {
           acc.workflowStatuses.push(row.value);
         }
 
+        if (row.filter_type === "artistic_rating") {
+          acc.artisticRatings.push(normalizeArtisticRatingValue(row.value));
+        }
+
         return acc;
       },
       {
@@ -161,7 +152,7 @@ export async function getSubmissionFilterOptions(): Promise<FilterOptions> {
         regions: [],
         registrationStatuses: [],
         workflowStatuses: [],
-        artisticRatings,
+        artisticRatings: [...OFFICIAL_ARTISTIC_RATINGS],
       }
     );
 
@@ -172,13 +163,30 @@ export async function getSubmissionFilterOptions(): Promise<FilterOptions> {
       regions: sortUnique(options.regions),
       registrationStatuses: sortUnique(options.registrationStatuses),
       workflowStatuses: sortUnique(options.workflowStatuses),
-      artisticRatings,
+      artisticRatings: sortArtisticRatings(sortUnique(options.artisticRatings)),
     };
 
     cachedFilterOptions = { expiresAt: now + FILTER_OPTIONS_CACHE_TTL_MS, value };
 
     return value;
   }
+
+  // Fallback only when the compact options table is empty/missing.
+  const rows = await fetchAllSubmissionFilterRows();
+
+  const liveArtisticRatings = sortUnique(
+    rows
+      .map((submission: any) => submission.artistic_rating)
+      .map(normalizeArtisticRatingValue)
+      .filter(Boolean)
+  );
+
+  const artisticRatings = sortArtisticRatings(
+    sortUnique([
+      ...OFFICIAL_ARTISTIC_RATINGS,
+      ...liveArtisticRatings,
+    ])
+  );
 
   const value = {
     pathways: sortUnique(
@@ -206,3 +214,4 @@ export async function getSubmissionFilterOptions(): Promise<FilterOptions> {
 
   return value;
 }
+

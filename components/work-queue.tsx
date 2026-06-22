@@ -228,6 +228,13 @@ function isProofreadingPhase(phase: WorkflowPhase) {
   return phase === "proofreading" || phase === "literary_proofreading";
 }
 
+function shouldLoadTaskHistory(phase: WorkflowPhase) {
+  // Categorizer and Rater task cards do not need full previous-task history.
+  // Skipping it removes two extra DB queries for every workspace page/load-more
+  // request in the largest queues.
+  return phase !== "categorization" && phase !== "artistic_ranking";
+}
+
 function statusesForView(phase: WorkflowPhase, view: string) {
   if (view === "all") return allAssignmentStatuses;
 
@@ -431,7 +438,6 @@ function buildAssignmentRowsQuery({
         ${submissionSelectFieldsForPhase(phase)}
       )
       `,
-      { count: "exact" },
     )
     .eq("assigned_to", userId)
     .eq("phase", phase)
@@ -500,7 +506,7 @@ async function fetchAssignmentRowsPage({
   // loading the full queue.
   const to = from + WORKSPACE_PAGE_SIZE;
 
-  const { data, count, error } = await buildAssignmentRowsQuery({
+  const { data, error } = await buildAssignmentRowsQuery({
     userId,
     phase,
     view,
@@ -529,7 +535,7 @@ async function fetchAssignmentRowsPage({
 
   return {
     rows: hasNextPage ? rows.slice(0, WORKSPACE_PAGE_SIZE) : rows,
-    count: count ?? rows.length,
+    count: hasNextPage ? undefined : rows.length,
     hasNextPage,
     error: null,
   };
@@ -552,7 +558,7 @@ function buildAssignmentCountQuery({
 
   let query = supabaseAdmin
     .from("assignments")
-    .select("id,submissions!inner(id,workflow_status)", {
+    .select("id", {
       count: "exact",
       head: true,
     })
@@ -956,7 +962,7 @@ export async function WorkQueuePage({
 
   const historyBySubmission: Record<string, any[]> = {};
 
-  if (submissionIds.length) {
+  if (shouldLoadTaskHistory(phase) && submissionIds.length) {
     const historyRows: any[] = [];
 
     // Keep each .in(...) request small. Large arrays create very long
@@ -1166,7 +1172,9 @@ export async function WorkQueuePage({
               )?.label ?? school}
             </span>
           )}
-          <span className="pill">Results: {totalResults}</span>
+          <span className="pill">
+            Results: {totalResults ? totalResults : `${assignments.length}${hasNextPage ? "+" : ""}`}
+          </span>
         </div>
       </div>
 

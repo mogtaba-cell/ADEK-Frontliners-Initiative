@@ -130,9 +130,14 @@ async function getAssignment(assignmentId: string) {
 }
 
 async function getSubmission(submissionId: string) {
+  // Keep this lookup small. The old select("*") included raw_data and long
+  // text fields, then wrote them into audit_logs on every task completion.
+  // That made POST /api/work/complete slow for large queues.
   const { data, error } = await supabaseAdmin
     .from("submissions")
-    .select("*")
+    .select(
+      "id,reference_id,workflow_status,categorized_pathway,categorization_completed_at,artistic_ranking,artistic_ranking_completed_at"
+    )
     .eq("id", submissionId)
     .single();
 
@@ -1296,8 +1301,12 @@ export async function POST(req: Request) {
       entityType: "assignment",
       entityId: assignmentId,
       before: {
-        assignment,
-        submission: submissionBefore,
+        assignment_id: assignment.id,
+        assignment_status: assignment.status,
+        assignment_phase: assignment.phase,
+        submission_id: submissionBefore.id,
+        submission_reference_id: submissionBefore.reference_id,
+        submission_workflow_status: submissionBefore.workflow_status,
       },
       after: {
         phase,

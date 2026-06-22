@@ -68,6 +68,10 @@ function defaultViewForPhase(phase: WorkflowPhase) {
   return "not_completed";
 }
 
+function shouldLoadTaskHistory(phase: WorkflowPhase) {
+  return phase !== "categorization" && phase !== "artistic_ranking";
+}
+
 function submissionSelectFieldsForPhase(phase: WorkflowPhase) {
   const baseFields = [
     "id",
@@ -454,7 +458,9 @@ export async function GET(request: Request) {
     page,
   });
 
-  const assignments = await enrichWithTaskHistory(rows);
+  const assignments = shouldLoadTaskHistory(phase)
+    ? await enrichWithTaskHistory(rows)
+    : rows;
 
   return NextResponse.json({
     assignments,

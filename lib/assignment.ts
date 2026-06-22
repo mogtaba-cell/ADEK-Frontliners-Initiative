@@ -189,23 +189,17 @@ async function getLeastLoadedUser(
     );
   }
 
-  const userIds = users.map((user) => user.id);
-
-  const workload = new Map<string, number>();
-  for (const user of users) {
-    workload.set(user.id, 0);
-  }
-
-  for (const chunk of chunkArray(userIds, SUPABASE_IN_FILTER_CHUNK_SIZE)) {
-    if (!chunk.length) continue;
-
-    const assignments = await fetchAllRows<{ assigned_to: string | null }>((from, to) => {
+  // Do not fetch all assignment rows just to calculate workload. With thousands
+  // of categorizer/rater assignments this made every completion wait on large
+  // PostgREST responses. Count per candidate with head:true returns metadata
+  // only and relies on the assignments workload indexes.
+  const workloadEntries = await Promise.all(
+    users.map(async (user) => {
       let query = supabaseAdmin
         .from("assignments")
-        .select("assigned_to")
-        .in("assigned_to", chunk)
-        .in("status", workloadAssignmentStatuses)
-        .range(from, to);
+        .select("id", { count: "exact", head: true })
+        .eq("assigned_to", user.id)
+        .in("status", workloadAssignmentStatuses);
 
       if (options?.phase) query = query.eq("phase", options.phase);
 
@@ -213,16 +207,21 @@ async function getLeastLoadedUser(
         query = query.eq("proofreader_type", options.proofreaderType);
       }
 
-      return query;
-    });
+      const { count, error } = await query;
+      if (error) throw error;
 
-    for (const row of assignments) {
-      if (!row.assigned_to) continue;
-      workload.set(row.assigned_to, (workload.get(row.assigned_to) ?? 0) + 1);
-    }
-  }
+      return {
+        userId: user.id,
+        count: count ?? 0,
+        name: String(user.full_name ?? user.email ?? user.id),
+      };
+    })
+  );
 
-  return Array.from(workload.entries()).sort((a, b) => a[1] - b[1])[0][0];
+  return workloadEntries.sort((a, b) => {
+    if (a.count !== b.count) return a.count - b.count;
+    return a.name.localeCompare(b.name);
+  })[0].userId;
 }
 
 async function getRaterCandidateIdsForPathway(pathway: string | null | undefined) {
