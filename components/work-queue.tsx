@@ -36,7 +36,7 @@ const allAssignmentStatuses = [
   "sent_for_review",
 ];
 
-const WORKSPACE_PAGE_SIZE = 1000;
+const WORKSPACE_PAGE_SIZE = 50;
 
 const correctionReasonLabels: Record<string, string> = {
   adek_file_quality: "Artwork File Quality / Clarity Issue",
@@ -259,6 +259,66 @@ function defaultViewForPhase(phase: WorkflowPhase) {
   return "not_completed";
 }
 
+function submissionSelectFieldsForPhase(phase: WorkflowPhase) {
+  const baseFields = [
+    "id",
+    "reference_id",
+    "registration_id",
+    "registration_status",
+    "workflow_status",
+    "institution_name",
+    "institution_ref_number",
+    "institution_type",
+    "school_region",
+    "group_name",
+    "art_pathway_name_en",
+    "art_pathway_name_ar",
+    "art_sub_pathway_name_en",
+    "art_sub_pathway_name_ar",
+    "artwork_title_en",
+    "artwork_title_ar",
+    "description_en",
+    "description_ar",
+    "influence_idea_source",
+    "most_enjoyable_part",
+    "focused_elements",
+    "participating_students_names",
+    "participating_students_esis_numbers",
+    "participating_students_genders",
+    "participating_students_grades",
+    "participating_students_nationalities",
+    "art_link",
+    "updated_artwork_file_name",
+    "updated_artwork_file_url",
+    "submission_date",
+    "submission_date_value",
+    "artistic_rating",
+    "management_artistic_rating",
+    "categorized_pathway",
+    "categorization_completed_at",
+    "artistic_ranking",
+    "artistic_quality_creativity_score",
+    "initiative_relation_score",
+    "age_appropriateness_score",
+    "artistic_rubric_total_score",
+    "artistic_rubric_comment",
+    "artistic_ranking_completed_at",
+    "evaluator_comment",
+    "evaluator_file_quality_clear",
+    "literary_publication_suitable",
+    "literary_proofreader_comment",
+    "literary_updated_content",
+  ];
+
+  // raw_data is large. Keep it only where the UI needs to compare original
+  // imported text with reviewed/proofread text.
+  if (phase === "final_review") {
+    baseFields.push("raw_data");
+  }
+
+  return baseFields.join(",\n        ");
+}
+
 function applySubmissionWorkflowGate(
   query: any,
   _phase: WorkflowPhase,
@@ -367,7 +427,9 @@ function buildAssignmentRowsQuery({
       coordinator_comment,
       coordinator_waiting_for_response,
       coordinator_waiting_for_response_at,
-      submissions!inner(*)
+      submissions!inner(
+        ${submissionSelectFieldsForPhase(phase)}
+      )
       `,
       { count: "exact" },
     )
@@ -408,7 +470,7 @@ function buildAssignmentRowsQuery({
   return query;
 }
 
-async function fetchAllAssignmentRows({
+async function fetchAssignmentRowsPage({
   userId,
   phase,
   view,
@@ -419,6 +481,7 @@ async function fetchAllAssignmentRows({
   pathway,
   school,
   search,
+  page,
 }: {
   userId: string;
   phase: WorkflowPhase;
@@ -430,51 +493,44 @@ async function fetchAllAssignmentRows({
   pathway?: string;
   school?: string;
   search?: string;
+  page: number;
 }) {
-  const rows: any[] = [];
-  let totalResults = 0;
+  const from = (Math.max(1, page) - 1) * WORKSPACE_PAGE_SIZE;
+  // Fetch one extra row so the UI can know whether to show Load More without
+  // loading the full queue.
+  const to = from + WORKSPACE_PAGE_SIZE;
 
-  for (let from = 0; ; from += WORKSPACE_PAGE_SIZE) {
-    const to = from + WORKSPACE_PAGE_SIZE - 1;
+  const { data, count, error } = await buildAssignmentRowsQuery({
+    userId,
+    phase,
+    view,
+    statuses,
+    correctionSourcePhase,
+    proofreaderType,
+    correctionReason,
+    pathway,
+    school,
+    search,
+    from,
+    to,
+  });
 
-    const { data, count, error } = await buildAssignmentRowsQuery({
-      userId,
-      phase,
-      view,
-      statuses,
-      correctionSourcePhase,
-      proofreaderType,
-      correctionReason,
-      pathway,
-      school,
-      search,
-      from,
-      to,
-    });
-
-    if (error) {
-      return {
-        rows,
-        count: totalResults,
-        error,
-      };
-    }
-
-    const page = data ?? [];
-
-    if (from === 0) {
-      totalResults = count ?? page.length;
-    }
-
-    rows.push(...page);
-
-    if (page.length < WORKSPACE_PAGE_SIZE) break;
-    if (totalResults > 0 && rows.length >= totalResults) break;
+  if (error) {
+    return {
+      rows: [],
+      count: 0,
+      hasNextPage: false,
+      error,
+    };
   }
 
+  const rows = data ?? [];
+  const hasNextPage = rows.length > WORKSPACE_PAGE_SIZE;
+
   return {
-    rows,
-    count: totalResults || rows.length,
+    rows: hasNextPage ? rows.slice(0, WORKSPACE_PAGE_SIZE) : rows,
+    count: count ?? rows.length,
+    hasNextPage,
     error: null,
   };
 }
@@ -878,8 +934,9 @@ export async function WorkQueuePage({
   const {
     rows: assignments,
     count,
+    hasNextPage,
     error,
-  } = await fetchAllAssignmentRows({
+  } = await fetchAssignmentRowsPage({
     userId: user.id,
     phase,
     view,
@@ -890,6 +947,7 @@ export async function WorkQueuePage({
     pathway,
     school: isCoordinator ? school : "",
     search,
+    page: 1,
   });
 
   const submissionIds = Array.from(
@@ -1124,6 +1182,10 @@ export async function WorkQueuePage({
           assignments={enrichedAssignments}
           currentPath={buildReturnPath(role, searchParams)}
           proofreaderType={user.proofreader_type ?? null}
+          initialHasNextPage={hasNextPage}
+          initialPage={1}
+          pageSize={WORKSPACE_PAGE_SIZE}
+          totalResults={totalResults}
         />
       )}
     </main>

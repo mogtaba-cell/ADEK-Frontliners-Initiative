@@ -728,12 +728,20 @@ export function WorkspaceClient({
   assignments,
   currentPath,
   proofreaderType,
+  initialHasNextPage = false,
+  initialPage = 1,
+  pageSize = 50,
+  totalResults,
 }: {
   phase: WorkflowPhase;
   role: Role;
   assignments: Assignment[];
   currentPath: string;
   proofreaderType?: ProofreaderType | null;
+  initialHasNextPage?: boolean;
+  initialPage?: number;
+  pageSize?: number;
+  totalResults?: number;
 }) {
   const [visibleAssignments, setVisibleAssignments] = useState<Assignment[]>(assignments);
   const [selectedId, setSelectedId] = useState<string | null>(
@@ -759,6 +767,10 @@ export function WorkspaceClient({
   const [isSubmittingTask, setIsSubmittingTask] = useState(false);
   const [taskError, setTaskError] = useState<string | null>(null);
   const [taskNotice, setTaskNotice] = useState<string | null>(null);
+  const [loadedPage, setLoadedPage] = useState(initialPage);
+  const [hasNextPage, setHasNextPage] = useState(initialHasNextPage);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -768,7 +780,10 @@ export function WorkspaceClient({
 
   useEffect(() => {
     setVisibleAssignments(assignments);
-  }, [assignments]);
+    setLoadedPage(initialPage);
+    setHasNextPage(initialHasNextPage);
+    setLoadMoreError(null);
+  }, [assignments, initialHasNextPage, initialPage]);
 
   const selectedAssignment = useMemo(
     () =>
@@ -867,6 +882,70 @@ export function WorkspaceClient({
     window.history.replaceState(null, "", `${url.pathname}${url.search}`);
   }, []);
 
+  async function loadAssignmentPage({
+    page,
+    baseAssignments,
+    selectFirstNew,
+  }: {
+    page: number;
+    baseAssignments?: Assignment[];
+    selectFirstNew?: boolean;
+  }) {
+    if (typeof window === "undefined") return false;
+
+    setIsLoadingMore(true);
+    setLoadMoreError(null);
+
+    try {
+      const params = new URLSearchParams(window.location.search);
+      params.set("phase", phase);
+      params.set("page", String(page));
+
+      const response = await fetch(`/api/workspace/queue?${params.toString()}`, {
+        headers: { Accept: "application/json" },
+      });
+
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Could not load more artworks.");
+      }
+
+      const incomingAssignments = Array.isArray(payload?.assignments)
+        ? (payload.assignments as Assignment[])
+        : [];
+      const base = baseAssignments ?? visibleAssignments;
+      const existingIds = new Set(base.map((assignment) => assignment.id));
+      const uniqueIncoming = incomingAssignments.filter(
+        (assignment) => !existingIds.has(assignment.id)
+      );
+      const mergedAssignments = [...base, ...uniqueIncoming];
+
+      setVisibleAssignments(mergedAssignments);
+      setLoadedPage(Number(payload?.page) || page);
+      setHasNextPage(Boolean(payload?.hasNextPage));
+
+      if (selectFirstNew && uniqueIncoming.length > 0) {
+        setSelectedId(uniqueIncoming[0].id);
+      } else if (!selectedId && mergedAssignments.length > 0) {
+        setSelectedId(mergedAssignments[0].id);
+      }
+
+      return uniqueIncoming.length > 0;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Could not load more artworks.";
+      setLoadMoreError(message);
+      return false;
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }
+
+  async function handleLoadMore() {
+    await loadAssignmentPage({ page: loadedPage + 1 });
+  }
+
   async function handleTaskSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -918,6 +997,21 @@ export function WorkspaceClient({
         return;
       }
 
+      if (hasNextPage) {
+        setVisibleAssignments([]);
+        setSelectedId(null);
+        const loadedNextPage = await loadAssignmentPage({
+          page: loadedPage + 1,
+          baseAssignments: [],
+          selectFirstNew: true,
+        });
+
+        if (loadedNextPage) {
+          setTaskNotice(payload?.message ?? "Action completed. Next artwork loaded.");
+          return;
+        }
+      }
+
       setTaskNotice(payload?.message ?? "Action completed. Refreshing workspace...");
       const redirectTo = payload?.redirectTo || response.url || returnPath || window.location.href;
       window.location.assign(redirectTo);
@@ -963,8 +1057,9 @@ export function WorkspaceClient({
         <div className="workspace-sidebar-header">
           <h2>Assigned Artworks</h2>
           <p className="muted small">
-            {visibleAssignments.length} artwork{visibleAssignments.length === 1 ? "" : "s"} in
-            this view.
+            Showing {visibleAssignments.length}
+            {typeof totalResults === "number" ? ` of ${totalResults}` : ""} artwork
+            {visibleAssignments.length === 1 ? "" : "s"} in this view.
           </p>
         </div>
 
@@ -1020,6 +1115,25 @@ export function WorkspaceClient({
           {visibleAssignments.length === 0 && (
             <div className="workspace-empty">
               No artworks match the selected filters.
+            </div>
+          )}
+
+          {loadMoreError && (
+            <div className="workspace-empty" style={{ color: "#9b2f2f" }}>
+              {loadMoreError}
+            </div>
+          )}
+
+          {hasNextPage && (
+            <div className="workspace-empty">
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={handleLoadMore}
+                disabled={isLoadingMore}
+              >
+                {isLoadingMore ? "Loading..." : `Load ${pageSize} more artworks`}
+              </button>
             </div>
           )}
         </div>

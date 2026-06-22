@@ -40,13 +40,6 @@ function getPositiveIntegerParam(value: string | null, fallback: number) {
 }
 
 function statusesForView(phase: WorkflowPhase, view: string) {
-  // Coordinator workspace "All" should list active queue items only.
-  // Completed coordinator rows are task-flow history and should not appear as
-  // duplicate artwork cards in the left workspace list or API load-more results.
-  if (phase === "coordinator_check" && view === "all") {
-    return ["assigned", "in_progress"];
-  }
-
   if (view === "all") return allAssignmentStatuses;
   if (view === "completed") return ["completed"];
 
@@ -55,13 +48,9 @@ function statusesForView(phase: WorkflowPhase, view: string) {
   }
 
   if (view === "needs_review") {
-    return phase === "management_review" ? ["assigned"] : ["completed"];
-  }
-
-  if (view === "pending") {
     return phase === "management_review"
-      ? ["in_progress"]
-      : ["assigned", "in_progress"];
+      ? ["assigned", "in_progress"]
+      : ["completed"];
   }
 
   if (view === "sent_for_review") return ["sent_for_review"];
@@ -142,22 +131,11 @@ function submissionSelectFieldsForPhase(phase: WorkflowPhase) {
 function applySubmissionWorkflowGate(
   query: any,
   _phase: WorkflowPhase,
-  view: string,
+  _view: string,
 ) {
-  const activeQueueViews = new Set([
-    "not_completed",
-    "pending",
-    "sent_for_correction",
-    "returned_for_correction",
-    "sent_for_review",
-    "needs_review",
-    "waiting_for_response",
-  ]);
-
-  if (activeQueueViews.has(view)) {
-    return query.neq("submissions.workflow_status", "disqualified");
-  }
-
+  // The assignment row is the source of truth for what a user should see.
+  // Do not hide valid assignment rows based on submission.workflow_status here;
+  // doing so can make Load More disagree with the first server-rendered page.
   return query;
 }
 
@@ -165,12 +143,7 @@ function applyDecisionGate(query: any, phase: WorkflowPhase, view: string) {
   if (view === "approved") return query.eq("decision", "approved");
   if (view === "disqualified") return query.eq("decision", "disqualified");
 
-  if (phase === "management_review") {
-    if (view === "needs_review") return query.is("decision", null);
-    if (view === "pending") return query.eq("decision", "pending");
-  }
-
-  if (view === "needs_review") {
+  if (view === "needs_review" && phase !== "management_review") {
     return query.eq("decision", "needs_review");
   }
 
