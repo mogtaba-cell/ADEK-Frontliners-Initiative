@@ -34,6 +34,8 @@ type SubmissionSummaryRow = {
   workflow_status?: string | null;
   evaluation_decision?: string | null;
   management_decision?: string | null;
+  artistic_rubric_total_score?: number | null;
+  artistic_ranking_completed_at?: string | null;
 };
 
 type AssignmentSummaryRow = {
@@ -50,7 +52,7 @@ async function fetchAllSubmissions() {
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await supabaseAdmin
       .from("submissions")
-      .select("id,workflow_status,evaluation_decision,management_decision")
+      .select("id,workflow_status,evaluation_decision,management_decision,artistic_rubric_total_score,artistic_ranking_completed_at")
       .order("created_at", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
 
@@ -206,12 +208,9 @@ async function buildKpis(): Promise<KpiResponse["data"]> {
     }
 
     if (
-      rows.some(
-        (row) =>
-          row.phase === "artistic_ranking" &&
-          row.status === "completed" &&
-          row.decision === "completed",
-      )
+      submission.artistic_rubric_total_score !== null &&
+      submission.artistic_rubric_total_score !== undefined &&
+      Boolean(submission.artistic_ranking_completed_at)
     ) {
       artisticRanked += 1;
     }

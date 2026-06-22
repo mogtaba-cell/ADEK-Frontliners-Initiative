@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { ProofreaderType, Role, WorkflowPhase } from "@/lib/types";
 import { labelPhase, labelWorkflowStatus, statusClassName } from "@/lib/workflow";
 import {
@@ -747,6 +747,8 @@ export function WorkspaceClient({
   const [selectedId, setSelectedId] = useState<string | null>(
     assignments[0]?.id ?? null
   );
+  const workspaceMainRef = useRef<HTMLElement | null>(null);
+  const completionBannerRef = useRef<HTMLDivElement | null>(null);
 
   const [adekFileQualityClear, setAdekFileQualityClear] = useState("yes");
   const [culturalAuthenticity, setCulturalAuthenticity] = useState("yes");
@@ -865,7 +867,6 @@ export function WorkspaceClient({
 
   useEffect(() => {
     setTaskError(null);
-    setTaskNotice(null);
     setIsSubmittingTask(false);
   }, [selectedAssignment?.id]);
 
@@ -952,6 +953,24 @@ export function WorkspaceClient({
     await loadAssignmentPage({ page: loadedPage + 1 });
   }
 
+  function scrollToWorkspaceTop() {
+    if (typeof window === "undefined") return;
+
+    window.requestAnimationFrame(() => {
+      workspaceMainRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+
+      completionBannerRef.current?.focus({ preventScroll: true });
+    });
+  }
+
+  function showCompletionNotice(message: string) {
+    setTaskNotice(message);
+    scrollToWorkspaceTop();
+  }
+
   function removeSelectedAssignmentFromVisibleList(notice: string) {
     const staleAssignmentId = selectedAssignment?.id;
     const remainingAssignments = staleAssignmentId
@@ -960,7 +979,7 @@ export function WorkspaceClient({
 
     setVisibleAssignments(remainingAssignments);
     setSelectedId(remainingAssignments[0]?.id ?? null);
-    setTaskNotice(notice);
+    showCompletionNotice(notice);
   }
 
   function isStaleTaskErrorMessage(message: string) {
@@ -1028,25 +1047,30 @@ export function WorkspaceClient({
         : visibleAssignments;
 
       if (remainingAssignments.length > 0) {
+        const nextReferenceId = remainingAssignments[0]?.submissions?.reference_id;
+        const nextArtworkMessage = nextReferenceId
+          ? `Done. The next artwork is now loaded: ${nextReferenceId}.`
+          : "Done. The next artwork is now loaded.";
+
         setVisibleAssignments(remainingAssignments);
         setSelectedId(remainingAssignments[0].id);
-        setTaskNotice(payload?.message ?? "Action completed. Next artwork loaded.");
+        showCompletionNotice(nextArtworkMessage);
         return;
       }
 
       if (hasNextPage) {
         setVisibleAssignments([]);
         setSelectedId(null);
-        setTaskNotice(
+        showCompletionNotice(
           payload?.message ??
-            `Action completed. Press Load ${pageSize} more artworks to continue.`
+            `Done. Press Load ${pageSize} more artworks to continue.`
         );
         return;
       }
 
       setVisibleAssignments([]);
       setSelectedId(null);
-      setTaskNotice(payload?.message ?? "Action completed. No more loaded artworks remain.");
+      showCompletionNotice(payload?.message ?? "Done. No more loaded artworks remain.");
       return;
     } catch (error) {
       setTaskError(
@@ -1056,6 +1080,7 @@ export function WorkspaceClient({
             ? error.message
             : "This action could not be completed. Please refresh and try again."
       );
+      scrollToWorkspaceTop();
     } finally {
       setIsSubmittingTask(false);
     }
@@ -1174,7 +1199,28 @@ export function WorkspaceClient({
         </div>
       </aside>
 
-      <section className="workspace-main">
+      <section className="workspace-main" ref={workspaceMainRef}>
+        {taskNotice && (
+          <div
+            ref={completionBannerRef}
+            className="card"
+            role="status"
+            aria-live="polite"
+            tabIndex={-1}
+            style={{
+              marginBottom: 16,
+              border: "1px solid rgba(0, 73, 73, 0.28)",
+              background: "#f0fbf8",
+              boxShadow: "0 10px 30px rgba(0, 73, 73, 0.08)",
+            }}
+          >
+            <strong>Done</strong>
+            <p className="muted small" style={{ marginBottom: 0 }}>
+              {taskNotice}
+            </p>
+          </div>
+        )}
+
         {!selectedAssignment || !selectedSubmission || !derived ? (
           <div className="card">
             <h2>No artwork selected</h2>
@@ -1514,20 +1560,6 @@ export function WorkspaceClient({
                 >
                   <strong>Action not available</strong>
                   <p className="muted small" style={{ marginBottom: 0 }}>{taskError}</p>
-                </div>
-              )}
-
-              {taskNotice && (
-                <div
-                  className="card"
-                  style={{
-                    marginTop: 16,
-                    boxShadow: "none",
-                    border: "1px solid rgba(0, 73, 73, 0.25)",
-                    background: "#f0fbf8",
-                  }}
-                >
-                  <strong>{taskNotice}</strong>
                 </div>
               )}
 

@@ -113,11 +113,10 @@ async function getDashboardCounts() {
     countAssignments((query) =>
       query.eq("phase", "artistic_ranking").in("status", ["assigned", "in_progress"])
     ),
-    countAssignments((query) =>
+    countSubmissions((query) =>
       query
-        .eq("phase", "artistic_ranking")
-        .eq("status", "completed")
-        .not("completed_at", "is", null)
+        .not("artistic_rubric_total_score", "is", null)
+        .not("artistic_ranking_completed_at", "is", null)
     ),
     supabaseAdmin
       .from("export_batches")

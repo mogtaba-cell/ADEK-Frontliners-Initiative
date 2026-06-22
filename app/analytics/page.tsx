@@ -353,10 +353,14 @@ async function getLiveUserProgress(): Promise<UserProgressRow[]> {
     proofreader_type: string | null;
     status: string | null;
     completed_at: string | null;
+    submissions?: {
+      artistic_rubric_total_score?: number | null;
+      artistic_ranking_completed_at?: string | null;
+    } | null;
   }>((from, to) =>
     supabaseAdmin
       .from("assignments")
-      .select("assigned_to,submission_id,phase,proofreader_type,status,completed_at")
+      .select("assigned_to,submission_id,phase,proofreader_type,status,completed_at,submissions(artistic_rubric_total_score,artistic_ranking_completed_at)")
       .in("status", [
         "assigned",
         "in_progress",
@@ -395,11 +399,23 @@ async function getLiveUserProgress(): Promise<UserProgressRow[]> {
 
     current.assigned.add(assignment.submission_id);
 
-    if (status === "completed") {
+    const isUnscoredCompletedRaterTask =
+      assignedUser.role === "rater" &&
+      status === "completed" &&
+      (
+        assignment.submissions?.artistic_rubric_total_score === null ||
+        assignment.submissions?.artistic_rubric_total_score === undefined ||
+        !assignment.submissions?.artistic_ranking_completed_at
+      );
+
+    if (status === "completed" && !isUnscoredCompletedRaterTask) {
       current.completed.add(assignment.submission_id);
     }
 
-    if (["assigned", "in_progress", "returned_for_correction", "sent_for_review"].includes(status)) {
+    if (
+      ["assigned", "in_progress", "returned_for_correction", "sent_for_review"].includes(status) ||
+      isUnscoredCompletedRaterTask
+    ) {
       current.remaining.add(assignment.submission_id);
     }
 

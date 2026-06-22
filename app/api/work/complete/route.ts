@@ -24,6 +24,43 @@ const ACTIVE_ASSIGNMENT_STATUSES = [
   "sent_for_review",
 ];
 
+type JsonRecord = Record<string, unknown>;
+
+type AssignmentRow = JsonRecord & {
+  id: string;
+  submission_id: string | null;
+  phase: string | null;
+  status: string | null;
+  assigned_to: string | null;
+  decision: string | null;
+  completed_at: string | null;
+  correction_reason?: string | null;
+  correction_notes?: string | null;
+  correction_source_assignment_id?: string | null;
+  correction_source_phase?: WorkflowPhase | string | null;
+  return_to_user_id?: string | null;
+  requested_by_user_id?: string | null;
+  coordinator_waiting_for_response_at?: string | null;
+};
+
+type SubmissionWorkSnapshot = JsonRecord & {
+  id: string;
+  reference_id: string | null;
+  workflow_status: string | null;
+  categorized_pathway: string | null;
+  categorization_completed_at: string | null;
+  artistic_quality_creativity_score: number | null;
+  initiative_relation_score: number | null;
+  age_appropriateness_score: number | null;
+  artistic_rubric_total_score: number | null;
+  artistic_ranking: string | null;
+  artistic_ranking_completed_at: string | null;
+};
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error ?? "Unknown error");
+}
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -77,7 +114,7 @@ function successResponse(req: Request, redirectTo: string) {
 
 async function safeUpdate(
   table: string,
-  values: Record<string, any>,
+  values: JsonRecord,
   column: string,
   value: string
 ) {
@@ -88,6 +125,82 @@ async function safeUpdate(
 
   if (error) {
     throw new Error(`${table} update failed: ${error.message}`);
+  }
+}
+
+async function safeUpdateSingle(
+  table: string,
+  values: JsonRecord,
+  column: string,
+  value: string,
+  select = "*"
+) {
+  const { data, error } = await supabaseAdmin
+    .from(table)
+    .update(values)
+    .eq(column, value)
+    .select(select)
+    .single();
+
+  if (error) {
+    throw new Error(`${table} update failed: ${error.message}`);
+  }
+
+  if (!data) {
+    throw new Error(`${table} update failed: no row was updated.`);
+  }
+
+  return data;
+}
+
+function numberOrNull(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function hasSavedRaterRubricScore(submission: SubmissionWorkSnapshot | null | undefined) {
+  return (
+    numberOrNull(submission?.artistic_quality_creativity_score) !== null &&
+    numberOrNull(submission?.initiative_relation_score) !== null &&
+    numberOrNull(submission?.age_appropriateness_score) !== null &&
+    numberOrNull(submission?.artistic_rubric_total_score) !== null &&
+    String(submission?.artistic_ranking ?? "").trim() !== "" &&
+    Boolean(submission?.artistic_ranking_completed_at)
+  );
+}
+
+function assertRaterRubricPersisted({
+  submission,
+  expectedQuality,
+  expectedInitiative,
+  expectedAge,
+  expectedTotal,
+  expectedRanking,
+}: {
+  submission: SubmissionWorkSnapshot | JsonRecord;
+  expectedQuality: number;
+  expectedInitiative: number;
+  expectedAge: number;
+  expectedTotal: number;
+  expectedRanking: string;
+}) {
+  const savedQuality = numberOrNull(submission?.artistic_quality_creativity_score);
+  const savedInitiative = numberOrNull(submission?.initiative_relation_score);
+  const savedAge = numberOrNull(submission?.age_appropriateness_score);
+  const savedTotal = numberOrNull(submission?.artistic_rubric_total_score);
+  const savedRanking = String(submission?.artistic_ranking ?? "").trim();
+
+  if (
+    savedQuality !== expectedQuality ||
+    savedInitiative !== expectedInitiative ||
+    savedAge !== expectedAge ||
+    savedTotal !== expectedTotal ||
+    savedRanking !== expectedRanking ||
+    !submission?.artistic_ranking_completed_at
+  ) {
+    throw new Error(
+      "The rater rubric score was not saved correctly. The assignment was not closed. Please refresh and submit again."
+    );
   }
 }
 
@@ -118,7 +231,7 @@ async function addWorkflowComment({
   }
 }
 
-async function getAssignment(assignmentId: string) {
+async function getAssignment(assignmentId: string): Promise<AssignmentRow> {
   const { data, error } = await supabaseAdmin
     .from("assignments")
     .select("*")
@@ -126,23 +239,35 @@ async function getAssignment(assignmentId: string) {
     .single();
 
   if (error) throw new Error(`Assignment lookup failed: ${error.message}`);
-  return data;
+  return data as unknown as AssignmentRow;
 }
 
-async function getSubmission(submissionId: string) {
+async function getSubmission(submissionId: string): Promise<SubmissionWorkSnapshot> {
   // Keep this lookup small. The old select("*") included raw_data and long
   // text fields, then wrote them into audit_logs on every task completion.
   // That made POST /api/work/complete slow for large queues.
   const { data, error } = await supabaseAdmin
     .from("submissions")
     .select(
-      "id,reference_id,workflow_status,categorized_pathway,categorization_completed_at,artistic_ranking,artistic_ranking_completed_at"
+      [
+        "id",
+        "reference_id",
+        "workflow_status",
+        "categorized_pathway",
+        "categorization_completed_at",
+        "artistic_quality_creativity_score",
+        "initiative_relation_score",
+        "age_appropriateness_score",
+        "artistic_rubric_total_score",
+        "artistic_ranking",
+        "artistic_ranking_completed_at",
+      ].join(",")
     )
     .eq("id", submissionId)
     .single();
 
   if (error) throw new Error(`Submission lookup failed: ${error.message}`);
-  return data;
+  return data as unknown as SubmissionWorkSnapshot;
 }
 
 function editableContentFromForm(form: FormData) {
@@ -172,9 +297,9 @@ async function updateEditableContent(submissionId: string, form: FormData) {
 
 async function markAssignmentCompleted(
   assignmentId: string,
-  values: Record<string, any> = {}
+  values: JsonRecord = {}
 ) {
-  const completedAt = values.completed_at ?? nowIso();
+  const completedAt = String(values.completed_at ?? nowIso());
 
   await safeUpdate(
     "assignments",
@@ -453,7 +578,7 @@ async function resolveManagementSourceAssignment({
   timestamp,
   comment,
 }: {
-  managementAssignment: any;
+  managementAssignment: AssignmentRow;
   managementDecision: "approved" | "disqualified";
   actorId: string;
   timestamp: string;
@@ -465,12 +590,13 @@ async function resolveManagementSourceAssignment({
   if (!sourceAssignmentId) return;
 
   const sourcePhase =
-    managementAssignment?.correction_source_phase as WorkflowPhase | null;
+    (managementAssignment?.correction_source_phase ?? null) as WorkflowPhase | null;
 
   if (managementDecision === "approved" && sourcePhase === "literary_proofreading") {
     const returnToUserId =
       managementAssignment.return_to_user_id ??
-      managementAssignment.requested_by_user_id;
+      managementAssignment.requested_by_user_id ??
+      null;
 
     if (returnToUserId) {
       await reactivateAssignmentForReturn(sourceAssignmentId, actorId, {
@@ -687,7 +813,7 @@ async function saveCoordinatorProgress({
   assignmentId,
   form,
 }: {
-  assignment: any;
+  assignment: AssignmentRow;
   assignmentId: string;
   form: FormData;
 }) {
@@ -801,11 +927,32 @@ export async function POST(req: Request) {
 
     const assignmentStatus = String(assignment.status ?? "");
     const submissionWorkflowStatus = String(submissionBefore.workflow_status ?? "");
+    let raterAuditPayload: JsonRecord | null = null;
 
-    // Idempotency safeguard: if the browser retries after the original request
-    // already completed, return success so the client removes the stale card
-    // instead of showing a misleading correction/closed error.
+    // Idempotency safeguard: if a browser retry arrives after an artistic grading
+    // submission was saved but before the assignment was closed, safely close the
+    // assignment. If the assignment is already closed without saved scores, do not
+    // hide the data issue behind a false success response.
+    if (
+      phase === "artistic_ranking" &&
+      ["assigned", "in_progress"].includes(assignmentStatus) &&
+      hasSavedRaterRubricScore(submissionBefore)
+    ) {
+      const completedAt = submissionBefore.artistic_ranking_completed_at ?? nowIso();
+      await markAssignmentCompleted(assignmentId, {
+        decision: "completed",
+        completed_at: completedAt,
+      });
+      return successResponse(req, redirectTo);
+    }
+
     if (assignmentStatus === "completed") {
+      if (phase === "artistic_ranking" && !hasSavedRaterRubricScore(submissionBefore)) {
+        throw new Error(
+          "This rater task was marked completed without a saved rubric score. Ask Admin to reopen it; no score was recorded for this artwork."
+        );
+      }
+
       return successResponse(req, redirectTo);
     }
 
@@ -1278,12 +1425,10 @@ export async function POST(req: Request) {
       const artisticRanking = finalArtisticRatingFromScore(totalScore);
       const completedAt = nowIso();
 
-      await markAssignmentCompleted(assignmentId, {
-        decision: "completed",
-        completed_at: completedAt,
-      });
-
-      await safeUpdate(
+      // Critical ordering: save and verify the rubric result on the submission
+      // before closing the assignment. The previous ordering could leave the
+      // assignment completed while all rater score fields stayed null.
+      const updatedSubmission = (await safeUpdateSingle(
         "submissions",
         {
           artistic_quality_creativity_score: artisticQualityCreativity,
@@ -1298,8 +1443,40 @@ export async function POST(req: Request) {
           updated_at: completedAt,
         },
         "id",
-        submissionId
-      );
+        submissionId,
+        [
+          "id",
+          "artistic_quality_creativity_score",
+          "initiative_relation_score",
+          "age_appropriateness_score",
+          "artistic_rubric_total_score",
+          "artistic_ranking",
+          "artistic_ranking_completed_at",
+        ].join(",")
+      )) as unknown as SubmissionWorkSnapshot;
+
+      assertRaterRubricPersisted({
+        submission: updatedSubmission,
+        expectedQuality: artisticQualityCreativity,
+        expectedInitiative: initiativeRelation,
+        expectedAge: ageAppropriateness,
+        expectedTotal: totalScore,
+        expectedRanking: artisticRanking,
+      });
+
+      await markAssignmentCompleted(assignmentId, {
+        decision: "completed",
+        completed_at: completedAt,
+      });
+
+      raterAuditPayload = {
+        artistic_quality_creativity_score: artisticQualityCreativity,
+        initiative_relation_score: initiativeRelation,
+        age_appropriateness_score: ageAppropriateness,
+        artistic_rubric_total_score: totalScore,
+        artistic_ranking: artisticRanking,
+        artistic_ranking_completed_at: completedAt,
+      };
 
       await cancelActiveAssignmentsForCompletedWorkflow({
         submissionId,
@@ -1330,19 +1507,20 @@ export async function POST(req: Request) {
       after: {
         phase,
         submission_id: submissionId,
+        ...(raterAuditPayload ?? {}),
       },
-    }).catch((auditError: any) => {
-      console.error("Work completion audit failed:", auditError?.message ?? auditError);
+    }).catch((auditError: unknown) => {
+      console.error("Work completion audit failed:", errorMessage(auditError));
     });
 
     return successResponse(req, redirectTo);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Work completion failed:", error);
 
     if (acceptsJson(req)) {
       return NextResponse.json(
         {
-          error: error.message ?? "Work completion failed.",
+          error: errorMessage(error) || "Work completion failed.",
         },
         { status: 500 }
       );
@@ -1351,7 +1529,7 @@ export async function POST(req: Request) {
     const errorUrl = refreshedUrl(req, redirectTo);
     errorUrl.searchParams.set(
       "work_error",
-      error.message ?? "Work completion failed."
+      errorMessage(error) || "Work completion failed."
     );
 
     return NextResponse.redirect(errorUrl, { status: 303 });
