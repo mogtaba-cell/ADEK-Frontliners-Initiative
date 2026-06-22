@@ -132,14 +132,42 @@ function submissionSelectFieldsForPhase(phase: WorkflowPhase) {
   return baseFields.join(",\n        ");
 }
 
+function isActiveQueueView(view: string) {
+  return [
+    "not_completed",
+    "pending",
+    "needs_review",
+    "waiting_for_response",
+    "sent_for_review",
+    "sent_for_correction",
+    "returned_for_correction",
+  ].includes(view);
+}
+
 function applySubmissionWorkflowGate(
   query: any,
-  _phase: WorkflowPhase,
-  _view: string,
+  phase: WorkflowPhase,
+  view: string,
 ) {
-  // The assignment row is the source of truth for what a user should see.
-  // Do not hide valid assignment rows based on submission.workflow_status here;
-  // doing so can make Load More disagree with the first server-rendered page.
+  // Keep load-more behavior aligned with the server-rendered first page.
+  // Categorizer/Rater active queues should not show stale active assignments
+  // for submissions whose phase completion timestamp is already set.
+  if (!isActiveQueueView(view)) return query;
+
+  if (phase === "categorization") {
+    return query
+      .is("submissions.categorization_completed_at", null)
+      .neq("submissions.workflow_status", "completed")
+      .neq("submissions.workflow_status", "disqualified");
+  }
+
+  if (phase === "artistic_ranking") {
+    return query
+      .is("submissions.artistic_ranking_completed_at", null)
+      .neq("submissions.workflow_status", "completed")
+      .neq("submissions.workflow_status", "disqualified");
+  }
+
   return query;
 }
 

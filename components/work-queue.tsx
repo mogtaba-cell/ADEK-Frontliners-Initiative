@@ -326,13 +326,43 @@ function submissionSelectFieldsForPhase(phase: WorkflowPhase) {
   return baseFields.join(",\n        ");
 }
 
+function isActiveQueueView(view: string) {
+  return [
+    "not_completed",
+    "pending",
+    "needs_review",
+    "waiting_for_response",
+    "sent_for_review",
+    "sent_for_correction",
+    "returned_for_correction",
+  ].includes(view);
+}
+
 function applySubmissionWorkflowGate(
   query: any,
-  _phase: WorkflowPhase,
-  _view: string,
+  phase: WorkflowPhase,
+  view: string,
 ) {
-  // Workspaces intentionally do not hide valid assignments based on submission.workflow_status.
-  // The assignment row is the source of truth for ownership and user-visible tasks.
+  // For Categorizer and Rater, stale active assignment rows must not keep
+  // already-finished submissions in the active queue. The assignment row still
+  // drives ownership, but the phase completion timestamp is the source of truth
+  // for whether that phase can still be actioned.
+  if (!isActiveQueueView(view)) return query;
+
+  if (phase === "categorization") {
+    return query
+      .is("submissions.categorization_completed_at", null)
+      .neq("submissions.workflow_status", "completed")
+      .neq("submissions.workflow_status", "disqualified");
+  }
+
+  if (phase === "artistic_ranking") {
+    return query
+      .is("submissions.artistic_ranking_completed_at", null)
+      .neq("submissions.workflow_status", "completed")
+      .neq("submissions.workflow_status", "disqualified");
+  }
+
   return query;
 }
 
@@ -555,10 +585,16 @@ function buildAssignmentCountQuery({
   proofreaderType?: string | null;
 }) {
   const statuses = statusesForView(phase, view);
+  const countSelect =
+    phase === "artistic_ranking"
+      ? "id,submissions!inner(id,workflow_status,artistic_ranking_completed_at)"
+      : phase === "categorization"
+        ? "id,submissions!inner(id,workflow_status,categorization_completed_at)"
+        : "id";
 
   let query = supabaseAdmin
     .from("assignments")
-    .select("id", {
+    .select(countSelect, {
       count: "exact",
       head: true,
     })

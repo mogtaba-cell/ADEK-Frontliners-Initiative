@@ -952,6 +952,23 @@ export function WorkspaceClient({
     await loadAssignmentPage({ page: loadedPage + 1 });
   }
 
+  function removeSelectedAssignmentFromVisibleList(notice: string) {
+    const staleAssignmentId = selectedAssignment?.id;
+    const remainingAssignments = staleAssignmentId
+      ? visibleAssignments.filter((assignment) => assignment.id !== staleAssignmentId)
+      : visibleAssignments;
+
+    setVisibleAssignments(remainingAssignments);
+    setSelectedId(remainingAssignments[0]?.id ?? null);
+    setTaskNotice(notice);
+  }
+
+  function isStaleTaskErrorMessage(message: string) {
+    return /already final|already closed|no longer active|waiting for correction|assigned to another user/i.test(
+      message,
+    );
+  }
+
   async function handleTaskSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -989,10 +1006,18 @@ export function WorkspaceClient({
         : null;
 
       if (!response.ok) {
-        throw new Error(
+        const message =
           payload?.error ??
-            "This action could not be completed. Please refresh and try again."
-        );
+          "This action could not be completed. Please refresh and try again.";
+
+        if (isStaleTaskErrorMessage(message)) {
+          removeSelectedAssignmentFromVisibleList(
+            `${message} The stale task was removed from the visible queue.`,
+          );
+          return;
+        }
+
+        throw new Error(message);
       }
 
       const completedAssignmentId = selectedAssignment?.id;

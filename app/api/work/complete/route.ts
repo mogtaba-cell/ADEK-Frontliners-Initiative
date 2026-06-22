@@ -787,15 +787,34 @@ export async function POST(req: Request) {
     const assignment = await getAssignment(assignmentId);
     const submissionBefore = await getSubmission(submissionId);
 
+    if (String(assignment.submission_id ?? "") !== submissionId) {
+      throw new Error("This assignment does not match the selected submission. Refresh the workspace and try again.");
+    }
+
+    if (String(assignment.phase ?? "") !== phase) {
+      throw new Error("This assignment does not match the selected workflow phase. Refresh the workspace and try again.");
+    }
+
+    if (user.role !== "admin" && String(assignment.assigned_to ?? "") !== user.id) {
+      throw new Error("This task is assigned to another user. Refresh the workspace and try again.");
+    }
+
     const assignmentStatus = String(assignment.status ?? "");
     const submissionWorkflowStatus = String(submissionBefore.workflow_status ?? "");
 
+    // Idempotency safeguard: if the browser retries after the original request
+    // already completed, return success so the client removes the stale card
+    // instead of showing a misleading correction/closed error.
+    if (assignmentStatus === "completed") {
+      return successResponse(req, redirectTo);
+    }
+
     if (["completed", "disqualified"].includes(submissionWorkflowStatus)) {
-      throw new Error("This artwork workflow is already final.");
+      throw new Error("This artwork workflow is already final. Refresh the workspace to remove it from your active queue.");
     }
 
     if (!["assigned", "in_progress"].includes(assignmentStatus)) {
-      throw new Error("This task is already closed or waiting for correction.");
+      throw new Error("This task is no longer active. Refresh the workspace to remove it from your active queue.");
     }
 
     if (phase === "adek_evaluation") {
