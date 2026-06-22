@@ -678,7 +678,7 @@ function SubmissionModal({
                 submission.age_appropriateness_score !== undefined && (
                   <DetailField
                     label="Age Appropriateness Score"
-                    value={`${submission.age_appropriateness_score} / 15`}
+                    value={`${submission.age_appropriateness_score} / 100`}
                   />
                 )}
 
