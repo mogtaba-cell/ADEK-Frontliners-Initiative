@@ -55,6 +55,11 @@ function shouldIgnoreForm(form: HTMLFormElement) {
 
   const action = form.getAttribute("action") ?? "";
 
+  // These forms are handled by React with fetch() and event.preventDefault().
+  // The global loading overlay should not appear for them, otherwise it can
+  // remain visible even after the API request has completed successfully.
+  if (action.includes("/api/work/complete")) return true;
+
   if (action.includes("/api/import")) return true;
   if (action.includes("/admin/import")) return true;
   if (action.includes("/api/admin/users/bulk-import")) return true;
@@ -122,7 +127,14 @@ export function GlobalLoading() {
 
       if (shouldIgnoreForm(form)) return;
 
-      showLoading();
+      // React onSubmit handlers run after this capture listener. Wait until the
+      // current event finishes, then skip the overlay if a client handler called
+      // preventDefault(). This prevents stuck loading screens for fetch-based
+      // forms while keeping the overlay for real page navigations.
+      window.setTimeout(() => {
+        if (event.defaultPrevented) return;
+        showLoading();
+      }, 0);
     }
 
     function onPageShow() {

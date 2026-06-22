@@ -1413,6 +1413,7 @@ export function WorkspaceClient({
               className="card workspace-task-action-box"
               action="/api/work/complete"
               method="post"
+              data-no-global-loading="true"
               onSubmit={handleTaskSubmit}
             >
               <input type="hidden" name="assignment_id" value={selectedAssignment.id} />
