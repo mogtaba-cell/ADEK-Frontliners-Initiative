@@ -735,6 +735,7 @@ export function WorkspaceClient({
   currentPath: string;
   proofreaderType?: ProofreaderType | null;
 }) {
+  const [visibleAssignments, setVisibleAssignments] = useState<Assignment[]>(assignments);
   const [selectedId, setSelectedId] = useState<string | null>(
     assignments[0]?.id ?? null
   );
@@ -765,12 +766,16 @@ export function WorkspaceClient({
     setReturnPath(`${window.location.pathname}${window.location.search}`);
   }, [currentPath]);
 
+  useEffect(() => {
+    setVisibleAssignments(assignments);
+  }, [assignments]);
+
   const selectedAssignment = useMemo(
     () =>
-      assignments.find((assignment) => assignment.id === selectedId) ??
-      assignments[0] ??
+      visibleAssignments.find((assignment) => assignment.id === selectedId) ??
+      visibleAssignments[0] ??
       null,
-    [assignments, selectedId]
+    [visibleAssignments, selectedId]
   );
 
   const selectedSubmission = selectedAssignment?.submissions ?? null;
@@ -794,15 +799,18 @@ export function WorkspaceClient({
           : null;
 
   useEffect(() => {
-    if (!assignments.length) {
+    if (!visibleAssignments.length) {
       setSelectedId(null);
       return;
     }
 
-    if (!selectedId || !assignments.some((assignment) => assignment.id === selectedId)) {
-      setSelectedId(assignments[0].id);
+    if (
+      !selectedId ||
+      !visibleAssignments.some((assignment) => assignment.id === selectedId)
+    ) {
+      setSelectedId(visibleAssignments[0].id);
     }
-  }, [assignments, selectedId]);
+  }, [visibleAssignments, selectedId]);
 
   useEffect(() => {
     if (!selectedSubmission) return;
@@ -896,6 +904,20 @@ export function WorkspaceClient({
         );
       }
 
+      const completedAssignmentId = selectedAssignment?.id;
+      const remainingAssignments = completedAssignmentId
+        ? visibleAssignments.filter(
+            (assignment) => assignment.id !== completedAssignmentId
+          )
+        : visibleAssignments;
+
+      if (remainingAssignments.length > 0) {
+        setVisibleAssignments(remainingAssignments);
+        setSelectedId(remainingAssignments[0].id);
+        setTaskNotice(payload?.message ?? "Action completed. Next artwork loaded.");
+        return;
+      }
+
       setTaskNotice(payload?.message ?? "Action completed. Refreshing workspace...");
       const redirectTo = payload?.redirectTo || response.url || returnPath || window.location.href;
       window.location.assign(redirectTo);
@@ -941,13 +963,13 @@ export function WorkspaceClient({
         <div className="workspace-sidebar-header">
           <h2>Assigned Artworks</h2>
           <p className="muted small">
-            {assignments.length} artwork{assignments.length === 1 ? "" : "s"} in
+            {visibleAssignments.length} artwork{visibleAssignments.length === 1 ? "" : "s"} in
             this view.
           </p>
         </div>
 
         <div className="workspace-list">
-          {assignments.map((assignment, index) => {
+          {visibleAssignments.map((assignment, index) => {
             const submission = assignment.submissions;
             const fields = submission ? getDerivedFields(submission) : null;
             const isSelected = assignment.id === selectedAssignment?.id;
@@ -995,7 +1017,7 @@ export function WorkspaceClient({
             );
           })}
 
-          {assignments.length === 0 && (
+          {visibleAssignments.length === 0 && (
             <div className="workspace-empty">
               No artworks match the selected filters.
             </div>
