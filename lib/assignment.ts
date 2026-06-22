@@ -26,7 +26,6 @@ const workloadAssignmentStatuses = [
   "in_progress",
   "returned_for_correction",
   "sent_for_review",
-  "completed",
 ];
 
 const SUPABASE_PAGE_SIZE = 1000;

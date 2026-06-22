@@ -971,11 +971,17 @@ export function WorkspaceClient({
     setTaskNotice(null);
 
     try {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 60000);
+
       const response = await fetch(form.action, {
         method: "POST",
         body: formData,
         headers: { Accept: "application/json" },
+        signal: controller.signal,
       });
+
+      window.clearTimeout(timeoutId);
 
       const contentType = response.headers.get("content-type") ?? "";
       const payload = contentType.includes("application/json")
@@ -1006,20 +1012,9 @@ export function WorkspaceClient({
       if (hasNextPage) {
         setVisibleAssignments([]);
         setSelectedId(null);
-        const loadedNextPage = await loadAssignmentPage({
-          page: loadedPage + 1,
-          baseAssignments: [],
-          selectFirstNew: true,
-        });
-
-        if (loadedNextPage) {
-          setTaskNotice(payload?.message ?? "Action completed. Next artwork loaded.");
-          return;
-        }
-
         setTaskNotice(
           payload?.message ??
-            "Action completed. The next page did not load automatically. Press Load More or refresh when ready."
+            `Action completed. Press Load ${pageSize} more artworks to continue.`
         );
         return;
       }
@@ -1030,9 +1025,11 @@ export function WorkspaceClient({
       return;
     } catch (error) {
       setTaskError(
-        error instanceof Error
-          ? error.message
-          : "This action could not be completed. Please refresh and try again."
+        error instanceof DOMException && error.name === "AbortError"
+          ? "The task was submitted, but the server took too long to respond. Refresh once to confirm whether it was saved before submitting again."
+          : error instanceof Error
+            ? error.message
+            : "This action could not be completed. Please refresh and try again."
       );
     } finally {
       setIsSubmittingTask(false);

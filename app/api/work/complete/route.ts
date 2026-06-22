@@ -1289,7 +1289,7 @@ export async function POST(req: Request) {
       });
     }
 
-    await audit({
+    audit({
       actorId: user.id,
       action:
         (phase === "coordinator_check" &&
@@ -1312,6 +1312,8 @@ export async function POST(req: Request) {
         phase,
         submission_id: submissionId,
       },
+    }).catch((auditError: any) => {
+      console.error("Work completion audit failed:", auditError?.message ?? auditError);
     });
 
     return successResponse(req, redirectTo);
