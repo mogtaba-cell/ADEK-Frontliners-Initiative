@@ -9,6 +9,11 @@ import {
   formatLiterarySubcategoryLabel,
 } from "@/lib/literary-subcategories";
 import {
+  LITERARY_LANGUAGE_DISPLAY_LABELS,
+  LITERARY_LANGUAGE_OPTIONS,
+  formatLiteraryLanguageLabel,
+} from "@/lib/literary-languages";
+import {
   calculateArtisticRubricTotal,
   finalArtisticRatingFromScore,
 } from "@/lib/rater-rubric";
@@ -1416,6 +1421,14 @@ export function WorkspaceClient({
                       />
                     )}
 
+                  {!isLimitedSubmissionDetailsView &&
+                    selectedSubmission.literary_language && (
+                      <DetailField
+                        label="Literary Language"
+                        value={formatLiteraryLanguageLabel(selectedSubmission.literary_language)}
+                      />
+                    )}
+
                   {selectedAssignment.correction_source_phase && (
                     <DetailField
                       label="Correction requested from"
@@ -2125,9 +2138,28 @@ export function WorkspaceClient({
                 <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
                   <h4 style={{ marginTop: 0 }}>Literary Subcategory</h4>
                   <p className="muted small">
-                    Choose the best subcategory for this Literary Expressions artwork.
+                    Choose the best subcategory and confirm the literary language for this Literary Expressions artwork.
                     This step does not change the rater, score, or final artistic rating.
                   </p>
+
+                  <label style={{ display: "block", marginTop: 12 }}>
+                    <span className="small">Literary Language</span>
+                    <select
+                      className="input"
+                      name="literary_language"
+                      defaultValue={String(selectedSubmission.literary_language ?? "")}
+                      required
+                    >
+                      <option value="" disabled>
+                        Select literary language
+                      </option>
+                      {LITERARY_LANGUAGE_OPTIONS.map((language) => (
+                        <option key={language} value={language}>
+                          {LITERARY_LANGUAGE_DISPLAY_LABELS[language]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
                   <label style={{ display: "block", marginTop: 12 }}>
                     <span className="small">Literary Subcategory</span>

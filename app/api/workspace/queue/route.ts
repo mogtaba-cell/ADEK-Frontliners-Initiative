@@ -123,6 +123,7 @@ function submissionSelectFieldsForPhase(phase: WorkflowPhase) {
     "artistic_ranking_completed_at",
     "literary_subcategory",
     "literary_subcategory_completed_at",
+    "literary_language",
     "evaluator_comment",
     "evaluator_file_quality_clear",
     "literary_publication_suitable",

@@ -18,6 +18,7 @@ import {
   parseRubricScore,
 } from "@/lib/rater-rubric";
 import { isLiterarySubcategory } from "@/lib/literary-subcategories";
+import { isLiteraryLanguage } from "@/lib/literary-languages";
 
 const ACTIVE_ASSIGNMENT_STATUSES = [
   "assigned",
@@ -59,6 +60,7 @@ type SubmissionWorkSnapshot = JsonRecord & {
   artistic_ranking_completed_at: string | null;
   literary_subcategory: string | null;
   literary_subcategory_completed_at: string | null;
+  literary_language: string | null;
 };
 
 function errorMessage(error: unknown) {
@@ -267,6 +269,7 @@ async function getSubmission(submissionId: string): Promise<SubmissionWorkSnapsh
         "artistic_ranking_completed_at",
         "literary_subcategory",
         "literary_subcategory_completed_at",
+        "literary_language",
       ].join(",")
     )
     .eq("id", submissionId)
@@ -1516,9 +1519,14 @@ export async function POST(req: Request) {
       }
 
       const literarySubcategory = textValue(form, "literary_subcategory");
+      const literaryLanguage = textValue(form, "literary_language");
 
       if (!isLiterarySubcategory(literarySubcategory)) {
         throw new Error("Select a valid literary subcategory before completing this task.");
+      }
+
+      if (!isLiteraryLanguage(literaryLanguage)) {
+        throw new Error("Select a valid literary language before completing this task.");
       }
 
       const completedAt = nowIso();
@@ -1527,6 +1535,7 @@ export async function POST(req: Request) {
         "submissions",
         {
           literary_subcategory: literarySubcategory,
+          literary_language: literaryLanguage,
           literary_subcategory_completed_at: completedAt,
           workflow_status: "completed",
           completed_at: completedAt,
