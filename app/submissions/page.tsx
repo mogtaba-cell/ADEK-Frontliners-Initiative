@@ -69,6 +69,8 @@ const SUBMISSION_LIST_SELECT = [
   "artistic_rubric_total_score",
   "artistic_rubric_comment",
   "artistic_ranking_completed_at",
+  "literary_subcategory",
+  "literary_subcategory_completed_at",
   "art_link",
   "updated_artwork_file_name",
   "updated_artwork_file_url",

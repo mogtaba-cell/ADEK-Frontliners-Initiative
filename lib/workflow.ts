@@ -9,6 +9,7 @@ export const roleHome: Record<Role, string> = {
   reviewer: "/reviewer",
   categorizer: "/categorizer",
   rater: "/rater",
+  literary_subcategorizer: "/literary-subcategorizer",
   adek_hq: "/submissions",
 };
 
@@ -20,6 +21,7 @@ export const rolePhase: Partial<Record<Role, WorkflowPhase>> = {
   reviewer: "final_review",
   categorizer: "categorization",
   rater: "artistic_ranking",
+  literary_subcategorizer: "literary_subcategorization",
 };
 
 export const phaseLabels: Record<WorkflowPhase, string> = {
@@ -31,6 +33,7 @@ export const phaseLabels: Record<WorkflowPhase, string> = {
   final_review: "Review",
   categorization: "Categorization",
   artistic_ranking: "Artistic Grading",
+  literary_subcategorization: "Literary Subcategorization",
 };
 
 export const workflowLabels: Record<WorkflowStatus, string> = {
@@ -48,6 +51,7 @@ export const workflowLabels: Record<WorkflowStatus, string> = {
   final_review_in_progress: "Review In Progress",
   ready_for_categorization: "Ready for Categorization",
   ready_for_artistic_ranking: "Ready for Artistic Grading",
+  ready_for_literary_subcategorization: "Ready for Literary Subcategorization",
   completed: "Completed",
 };
 
@@ -66,7 +70,7 @@ export function isCompletedAssignment(status: string | null | undefined) {
 export function statusClassName(status: string | null | undefined) {
   const value = String(status ?? "").toLowerCase();
 
-  if (["completed", "approved", "proofreading_done", "ready_for_categorization", "ready_for_artistic_ranking"].includes(value)) {
+  if (["completed", "approved", "proofreading_done", "ready_for_categorization", "ready_for_artistic_ranking", "ready_for_literary_subcategorization"].includes(value)) {
     return "pill pill-success";
   }
 

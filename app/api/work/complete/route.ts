@@ -5,6 +5,7 @@ import { audit } from "@/lib/audit";
 import {
   assignArtisticRankingAfterCategorization,
   assignCategorizationAfterReview,
+  assignLiterarySubcategorizationAfterRater,
   assignProofreadingAfterApproval,
   autoAssignOne,
   maybeAssignReviewerAfterProofreading,
@@ -16,6 +17,7 @@ import {
   finalArtisticRatingFromScore,
   parseRubricScore,
 } from "@/lib/rater-rubric";
+import { isLiterarySubcategory } from "@/lib/literary-subcategories";
 
 const ACTIVE_ASSIGNMENT_STATUSES = [
   "assigned",
@@ -55,6 +57,8 @@ type SubmissionWorkSnapshot = JsonRecord & {
   artistic_rubric_total_score: number | null;
   artistic_ranking: string | null;
   artistic_ranking_completed_at: string | null;
+  literary_subcategory: string | null;
+  literary_subcategory_completed_at: string | null;
 };
 
 function errorMessage(error: unknown) {
@@ -261,6 +265,8 @@ async function getSubmission(submissionId: string): Promise<SubmissionWorkSnapsh
         "artistic_rubric_total_score",
         "artistic_ranking",
         "artistic_ranking_completed_at",
+        "literary_subcategory",
+        "literary_subcategory_completed_at",
       ].join(",")
     )
     .eq("id", submissionId)
@@ -421,6 +427,7 @@ function workflowStatusForReturnedSource(sourcePhase: WorkflowPhase) {
   if (sourcePhase === "final_review") return "proofreading_done";
   if (sourcePhase === "categorization") return "ready_for_categorization";
   if (sourcePhase === "artistic_ranking") return "ready_for_artistic_ranking";
+  if (sourcePhase === "literary_subcategorization") return "ready_for_literary_subcategorization";
   return "returned_for_correction";
 }
 
@@ -756,6 +763,7 @@ async function closeOpenAssignmentsAfterDisqualification({
       "final_review",
       "categorization",
       "artistic_ranking",
+      "literary_subcategorization",
     ])
     .in("status", ACTIVE_ASSIGNMENT_STATUSES);
 
@@ -897,6 +905,7 @@ export async function POST(req: Request) {
       "reviewer",
       "categorizer",
       "rater",
+      "literary_subcategorizer",
     ]);
 
     const form = await req.formData();
@@ -943,6 +952,11 @@ export async function POST(req: Request) {
         decision: "completed",
         completed_at: completedAt,
       });
+
+      if (String(submissionBefore.categorized_pathway ?? "").trim().toLowerCase() === "literary expressions") {
+        await assignLiterarySubcategorizationAfterRater(submissionId, user.id);
+      }
+
       return successResponse(req, redirectTo);
     }
 
@@ -1424,6 +1438,12 @@ export async function POST(req: Request) {
 
       const artisticRanking = finalArtisticRatingFromScore(totalScore);
       const completedAt = nowIso();
+      const isLiteraryRaterSubmission =
+        String(submissionBefore.categorized_pathway ?? "").trim().toLowerCase() ===
+        "literary expressions";
+      const nextWorkflowStatus = isLiteraryRaterSubmission
+        ? "ready_for_literary_subcategorization"
+        : "completed";
 
       // Critical ordering: save and verify the rubric result on the submission
       // before closing the assignment. The previous ordering could leave the
@@ -1438,8 +1458,8 @@ export async function POST(req: Request) {
           artistic_rubric_comment: null,
           artistic_ranking: artisticRanking,
           artistic_ranking_completed_at: completedAt,
-          workflow_status: "completed",
-          completed_at: completedAt,
+          workflow_status: nextWorkflowStatus,
+          completed_at: isLiteraryRaterSubmission ? null : completedAt,
           updated_at: completedAt,
         },
         "id",
@@ -1476,7 +1496,50 @@ export async function POST(req: Request) {
         artistic_rubric_total_score: totalScore,
         artistic_ranking: artisticRanking,
         artistic_ranking_completed_at: completedAt,
+        workflow_status: nextWorkflowStatus,
       };
+
+      if (isLiteraryRaterSubmission) {
+        await assignLiterarySubcategorizationAfterRater(submissionId, user.id);
+      } else {
+        await cancelActiveAssignmentsForCompletedWorkflow({
+          submissionId,
+          keepAssignmentId: assignmentId,
+          completedAt,
+        });
+      }
+    }
+
+    if (phase === "literary_subcategorization") {
+      if (String(submissionBefore.categorized_pathway ?? "").trim() !== "Literary Expressions") {
+        throw new Error("Literary subcategory is only available for Literary Expressions submissions.");
+      }
+
+      const literarySubcategory = textValue(form, "literary_subcategory");
+
+      if (!isLiterarySubcategory(literarySubcategory)) {
+        throw new Error("Select a valid literary subcategory before completing this task.");
+      }
+
+      const completedAt = nowIso();
+
+      await safeUpdate(
+        "submissions",
+        {
+          literary_subcategory: literarySubcategory,
+          literary_subcategory_completed_at: completedAt,
+          workflow_status: "completed",
+          completed_at: completedAt,
+          updated_at: completedAt,
+        },
+        "id",
+        submissionId
+      );
+
+      await markAssignmentCompleted(assignmentId, {
+        decision: "completed",
+        completed_at: completedAt,
+      });
 
       await cancelActiveAssignmentsForCompletedWorkflow({
         submissionId,

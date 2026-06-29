@@ -12,6 +12,7 @@ const phaseToRole: Record<WorkflowPhase, Role> = {
   final_review: "reviewer",
   categorization: "categorizer",
   artistic_ranking: "rater",
+  literary_subcategorization: "literary_subcategorizer",
 };
 
 export const activeAssignmentStatuses = [
@@ -75,6 +76,10 @@ type SubmissionForAssignment = {
   art_sub_pathway_name_ar?: string | null;
   literary_language?: string | null;
   categorized_pathway?: string | null;
+  artistic_ranking_completed_at?: string | null;
+  artistic_rubric_total_score?: number | null;
+  literary_subcategory?: string | null;
+  literary_subcategory_completed_at?: string | null;
 };
 
 export type EvaluatorAssignmentTarget = {
@@ -94,6 +99,7 @@ function eligibleStatusForPhase(phase: WorkflowPhase) {
   if (phase === "final_review") return ["proofreading_done"];
   if (phase === "categorization") return ["ready_for_categorization"];
   if (phase === "artistic_ranking") return ["ready_for_artistic_ranking"];
+  if (phase === "literary_subcategorization") return ["ready_for_literary_subcategorization"];
 
   return [];
 }
@@ -285,6 +291,10 @@ async function getRaterCandidateIdsForSubmission(submissionId: string) {
   if (error) throw error;
 
   return getRaterCandidateIdsForPathway(submission?.categorized_pathway);
+}
+
+function isLiteraryCategorizedPathway(pathway: string | null | undefined) {
+  return String(pathway ?? "").trim().toLowerCase() === "literary expressions";
 }
 
 async function getCoordinatorForSchool(submissionId: string) {
@@ -999,7 +1009,7 @@ export async function autoAssignPending(
     supabaseAdmin
       .from("submissions")
       .select(
-        "id,reference_id,workflow_status,registration_status,art_pathway_name_en,art_pathway_name_ar,art_sub_pathway_name_en,art_sub_pathway_name_ar,literary_language,categorized_pathway"
+        "id,reference_id,workflow_status,registration_status,art_pathway_name_en,art_pathway_name_ar,art_sub_pathway_name_en,art_sub_pathway_name_ar,literary_language,categorized_pathway,artistic_ranking_completed_at,artistic_rubric_total_score,literary_subcategory,literary_subcategory_completed_at"
       )
       .in("workflow_status", eligibleStatuses)
       .range(from, to)
@@ -1113,6 +1123,18 @@ export async function autoAssignPending(
         }
 
         if (await hasAnyPhaseAssignment(submission.id, "artistic_ranking")) {
+          skipped++;
+          continue;
+        }
+      }
+
+      if (phase === "literary_subcategorization") {
+        if (!(await isReadyForLiterarySubcategorization(submission.id))) {
+          skipped++;
+          continue;
+        }
+
+        if (await hasAnyPhaseAssignment(submission.id, "literary_subcategorization")) {
           skipped++;
           continue;
         }
@@ -1477,6 +1499,79 @@ export async function assignArtisticRankingAfterCategorization(
   }
 }
 
+export async function isReadyForLiterarySubcategorization(submissionId: string) {
+  const { data: submission, error } = await supabaseAdmin
+    .from("submissions")
+    .select("workflow_status,categorized_pathway,artistic_rubric_total_score,artistic_ranking_completed_at,literary_subcategory_completed_at")
+    .eq("id", submissionId)
+    .single();
+
+  if (error) throw error;
+  if (submission?.workflow_status === "disqualified") return false;
+  if (!isLiteraryCategorizedPathway(submission?.categorized_pathway)) return false;
+  if (!submission?.artistic_ranking_completed_at) return false;
+  if (submission?.artistic_rubric_total_score === null || submission?.artistic_rubric_total_score === undefined) return false;
+  if (submission?.literary_subcategory_completed_at) return false;
+
+  const activeCorrection = await hasActivePhase(submissionId, "coordinator_check");
+  const activeManagement = await hasPendingManagementReview(submissionId);
+
+  return !activeCorrection && !activeManagement;
+}
+
+export async function assignLiterarySubcategorizationAfterRater(
+  submissionId: string,
+  actorId?: string
+) {
+  const ready = await isReadyForLiterarySubcategorization(submissionId);
+
+  if (!ready) {
+    return {
+      assigned: false,
+      waiting_for: "literary_rater_completion",
+    };
+  }
+
+  if (await hasAnyPhaseAssignment(submissionId, "literary_subcategorization")) {
+    return {
+      assigned: false,
+      waiting_for: "already_has_literary_subcategorization",
+    };
+  }
+
+  const timestamp = new Date().toISOString();
+
+  await supabaseAdmin
+    .from("submissions")
+    .update({
+      workflow_status: "ready_for_literary_subcategorization",
+      completed_at: null,
+      updated_at: timestamp,
+    })
+    .eq("id", submissionId);
+
+  try {
+    const result = await autoAssignOne(
+      submissionId,
+      "literary_subcategorization",
+      actorId
+    );
+
+    return {
+      assigned: !result.skipped,
+      result,
+    };
+  } catch (error: any) {
+    return {
+      assigned: false,
+      waiting_for: "available_literary_subcategorizer",
+      error:
+        error?.message ??
+        "Literary subcategorization assignment could not be created.",
+    };
+  }
+}
+
 async function getReviewerForProofreader(generalProofreaderId: string) {
   const { data: links, error } = await supabaseAdmin
     .from("reviewer_proofreader_links")
@@ -1586,6 +1681,10 @@ async function repairArtisticRanking(actorId?: string) {
   return autoAssignPending("artistic_ranking", 5000, actorId);
 }
 
+async function repairLiterarySubcategorization(actorId?: string) {
+  return autoAssignPending("literary_subcategorization", 5000, actorId);
+}
+
 export type RepairMissingAssignmentsScope =
   | "all"
   | "coordinator_check"
@@ -1594,7 +1693,8 @@ export type RepairMissingAssignmentsScope =
   | "literary_proofreading"
   | "final_review"
   | "categorization"
-  | "artistic_ranking";
+  | "artistic_ranking"
+  | "literary_subcategorization";
 
 export async function repairMissingAssignments(
   actorId?: string,
@@ -1628,6 +1728,10 @@ export async function repairMissingAssignments(
 
   if (scope === "all" || scope === "artistic_ranking") {
     results.push(await repairArtisticRanking(actorId));
+  }
+
+  if (scope === "all" || scope === "literary_subcategorization") {
+    results.push(await repairLiterarySubcategorization(actorId));
   }
 
   const assigned = results.reduce((sum, row) => sum + (row.assigned ?? 0), 0);

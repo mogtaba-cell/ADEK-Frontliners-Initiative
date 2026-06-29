@@ -57,6 +57,8 @@ async function getDashboardCounts() {
     completedCategorization,
     activeArtisticRanking,
     completedArtisticRanking,
+    activeLiterarySubcategorization,
+    completedLiterarySubcategorization,
     lastExport,
     activeAssignments,
   ] = await Promise.all([
@@ -118,6 +120,15 @@ async function getDashboardCounts() {
         .not("artistic_rubric_total_score", "is", null)
         .not("artistic_ranking_completed_at", "is", null)
     ),
+    countAssignments((query) =>
+      query.eq("phase", "literary_subcategorization").in("status", ["assigned", "in_progress"])
+    ),
+    countAssignments((query) =>
+      query
+        .eq("phase", "literary_subcategorization")
+        .eq("status", "completed")
+        .not("completed_at", "is", null)
+    ),
     supabaseAdmin
       .from("export_batches")
       .select("id,status,mode,destination_folder_id,error_message,created_at,completed_at")
@@ -147,6 +158,8 @@ async function getDashboardCounts() {
     completedCategorization,
     activeArtisticRanking,
     completedArtisticRanking,
+    activeLiterarySubcategorization,
+    completedLiterarySubcategorization,
     lastExport,
     activeAssignments,
   };
@@ -278,8 +291,18 @@ export default async function AdminPage({
           </div>
 
           <div>
-            <strong>Completed artistic ranking / final completed</strong>
+            <strong>Completed artistic ranking</strong>
             <p className="stat-number">{dashboard.completedArtisticRanking}</p>
+          </div>
+
+          <div>
+            <strong>Active literary subcategorization</strong>
+            <p className="stat-number">{dashboard.activeLiterarySubcategorization}</p>
+          </div>
+
+          <div>
+            <strong>Completed literary subcategorization</strong>
+            <p className="stat-number">{dashboard.completedLiterarySubcategorization}</p>
           </div>
         </div>
       </div>
@@ -383,6 +406,11 @@ export default async function AdminPage({
                   phase: "artistic_ranking",
                   title: "Artistic ranking",
                   description: "Assigns categorized artworks to raters for final artistic ranking.",
+                },
+                {
+                  phase: "literary_subcategorization",
+                  title: "Literary subcategorization",
+                  description: "Assigns graded Literary Expressions artworks to literary subcategorizers.",
                 },
               ].map((item) => (
                 <form

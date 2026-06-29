@@ -27,6 +27,9 @@ const links: Record<Role, { href: string; label: string }[]> = {
     { href: "/rater", label: "Artistic Grading Criteria" },
     { href: "/rater/workspace", label: "Artistic Grading Workspace" },
   ],
+  literary_subcategorizer: [
+    { href: "/literary-subcategorizer", label: "Literary Subcategory Workspace" },
+  ],
   adek_hq: [
     { href: "/submissions", label: "Submissions" },
     { href: "/analytics", label: "Analytics" },

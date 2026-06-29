@@ -72,6 +72,8 @@ const PREFERRED_SUBMISSION_COLUMNS = [
   "artistic_rubric_total_score",
   "artistic_rubric_comment",
   "artistic_ranking_completed_at",
+  "literary_subcategory",
+  "literary_subcategory_completed_at",
   "disqualification_reason",
   "coordinator_disqualification_reason",
 

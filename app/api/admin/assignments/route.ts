@@ -19,6 +19,7 @@ const repairPhases: WorkflowPhase[] = [
   "final_review",
   "categorization",
   "artistic_ranking",
+  "literary_subcategorization",
 ];
 
 async function readPayload(req: Request) {

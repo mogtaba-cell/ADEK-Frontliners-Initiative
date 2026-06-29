@@ -22,6 +22,7 @@ const validWorkspacePhases = new Set([
   "final_review",
   "categorization",
   "artistic_ranking",
+  "literary_subcategorization",
 ]);
 
 function chunkArray<T>(items: T[], size: number): T[][] {
@@ -69,7 +70,11 @@ function defaultViewForPhase(phase: WorkflowPhase) {
 }
 
 function shouldLoadTaskHistory(phase: WorkflowPhase) {
-  return phase !== "categorization" && phase !== "artistic_ranking";
+  return (
+    phase !== "categorization" &&
+    phase !== "artistic_ranking" &&
+    phase !== "literary_subcategorization"
+  );
 }
 
 function submissionSelectFieldsForPhase(phase: WorkflowPhase) {
@@ -116,6 +121,8 @@ function submissionSelectFieldsForPhase(phase: WorkflowPhase) {
     "artistic_rubric_total_score",
     "artistic_rubric_comment",
     "artistic_ranking_completed_at",
+    "literary_subcategory",
+    "literary_subcategory_completed_at",
     "evaluator_comment",
     "evaluator_file_quality_clear",
     "literary_publication_suitable",
@@ -164,6 +171,14 @@ function applySubmissionWorkflowGate(
   if (phase === "artistic_ranking") {
     return query
       .is("submissions.artistic_ranking_completed_at", null)
+      .neq("submissions.workflow_status", "completed")
+      .neq("submissions.workflow_status", "disqualified");
+  }
+
+  if (phase === "literary_subcategorization") {
+    return query
+      .is("submissions.literary_subcategory_completed_at", null)
+      .eq("submissions.categorized_pathway", "Literary Expressions")
       .neq("submissions.workflow_status", "completed")
       .neq("submissions.workflow_status", "disqualified");
   }

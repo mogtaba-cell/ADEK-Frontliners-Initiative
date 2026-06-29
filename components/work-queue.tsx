@@ -54,6 +54,7 @@ const correctionSourceLabels: Record<string, string> = {
   final_review: "Review",
   categorization: "Categorization",
   artistic_ranking: "Artistic Grading",
+  literary_subcategorization: "Literary Subcategorization",
 };
 
 function schoolOptionFromSubmission(submission: any): SchoolOption {
@@ -186,6 +187,7 @@ function chunkArray<T>(items: T[], size: number): T[][] {
 function pathForWorkspaceRole(role: Role) {
   if (role === "evaluator") return "/evaluator/work";
   if (role === "management") return "/management/work";
+  if (role === "literary_subcategorizer") return "/literary-subcategorizer";
   return `/${role}`;
 }
 
@@ -232,7 +234,11 @@ function shouldLoadTaskHistory(phase: WorkflowPhase) {
   // Categorizer and Rater task cards do not need full previous-task history.
   // Skipping it removes two extra DB queries for every workspace page/load-more
   // request in the largest queues.
-  return phase !== "categorization" && phase !== "artistic_ranking";
+  return (
+    phase !== "categorization" &&
+    phase !== "artistic_ranking" &&
+    phase !== "literary_subcategorization"
+  );
 }
 
 function statusesForView(phase: WorkflowPhase, view: string) {
@@ -310,6 +316,8 @@ function submissionSelectFieldsForPhase(phase: WorkflowPhase) {
     "artistic_rubric_total_score",
     "artistic_rubric_comment",
     "artistic_ranking_completed_at",
+    "literary_subcategory",
+    "literary_subcategory_completed_at",
     "evaluator_comment",
     "evaluator_file_quality_clear",
     "literary_publication_suitable",
@@ -359,6 +367,14 @@ function applySubmissionWorkflowGate(
   if (phase === "artistic_ranking") {
     return query
       .is("submissions.artistic_ranking_completed_at", null)
+      .neq("submissions.workflow_status", "completed")
+      .neq("submissions.workflow_status", "disqualified");
+  }
+
+  if (phase === "literary_subcategorization") {
+    return query
+      .is("submissions.literary_subcategory_completed_at", null)
+      .eq("submissions.categorized_pathway", "Literary Expressions")
       .neq("submissions.workflow_status", "completed")
       .neq("submissions.workflow_status", "disqualified");
   }
@@ -588,7 +604,9 @@ function buildAssignmentCountQuery({
   const countSelect =
     phase === "artistic_ranking"
       ? "id,submissions!inner(id,workflow_status,artistic_ranking_completed_at)"
-      : phase === "categorization"
+      : phase === "literary_subcategorization"
+        ? "id,submissions!inner(id,workflow_status,categorized_pathway,literary_subcategory_completed_at)"
+        : phase === "categorization"
         ? "id,submissions!inner(id,workflow_status,categorization_completed_at)"
         : "id";
 
@@ -795,7 +813,11 @@ async function getKpiCards({
     ];
   }
 
-  if (phase === "categorization" || phase === "artistic_ranking") {
+  if (
+    phase === "categorization" ||
+    phase === "artistic_ranking" ||
+    phase === "literary_subcategorization"
+  ) {
     const [remaining, completed] = await Promise.all([
       getAssignmentCount({ userId, phase, view: "not_completed" }),
       getAssignmentCount({ userId, phase, view: "completed" }),

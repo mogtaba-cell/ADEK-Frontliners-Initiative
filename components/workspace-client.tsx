@@ -3,6 +3,7 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { ProofreaderType, Role, WorkflowPhase } from "@/lib/types";
 import { labelPhase, labelWorkflowStatus, statusClassName } from "@/lib/workflow";
+import { LITERARY_SUBCATEGORY_OPTIONS } from "@/lib/literary-subcategories";
 import {
   calculateArtisticRubricTotal,
   finalArtisticRatingFromScore,
@@ -52,6 +53,7 @@ const correctionSourceLabels: Record<string, string> = {
   final_review: "Review",
   categorization: "Categorization",
   artistic_ranking: "Artistic Grading",
+  literary_subcategorization: "Literary Subcategorization",
   coordinator_check: "Coordinator Correction",
 };
 
@@ -1402,6 +1404,14 @@ export function WorkspaceClient({
                       />
                     )}
 
+                  {!isLimitedSubmissionDetailsView &&
+                    selectedSubmission.literary_subcategory && (
+                      <DetailField
+                        label="Literary Subcategory"
+                        value={selectedSubmission.literary_subcategory}
+                      />
+                    )}
+
                   {selectedAssignment.correction_source_phase && (
                     <DetailField
                       label="Correction requested from"
@@ -1526,6 +1536,12 @@ export function WorkspaceClient({
                   {phase === "artistic_ranking" && (
                     <p className="muted small" style={{ marginBottom: 0 }}>
                       The final artistic rating is calculated automatically from the total score.
+                    </p>
+                  )}
+
+                  {phase === "literary_subcategorization" && (
+                    <p className="muted small" style={{ marginBottom: 0 }}>
+                      Select one literary subcategory for this already graded Literary Expressions submission.
                     </p>
                   )}
                 </div>
@@ -2101,6 +2117,35 @@ export function WorkspaceClient({
                 </div>
               )}
 
+              {isAssignmentActionable && phase === "literary_subcategorization" && (
+                <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
+                  <h4 style={{ marginTop: 0 }}>Literary Subcategory</h4>
+                  <p className="muted small">
+                    Choose the best subcategory for this Literary Expressions artwork.
+                    This step does not change the rater, score, or final artistic rating.
+                  </p>
+
+                  <label style={{ display: "block", marginTop: 12 }}>
+                    <span className="small">Literary Subcategory</span>
+                    <select
+                      className="input"
+                      name="literary_subcategory"
+                      defaultValue={String(selectedSubmission.literary_subcategory ?? "")}
+                      required
+                    >
+                      <option value="" disabled>
+                        Select literary subcategory
+                      </option>
+                      {LITERARY_SUBCATEGORY_OPTIONS.map((subcategory) => (
+                        <option key={subcategory} value={subcategory}>
+                          {subcategory}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
+
               {isAssignmentActionable && phase === "final_review" && (
                 <>
                   <EditableArtworkText
@@ -2237,8 +2282,10 @@ export function WorkspaceClient({
                         : phase === "categorization"
                           ? "Mark Categorization Done"
                           : phase === "artistic_ranking"
-                            ? "Submit Rubric & Complete"
-                            : phase === "adek_evaluation" &&
+                            ? "Submit Rubric & Continue"
+                            : phase === "literary_subcategorization"
+                              ? "Save Literary Subcategory & Complete"
+                              : phase === "adek_evaluation" &&
                                 adekFileQualityClear === "no"
                               ? "Send for Correction"
                               : "Mark Done & Open Next"}

@@ -290,6 +290,7 @@ function assignmentBelongsToCurrentUserRole(
   if (role === "reviewer") return phase === "final_review";
   if (role === "categorizer") return phase === "categorization";
   if (role === "rater") return phase === "artistic_ranking";
+  if (role === "literary_subcategorizer") return phase === "literary_subcategorization";
 
   if (role === "proofreader") {
     if (userProofreaderType === "general") {

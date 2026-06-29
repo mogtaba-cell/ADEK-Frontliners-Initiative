@@ -458,6 +458,7 @@ export function SubmissionsClient({
                 <th>Categorized Pathway</th>
                 <th>ADEK Artistic Rating</th>
                 <th>Artistic Grading</th>
+                <th>Literary Subcategory</th>
                 <th>Updated File</th>
                 <th>Action</th>
               </tr>
@@ -498,6 +499,7 @@ export function SubmissionsClient({
 
                     <td>{artisticRatingLabel(submission.artistic_rating)}</td>
                     <td>{displayText(submission.artistic_ranking)}</td>
+                    <td>{displayText(submission.literary_subcategory)}</td>
 
                     <td>
                       {submission.updated_artwork_file_url ? (
@@ -650,6 +652,13 @@ function SubmissionModal({
                 />
               )}
 
+              {submission.literary_subcategory && (
+                <DetailField
+                  label="Literary Subcategory"
+                  value={submission.literary_subcategory}
+                />
+              )}
+
               {submission.artistic_rubric_total_score !== null &&
                 submission.artistic_rubric_total_score !== undefined && (
                   <DetailField
@@ -700,6 +709,13 @@ function SubmissionModal({
                 <DetailField
                   label="Artistic Grading Completed At"
                   value={submission.artistic_ranking_completed_at}
+                />
+              )}
+
+              {submission.literary_subcategory_completed_at && (
+                <DetailField
+                  label="Literary Subcategory Completed At"
+                  value={submission.literary_subcategory_completed_at}
                 />
               )}
 

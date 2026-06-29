@@ -15,6 +15,8 @@ type KpiData = {
   finalReady: number;
   categorized: number;
   artisticRanked: number;
+  literarySubcategorized: number;
+  finalCompleted: number;
   totalClosed: number;
 };
 
@@ -30,6 +32,8 @@ const emptyKpis: KpiData = {
   finalReady: 0,
   categorized: 0,
   artisticRanked: 0,
+  literarySubcategorized: 0,
+  finalCompleted: 0,
   totalClosed: 0,
 };
 
@@ -52,6 +56,8 @@ function normalizeKpis(payload: any): KpiData {
     finalReady: numberFrom(data.finalReady),
     categorized: numberFrom(data.categorized),
     artisticRanked: numberFrom(data.artisticRanked),
+    literarySubcategorized: numberFrom(data.literarySubcategorized),
+    finalCompleted: numberFrom(data.finalCompleted),
     totalClosed: numberFrom(data.totalClosed),
   };
 }
@@ -109,7 +115,8 @@ export function KpiHeader() {
     { label: "Literary Proofread", value: kpis.literaryProofread },
     { label: "Review Done", value: kpis.finalReady },
     { label: "Categorized", value: kpis.categorized },
-    { label: "Final Completed", value: kpis.artisticRanked },
+    { label: "Artistic Graded", value: kpis.artisticRanked },
+    { label: "Final Completed", value: kpis.finalCompleted },
   ];
 
   return (

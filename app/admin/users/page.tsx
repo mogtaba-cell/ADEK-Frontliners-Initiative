@@ -12,6 +12,7 @@ const roles = [
   ["reviewer", "Reviewer"],
   ["categorizer", "Categorizer"],
   ["rater", "Rater"],
+  ["literary_subcategorizer", "Literary Subcategorizer"],
   ["adek_hq", "ADEK HQ Read Only"],
 ];
 

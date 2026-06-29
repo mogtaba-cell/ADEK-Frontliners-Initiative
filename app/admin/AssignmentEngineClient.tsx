@@ -27,6 +27,7 @@ const phases = [
   { phase: "final_review", label: "Auto Assign Review Work", description: "Assigns proofreading-completed artworks to active reviewers." },
   { phase: "categorization", label: "Auto Assign Categorization Work", description: "Assigns review-completed artworks to active categorizers." },
   { phase: "artistic_ranking", label: "Auto Assign Artistic Grading Work", description: "Assigns categorized artworks to active raters." },
+  { phase: "literary_subcategorization", label: "Auto Assign Literary Subcategory Work", description: "Assigns graded Literary Expressions artworks to active literary subcategorizers." },
 ];
 
 async function readResponse(res: Response) {

@@ -17,6 +17,7 @@ const allowedRoles = new Set([
   "reviewer",
   "categorizer",
   "rater",
+  "literary_subcategorizer",
   "adek_hq",
 ]);
 
@@ -202,7 +203,7 @@ export async function POST(req: Request) {
           row: rowNumber,
           email,
           message:
-            "Invalid role. Allowed roles: admin, coordinator, evaluator, management, proofreader, reviewer, categorizer, rater, adek_hq.",
+            "Invalid role. Allowed roles: admin, coordinator, evaluator, management, proofreader, reviewer, categorizer, rater, literary_subcategorizer, adek_hq.",
         });
         continue;
       }

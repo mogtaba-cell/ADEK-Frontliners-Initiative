@@ -22,6 +22,7 @@ const validRoles = new Set([
   "reviewer",
   "categorizer",
   "rater",
+  "literary_subcategorizer",
   "adek_hq",
 ]);
 
@@ -50,6 +51,8 @@ export function homeForRole(role: Role | string) {
       return "/categorizer";
     case "rater":
       return "/rater";
+    case "literary_subcategorizer":
+      return "/literary-subcategorizer";
     case "adek_hq":
       return "/submissions";
     default:

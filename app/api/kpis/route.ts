@@ -19,6 +19,8 @@ type KpiResponse = {
     finalReady: number;
     categorized: number;
     artisticRanked: number;
+    literarySubcategorized: number;
+    finalCompleted: number;
     activeAssignments: number;
     totalClosed: number;
   };
@@ -36,6 +38,7 @@ type SubmissionSummaryRow = {
   management_decision?: string | null;
   artistic_rubric_total_score?: number | null;
   artistic_ranking_completed_at?: string | null;
+  literary_subcategory_completed_at?: string | null;
 };
 
 type AssignmentSummaryRow = {
@@ -52,7 +55,7 @@ async function fetchAllSubmissions() {
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await supabaseAdmin
       .from("submissions")
-      .select("id,workflow_status,evaluation_decision,management_decision,artistic_rubric_total_score,artistic_ranking_completed_at")
+      .select("id,workflow_status,evaluation_decision,management_decision,artistic_rubric_total_score,artistic_ranking_completed_at,literary_subcategory_completed_at")
       .order("created_at", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
 
@@ -143,6 +146,8 @@ async function buildKpis(): Promise<KpiResponse["data"]> {
   let finalReady = 0;
   let categorized = 0;
   let artisticRanked = 0;
+  let literarySubcategorized = 0;
+  let finalCompleted = 0;
 
   for (const submission of submissions) {
     const rows = assignmentsBySubmission.get(submission.id) ?? [];
@@ -215,11 +220,20 @@ async function buildKpis(): Promise<KpiResponse["data"]> {
       artisticRanked += 1;
     }
 
+    if (submission.literary_subcategory_completed_at) {
+      literarySubcategorized += 1;
+    }
+
+    if (submission.workflow_status === "completed") {
+      finalCompleted += 1;
+    }
+
     const isInSelectedPipeline =
       submission.workflow_status === "selected_for_proofreading" ||
       submission.workflow_status === "proofreading_done" ||
       submission.workflow_status === "ready_for_categorization" ||
       submission.workflow_status === "ready_for_artistic_ranking" ||
+      submission.workflow_status === "ready_for_literary_subcategorization" ||
       submission.workflow_status === "completed";
 
     // Total Selected only counts submissions still in the selected/final pipeline.
@@ -247,8 +261,10 @@ async function buildKpis(): Promise<KpiResponse["data"]> {
     finalReady,
     categorized,
     artisticRanked,
+    literarySubcategorized,
+    finalCompleted,
     activeAssignments,
-    totalClosed: artisticRanked + totalDisqualified,
+    totalClosed: finalCompleted + totalDisqualified,
   };
 }
 
