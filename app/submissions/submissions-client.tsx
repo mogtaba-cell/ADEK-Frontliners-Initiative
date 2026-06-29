@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { labelPhase, labelWorkflowStatus } from "@/lib/workflow";
+import { formatLiterarySubcategoryLabel } from "@/lib/literary-subcategories";
 
 type Submission = Record<string, any>;
 
@@ -499,7 +500,7 @@ export function SubmissionsClient({
 
                     <td>{artisticRatingLabel(submission.artistic_rating)}</td>
                     <td>{displayText(submission.artistic_ranking)}</td>
-                    <td>{displayText(submission.literary_subcategory)}</td>
+                    <td>{displayText(formatLiterarySubcategoryLabel(submission.literary_subcategory))}</td>
 
                     <td>
                       {submission.updated_artwork_file_url ? (
@@ -655,7 +656,7 @@ function SubmissionModal({
               {submission.literary_subcategory && (
                 <DetailField
                   label="Literary Subcategory"
-                  value={submission.literary_subcategory}
+                  value={formatLiterarySubcategoryLabel(submission.literary_subcategory)}
                 />
               )}
 

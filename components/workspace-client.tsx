@@ -3,7 +3,11 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { ProofreaderType, Role, WorkflowPhase } from "@/lib/types";
 import { labelPhase, labelWorkflowStatus, statusClassName } from "@/lib/workflow";
-import { LITERARY_SUBCATEGORY_OPTIONS } from "@/lib/literary-subcategories";
+import {
+  LITERARY_SUBCATEGORY_DISPLAY_LABELS,
+  LITERARY_SUBCATEGORY_OPTIONS,
+  formatLiterarySubcategoryLabel,
+} from "@/lib/literary-subcategories";
 import {
   calculateArtisticRubricTotal,
   finalArtisticRatingFromScore,
@@ -1408,7 +1412,7 @@ export function WorkspaceClient({
                     selectedSubmission.literary_subcategory && (
                       <DetailField
                         label="Literary Subcategory"
-                        value={selectedSubmission.literary_subcategory}
+                        value={formatLiterarySubcategoryLabel(selectedSubmission.literary_subcategory)}
                       />
                     )}
 
@@ -2138,7 +2142,7 @@ export function WorkspaceClient({
                       </option>
                       {LITERARY_SUBCATEGORY_OPTIONS.map((subcategory) => (
                         <option key={subcategory} value={subcategory}>
-                          {subcategory}
+                          {LITERARY_SUBCATEGORY_DISPLAY_LABELS[subcategory]}
                         </option>
                       ))}
                     </select>
